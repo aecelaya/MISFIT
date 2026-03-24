@@ -1,1 +1,1 @@
-"""Data loading utilities for streaming NIfTI volumes during training."""
+"""On-the-fly NIfTI data loading for MISFIT MAE pretraining."""
