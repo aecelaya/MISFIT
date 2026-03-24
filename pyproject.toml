@@ -1,0 +1,55 @@
+[project]
+name = "misfit-medical"
+version = "0.1.0-alpha"
+requires-python = ">= 3.10"
+description = "MISFIT: Medical Imaging Semantic Foundation Toolkit for training large-scale medical imaging foundation models."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Adrian Celaya", email = "aecelaya@rice.edu"},
+    {name = "David Fuentes", email = "dtfuentes@mdanderson.org"},
+    {name = "Beatrice Riviere", email = "riviere@rice.edu"},
+    {name = "Rice University"},
+    {name = "The University of Texas MD Anderson Cancer Center"}
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps."
+]
+keywords = [
+    "deep learning",
+    "foundation model",
+    "self-supervised learning",
+    "medical image analysis",
+    "medical imaging",
+    "pretraining",
+    "vision transformer",
+    "masked autoencoder",
+]
+dependencies = [
+    "torch",
+    "monai",
+    "nibabel",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "rich",
+    "scipy",
+    "scikit-learn",
+    "einops",
+    "pytest",
+]
+
+[project.urls]
+homepage = "https://github.com/mist-medical/MISFIT"
+repository = "https://github.com/mist-medical/MISFIT"
+
+[project.scripts]
+misfit_index = "misfit.cli.index_entrypoint:index_entry"
+misfit_train = "misfit.cli.train_entrypoint:train_entry"
+
+[tool.codespell]
+skip = ".git"
