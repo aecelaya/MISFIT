@@ -1,1 +1,1 @@
-"""Multi-node distributed training pipeline for MISFIT."""
+"""MISFIT training pipeline."""

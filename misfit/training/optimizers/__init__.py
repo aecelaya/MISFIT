@@ -1,0 +1,1 @@
+"""Optimizer registry for MISFIT."""
