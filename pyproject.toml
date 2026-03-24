@@ -50,6 +50,7 @@ repository = "https://github.com/mist-medical/MISFIT"
 [project.scripts]
 misfit_index = "misfit.cli.index_entrypoint:index_entry"
 misfit_train = "misfit.cli.train_entrypoint:train_entry"
+misfit_run   = "misfit.cli.run_entrypoint:run_entry"
 
 [tool.codespell]
 skip = ".git"
