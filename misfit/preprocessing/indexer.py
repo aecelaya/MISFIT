@@ -21,21 +21,10 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import pandas as pd
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
 from misfit.preprocessing.index_utils import compute_volume_stats
-
-console = Console()
+from misfit.utils.console import console
+from misfit.utils.progress_bar import get_progress_bar
 
 # Parquet column order — defines the schema of the index file.
 INDEX_COLUMNS = [
@@ -50,21 +39,6 @@ INDEX_COLUMNS = [
     "p1", "p99",
     "fg_mean", "fg_std",
 ]
-
-
-def _make_progress() -> Progress:
-    """Build a rich Progress bar for the indexing loop."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        console=console,
-        transient=False,
-    )
 
 
 def build_index(
@@ -103,7 +77,7 @@ def build_index(
         f"with {num_workers} workers...[/bold]"
     )
 
-    with _make_progress() as progress:
+    with get_progress_bar() as progress:
         task = progress.add_task("Building index", total=total)
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:

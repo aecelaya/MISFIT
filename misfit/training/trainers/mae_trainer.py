@@ -29,17 +29,6 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
 from misfit.data_loading.dataloader import (
     get_training_dataloader,
@@ -53,8 +42,8 @@ from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
 from misfit.training.training_utils import RunningMean, set_seed
-
-console = Console()
+from misfit.utils.console import console
+from misfit.utils.progress_bar import get_progress_bar
 
 
 class MAETrainer:
@@ -303,18 +292,8 @@ class MAETrainer:
     # Progress bar
     # ------------------------------------------------------------------
 
-    def _make_progress(self) -> Progress:
-        return Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False,
-        )
+    def _make_progress(self):
+        return get_progress_bar()
 
     # ------------------------------------------------------------------
     # Main training loop
