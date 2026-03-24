@@ -12,6 +12,7 @@ from typing import Union
 import misfit.loss_functions  # noqa: F401 — trigger registrations
 import misfit.models  # noqa: F401 — trigger registrations
 from misfit.loss_functions.loss_registry import list_registered_losses
+from misfit.metrics.metrics_registry import list_registered_metrics
 from misfit.models.model_registry import list_registered_models
 from misfit.training.lr_schedulers.lr_scheduler_registry import list_lr_schedulers
 from misfit.training.optimizers.optimizer_registry import list_optimizers
@@ -235,4 +236,57 @@ def add_train_args(parser: ArgParser) -> None:
     misc.add_argument(
         "--resume", action="store_true",
         help="Resume from the latest checkpoint in --results/checkpoints/.",
+    )
+
+
+def add_evaluate_args(parser: ArgParser) -> None:
+    """Add ``misfit_evaluate`` arguments to *parser*.
+
+    Args:
+        parser: The :class:`ArgParser` to populate.
+    """
+    # --- Input ---
+    inp = parser.add_argument_group("Evaluate: Input")
+    inp.add_argument(
+        "--checkpoint", required=True, metavar="PT",
+        help="Path to a pretrained checkpoint (.pt) produced by misfit_train.",
+    )
+    inp.add_argument(
+        "--index-val", required=True, metavar="PARQUET",
+        help="Path to the validation Parquet index (from misfit_index).",
+    )
+
+    # --- Output ---
+    out = parser.add_argument_group("Evaluate: Output")
+    out.add_argument(
+        "--results", required=True, metavar="DIR",
+        help="Output directory for evaluation_results.csv.",
+    )
+
+    # --- Metrics ---
+    met = parser.add_argument_group("Evaluate: Metrics")
+    met.add_argument(
+        "--metrics",
+        nargs="+",
+        default=list_registered_metrics(),
+        choices=list_registered_metrics(),
+        metavar="METRIC",
+        help=(
+            "Metrics to compute. Defaults to all registered metrics: "
+            f"{list_registered_metrics()}."
+        ),
+    )
+
+    # --- Inference ---
+    inf = parser.add_argument_group("Evaluate: Inference")
+    inf.add_argument(
+        "--device", type=str, default=None, metavar="DEVICE",
+        help=(
+            "Torch device for inference (e.g. 'cuda:0', 'cpu'). "
+            "Defaults to 'cuda' if available, else 'cpu'."
+        ),
+    )
+    inf.add_argument(
+        "--amp", action="store_true",
+        help="Use automatic mixed precision for inference.",
     )
