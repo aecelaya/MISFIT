@@ -290,3 +290,74 @@ def add_evaluate_args(parser: ArgParser) -> None:
         "--amp", action="store_true",
         help="Use automatic mixed precision for inference.",
     )
+
+
+def add_infer_args(parser: ArgParser) -> None:
+    """Add ``misfit_infer`` arguments to *parser*.
+
+    Args:
+        parser: The :class:`ArgParser` to populate.
+    """
+    from misfit.inference.inferers.inferer_registry import list_inferers
+    from misfit.inference.tta.strategies import list_strategies
+
+    # --- Input ---
+    inp = parser.add_argument_group("Infer: Input")
+    inp.add_argument(
+        "--checkpoint", required=True, metavar="PT",
+        help="Path to a pretrained MISFIT checkpoint (.pt).",
+    )
+    inp.add_argument(
+        "--index", required=True, metavar="PARQUET",
+        help="Path to the Parquet index of volumes to run inference on.",
+    )
+
+    # --- Mode ---
+    mode = parser.add_argument_group("Infer: Mode")
+    mode.add_argument(
+        "--mode",
+        required=True,
+        choices=["features", "reconstruct"],
+        help=(
+            "'features': extract encoder bottleneck features and save as .npy. "
+            "'reconstruct': run full MAE forward pass and save as .nii.gz."
+        ),
+    )
+
+    # --- Output ---
+    out = parser.add_argument_group("Infer: Output")
+    out.add_argument(
+        "--output-dir", required=True, metavar="DIR",
+        help="Directory where output files are written.",
+    )
+
+    # --- Inference config ---
+    cfg = parser.add_argument_group("Infer: Configuration")
+    cfg.add_argument(
+        "--inferer",
+        default="whole_volume",
+        choices=list_inferers(),
+        help=(
+            "Inference strategy. 'whole_volume': single pass after crop/pad. "
+            "'sliding_window': MONAI sliding window for larger volumes. "
+            "Defaults to 'whole_volume'."
+        ),
+    )
+    cfg.add_argument(
+        "--tta",
+        default="none",
+        choices=list_strategies(),
+        dest="tta_strategy",
+        help="Test-time augmentation strategy. Defaults to 'none'.",
+    )
+    cfg.add_argument(
+        "--device", type=str, default=None, metavar="DEVICE",
+        help=(
+            "Torch device (e.g. 'cuda:0', 'cpu'). "
+            "Defaults to 'cuda' if available, else 'cpu'."
+        ),
+    )
+    cfg.add_argument(
+        "--amp", action="store_true",
+        help="Use automatic mixed precision for inference.",
+    )

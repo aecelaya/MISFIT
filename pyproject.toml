@@ -51,6 +51,7 @@ repository = "https://github.com/mist-medical/MISFIT"
 misfit_index    = "misfit.cli.index_entrypoint:index_entry"
 misfit_train    = "misfit.cli.train_entrypoint:train_entry"
 misfit_evaluate = "misfit.cli.evaluate_entrypoint:evaluate_entry"
+misfit_infer    = "misfit.cli.infer_entrypoint:infer_entry"
 misfit_run      = "misfit.cli.run_entrypoint:run_entry"
 
 [tool.codespell]
