@@ -38,6 +38,7 @@ Below is an example `config.json` produced by `misfit_train`.
     "warmup_epochs": 20,
     "loss": "normalized_masked_mse",
     "amp": true,
+    "amp_dtype": "fp16",
     "seed": 42
   },
 
@@ -127,7 +128,15 @@ A few practical guidelines:
 
 - **GPU memory** is the primary constraint. A 32 GB GPU with batch size 2 can
   comfortably fit `96 96 96`. Reduce to `64 64 64` if you run out of memory.
-  Mixed-precision (AMP) is always enabled on new runs. To disable it, let
+
+- **AMP dtype** affects both memory and stability. Pass `--amp-dtype fp16`
+  (default, all CUDA GPUs) or `--amp-dtype bf16` (Ampere+: A100, H100,
+  RTX 30xx+). BF16 uses the same dynamic range as float32, so no GradScaler
+  is needed and training tends to be more numerically stable for long runs.
+  FP16 uses a larger optimizer epsilon (1e-4 vs 1e-8) and GradScaler to
+  compensate for its narrower dynamic range.
+
+  Mixed-precision is always enabled on new runs. To disable it entirely, let
   training run for at least one epoch (so `config.json` is written), then set
   `"amp": false` in the `training` section of `config.json` and restart with
   `--resume`.

@@ -136,6 +136,10 @@ Run training with `misfit_train`:
 
 ### Miscellaneous
 
+- `--amp-dtype {fp16,bf16}`: Floating-point dtype used inside `autocast`.
+  `fp16` (default) works on all CUDA GPUs and requires GradScaler.
+  `bf16` requires an Ampere or newer GPU (A100, H100, RTX 30xx+) and skips
+  GradScaler entirely — generally more numerically stable for long runs.
 - `--seed N`: Random seed for reproducibility. *(default: 42)*
 - `--resume`: Resume from the latest checkpoint in `--results`. The model
   architecture and patch size must match the saved `config.json`; changes to

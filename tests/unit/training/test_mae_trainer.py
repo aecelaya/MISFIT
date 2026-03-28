@@ -164,6 +164,7 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         overwrite=False,
         results=str(tmp_path / "results"),
         index=str(idx),
+        amp_dtype="fp16",
     )
 
 
@@ -731,8 +732,49 @@ def test_build_config_structure(tmp_path):
     assert config["model"]["patch_size"] == [32, 32, 32]
     assert config["training"]["seed"] == 42
     assert config["training"]["amp"] is True
+    assert config["training"]["amp_dtype"] == "fp16"
     assert isinstance(config["evaluation"], dict)
     assert all(isinstance(v, dict) for v in config["evaluation"].values())
+
+
+def test_bf16_no_grad_scaler(tmp_path):
+    """BF16 dtype sets amp_dtype correctly and skips GradScaler."""
+    import torch
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.amp_dtype = "bf16"
+    trainer = MAETrainer(args)
+    assert trainer.amp_dtype == "bf16"
+
+    # BF16 config should record the dtype.
+    config = trainer._build_config()
+    assert config["training"]["amp_dtype"] == "bf16"
+
+    # _build_optimizer should use standard epsilon for BF16.
+    from misfit.training.trainer_constants import tc
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                    mask_patch_size=16, mask_ratio=0.75)
+    opt = trainer._build_optimizer(model)
+    for pg in opt.param_groups:
+        assert pg["eps"] == tc.NO_AMP_EPS, "BF16 should use standard epsilon"
+
+
+def test_fp16_uses_amp_epsilon(tmp_path):
+    """FP16 dtype uses inflated optimizer epsilon."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    from misfit.training.trainer_constants import tc
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+
+    args = _make_args(tmp_path)
+    args.amp_dtype = "fp16"
+    trainer = MAETrainer(args)
+    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                    mask_patch_size=16, mask_ratio=0.75)
+    opt = trainer._build_optimizer(model)
+    for pg in opt.param_groups:
+        assert pg["eps"] == tc.AMP_FP16_EPS, "FP16 should use inflated epsilon"
 
 
 def test_train_resume_reads_and_validates_config(tmp_path):

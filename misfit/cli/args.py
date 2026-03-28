@@ -212,6 +212,20 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
+    misc.add_argument(
+        "--amp-dtype",
+        default="fp16",
+        choices=["fp16", "bf16"],
+        dest="amp_dtype",
+        help=(
+            "Floating-point dtype used inside torch.amp.autocast. "
+            "'fp16' (default) works on all CUDA GPUs and uses GradScaler to "
+            "prevent gradient underflow. "
+            "'bf16' requires an Ampere or newer GPU (A100, H100, RTX 30xx+) "
+            "but has the same dynamic range as float32, so no GradScaler is "
+            "needed and training is typically more numerically stable."
+        ),
+    )
 
     run_mode = parser.add_mutually_exclusive_group()
     run_mode.add_argument(

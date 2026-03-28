@@ -73,6 +73,9 @@ class MAETrainer:
 
         self.device = torch.device(f"cuda:{self.local_rank}")
         self.amp = True  # Always on by default; can be changed in config.json.
+        # amp_dtype controls which low-precision type autocast uses.
+        # "fp16" requires GradScaler; "bf16" (Ampere+) does not.
+        self.amp_dtype: str = getattr(args, "amp_dtype", "fp16")
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -113,7 +116,9 @@ class MAETrainer:
         return loss_cls()
 
     def _build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        eps = tc.AMP_EPS if self.amp else tc.NO_AMP_EPS
+        # FP16 AMP requires inflated epsilon to avoid NaN in gradient updates.
+        # BF16 and full-precision share the same dynamic range as float32.
+        eps = tc.AMP_FP16_EPS if (self.amp and self.amp_dtype == "fp16") else tc.NO_AMP_EPS
         return get_optimizer(
             name=self.args.optimizer,
             params=model.parameters(),
@@ -159,7 +164,8 @@ class MAETrainer:
         images = batch.to(self.device, non_blocking=True)
         optimizer.zero_grad()
 
-        amp_ctx = torch.amp.autocast("cuda") if self.amp else nullcontext()
+        _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
+        amp_ctx = torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
         with amp_ctx:
             output = model(images)
             loss = criterion(
@@ -198,7 +204,8 @@ class MAETrainer:
             Scalar loss value for this batch.
         """
         images = batch.to(self.device, non_blocking=True)
-        amp_ctx = torch.amp.autocast("cuda") if self.amp else nullcontext()
+        _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
+        amp_ctx = torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
         with torch.no_grad(), amp_ctx:
             output = model(images)
             loss = criterion(
@@ -322,6 +329,7 @@ class MAETrainer:
                 "warmup_epochs": self.args.warmup_epochs,
                 "loss":          self.args.loss,
                 "amp":           self.amp,
+                "amp_dtype":     self.amp_dtype,
                 "seed":          self.args.seed,
             },
             "evaluation": {
@@ -362,6 +370,7 @@ class MAETrainer:
             ("training", "lr_scheduler",  self.args.lr_scheduler),
             ("training", "warmup_epochs", self.args.warmup_epochs),
             ("training", "loss",          self.args.loss),
+            ("training", "amp_dtype",     self.amp_dtype),
         ]
         for section, key, current in soft:
             saved = saved_config.get(section, {}).get(key)
@@ -402,9 +411,11 @@ class MAETrainer:
             if self.args.resume and config_path.exists():
                 self._validate_resume(read_json_file(config_path))
 
-        # Read amp from saved config on resume (all ranks).
+        # Read amp settings from saved config on resume (all ranks).
         if self.args.resume and config_path.exists():
-            self.amp = read_json_file(config_path).get("training", {}).get("amp", True)
+            saved_training = read_json_file(config_path).get("training", {})
+            self.amp = saved_training.get("amp", True)
+            self.amp_dtype = saved_training.get("amp_dtype", "fp16")
 
         self._setup_distributed()
         self._enable_cudnn_optimisations()
@@ -415,7 +426,13 @@ class MAETrainer:
         criterion = self._build_loss().to(self.device)
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
-        scaler    = torch.amp.GradScaler("cuda") if self.amp else None
+        # GradScaler is only needed for FP16 — BF16 has float32's dynamic
+        # range so gradient underflow is not a concern.
+        scaler = (
+            torch.amp.GradScaler("cuda")
+            if (self.amp and self.amp_dtype == "fp16")
+            else None
+        )
 
         # --- Data loaders ---
         train_loader = get_training_dataloader(
@@ -476,7 +493,7 @@ class MAETrainer:
                 f"model={self.args.model}  "
                 f"world_size={self.world_size}  "
                 f"epochs={self.args.epochs}  "
-                f"amp={self.amp}\n"
+                f"amp={self.amp}  amp_dtype={self.amp_dtype if self.amp else 'n/a'}\n"
             )
 
         for epoch in range(start_epoch, self.args.epochs):
