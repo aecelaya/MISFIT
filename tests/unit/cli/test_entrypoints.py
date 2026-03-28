@@ -312,7 +312,7 @@ def test_embed_entry_calls_extract_features(tmp_path):
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
         "volume_id": ["vol"],
-        "file_path": [str(nifti_path)],
+        "path": [str(nifti_path)],
         "p1": [-2.0], "p99": [2.0], "fg_mean": [0.0], "fg_std": [1.0],
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
@@ -361,7 +361,7 @@ def test_embed_entry_skips_existing_output(tmp_path):
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
         "volume_id": ["vol"],
-        "file_path": ["doesnotmatter.nii.gz"],
+        "path": ["doesnotmatter.nii.gz"],
         "p1": [-2.0], "p99": [2.0], "fg_mean": [0.0], "fg_std": [1.0],
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
@@ -404,7 +404,7 @@ def test_embed_entry_with_aggregator_checkpoint(tmp_path):
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
         "volume_id": [],
-        "file_path": [],
+        "path": [],
         "p1": [], "p99": [], "fg_mean": [], "fg_std": [],
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
@@ -433,7 +433,7 @@ def test_embed_entry_missing_config_exits(tmp_path):
     """embed_entry exits 1 when --config file does not exist."""
     from misfit.cli.embed_entrypoint import embed_entry
     manifest = tmp_path / "index.parquet"
-    pd.DataFrame({"volume_id": [], "file_path": []}).to_parquet(manifest, index=False)
+    pd.DataFrame({"volume_id": [], "path": []}).to_parquet(manifest, index=False)
     with pytest.raises(SystemExit):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
@@ -468,7 +468,8 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
         "volume_id": ["vol"],
-        "file_path": ["unused"],
+        "path": ["unused"],
+        "p1": [-2.0], "p99": [2.0], "fg_mean": [0.0], "fg_std": [1.0],
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -485,7 +486,7 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
          patch.object(_areg, "get_aggregator",
                       return_value=MeanPoolAggregator), \
          patch.object(_iutils, "load_and_normalise",
-                      return_value=np.zeros((1, 32, 32, 32), dtype=np.float32)):
+                      return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
             "--config", str(config_path),
@@ -503,7 +504,8 @@ def test_embed_entry_exception_during_processing(tmp_path):
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
         "volume_id": ["bad_vol"],
-        "file_path": ["unused"],
+        "path": ["unused"],
+        "p1": [-2.0], "p99": [2.0], "fg_mean": [0.0], "fg_std": [1.0],
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -525,7 +527,7 @@ def test_embed_entry_exception_during_processing(tmp_path):
                       return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
          patch.object(_iutils, "load_and_normalise",
-                      return_value=np.zeros((1, 32, 32, 32), dtype=np.float32)):
+                      return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         # must not raise — exception is caught internally
         embed_entry([
             "--encoder-checkpoint", "best.pt",
@@ -536,3 +538,41 @@ def test_embed_entry_exception_during_processing(tmp_path):
 
     # .npz not written because processing failed
     assert not (output_dir / "bad_vol.npz").exists()
+
+
+def test_embed_entry_load_normalise_returns_none(tmp_path):
+    """embed_entry skips a volume when load_and_normalise returns None."""
+    from misfit.cli.embed_entrypoint import embed_entry
+
+    manifest = tmp_path / "index.parquet"
+    pd.DataFrame({
+        "volume_id": ["bad"],
+        "path": ["missing.nii.gz"],
+        "p1": [-2.0], "p99": [2.0], "fg_mean": [0.0], "fg_std": [1.0],
+    }).to_parquet(manifest, index=False)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+    )
+    output_dir = tmp_path / "out_none"
+
+    import misfit.inference.inference_utils as _iutils_n
+    import misfit.embedding.aggregators.aggregator_registry as _areg_n
+    import misfit.embedding.embedder as _emb_mod_n
+
+    mock_embedder = MagicMock()
+    with patch.object(_iutils_n, "load_checkpoint", return_value={"model": {}}), \
+         patch.object(_iutils_n, "build_model_from_checkpoint", return_value=MagicMock()), \
+         patch.object(_areg_n, "get_aggregator", return_value=MagicMock(return_value=MagicMock())), \
+         patch.object(_emb_mod_n, "Embedder", return_value=mock_embedder), \
+         patch.object(_iutils_n, "load_and_normalise", return_value=None):
+        embed_entry([
+            "--encoder-checkpoint", "best.pt",
+            "--config", str(config_path),
+            "--index", str(manifest),
+            "--output-dir", str(output_dir),
+        ])
+
+    # No .npz written and extract_crop_features never called
+    assert not (output_dir / "bad.npz").exists()
+    mock_embedder.extract_crop_features.assert_not_called()

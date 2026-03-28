@@ -93,9 +93,16 @@ def embed_entry(args=None) -> None:
                 progress.advance(task)
                 continue
 
+            volume = load_and_normalise(
+                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+            )
+            if volume is None:
+                print_error(f"Skipping {row['volume_id']}: could not load {row['path']}")
+                progress.advance(task)
+                continue
+
             try:
-                volume = load_and_normalise(row["file_path"])  # (1, D, H, W)
-                volume_t = torch.from_numpy(volume).float()
+                volume_t = torch.from_numpy(volume).float().unsqueeze(0)  # (1, D, H, W)
                 features, positions = embedder.extract_crop_features(volume_t)
                 np.savez_compressed(out_path, features=features, positions=positions)
             except Exception as exc:

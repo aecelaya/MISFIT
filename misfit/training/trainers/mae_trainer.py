@@ -543,6 +543,11 @@ class MAETrainer:
                     f"lr={lr:.2e}  {status}"
                 )
 
+                # Update best_val_loss before saving rolling checkpoint so that
+                # a resume always restores the correct best-so-far value.
+                if improved:
+                    best_val_loss = val_meter.value
+
                 # Save rolling checkpoint every epoch.
                 self._save_checkpoint(
                     model, optimizer, scheduler, scaler,
@@ -551,7 +556,6 @@ class MAETrainer:
 
                 # Save best model when validation loss improves.
                 if improved:
-                    best_val_loss = val_meter.value
                     self._save_checkpoint(
                         model, optimizer, scheduler, scaler,
                         epoch + 1, global_step, best_val_loss, best_model_path,
