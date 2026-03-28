@@ -576,3 +576,50 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
     # No .npz written and extract_crop_features never called
     assert not (output_dir / "bad.npz").exists()
     mock_embedder.extract_crop_features.assert_not_called()
+
+
+def test_embed_entry_split_filters_index(tmp_path):
+    """embed_entry only processes rows matching --split."""
+    from misfit.cli.embed_entrypoint import embed_entry
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+    )
+    manifest = tmp_path / "index.parquet"
+    pd.DataFrame({
+        "volume_id": ["train_vol", "val_vol"],
+        "path": ["unused", "unused"],
+        "split": ["train", "val"],
+        "p1": [0.0, 0.0], "p99": [1.0, 1.0],
+        "fg_mean": [0.0, 0.0], "fg_std": [1.0, 1.0],
+    }).to_parquet(manifest, index=False)
+
+    output_dir = tmp_path / "embeddings"
+
+    import misfit.inference.inference_utils as _iutils
+    import misfit.embedding.aggregators.aggregator_registry as _areg
+    import misfit.embedding.embedder as _emb_mod
+
+    mock_embedder = MagicMock()
+    mock_embedder.extract_crop_features.return_value = (
+        np.zeros((2, 16), dtype=np.float32),
+        np.zeros((2, 3), dtype=np.float32),
+    )
+
+    with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
+         patch.object(_iutils, "build_model_from_checkpoint", return_value=MagicMock()), \
+         patch.object(_areg, "get_aggregator", return_value=MagicMock(return_value=MagicMock())), \
+         patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
+         patch.object(_iutils, "load_and_normalise",
+                      return_value=np.zeros((32, 32, 32), dtype=np.float32)):
+        embed_entry([
+            "--encoder-checkpoint", "best.pt",
+            "--config", str(config_path),
+            "--index", str(manifest),
+            "--output-dir", str(output_dir),
+            "--split", "val",
+        ])
+
+    # Only val_vol should have been processed (one call to extract_crop_features)
+    assert mock_embedder.extract_crop_features.call_count == 1

@@ -214,24 +214,36 @@ Run evaluation with `misfit_evaluate`:
 
 - `--checkpoint PT` (**required**): Path to a checkpoint produced by
   `misfit_train`.
-- `--index PARQUET` (**required**): Parquet index. Only rows with `split='val'`
-  are evaluated.
+- `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and metrics to compute are read from this
   file.
 - `--output-csv CSV` (**required**): Path where the evaluation results CSV will
   be written.
+- `--split SPLIT`: If the index contains a `split` column, only rows whose
+  split matches this value are evaluated. Pass `--split ""` to evaluate all
+  rows. *(default: `val`)*
 - `--device DEVICE`: Torch device (e.g. `cuda:0`, `cpu`). *(default: auto)*
 
 ### Example
 
-Evaluate a checkpoint.
+Evaluate on the validation split (default).
 
 ```console
 misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
                 --index       /data/index.parquet \
                 --config      /runs/exp1/config.json \
                 --output-csv  /runs/exp1/eval_results.csv
+```
+
+Evaluate on the test split.
+
+```console
+misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+                --index       /data/index.parquet \
+                --config      /runs/exp1/config.json \
+                --output-csv  /runs/exp1/test_results.csv \
+                --split       test
 ```
 
 ### Output
@@ -274,11 +286,14 @@ The reconstruction pipeline:
 2. Zero-pads to the nearest multiple of the patch size in every dimension.
 3. Tiles the padded volume into non-overlapping patches and runs MAE
    reconstruction on each.
-4. Stitches the reconstructed patches back into the full padded volume.
+4. Stitches the reconstructed patches and their masks back into the full padded
+   volume.
 5. Trims padding to restore the original voxel dimensions.
-6. Denormalises intensities back to the original intensity space
+6. Denormalises reconstruction intensities back to the original intensity space
    (`reconstruction × fg_std + fg_mean`).
-7. Saves a NIfTI file using the original affine transform from the index.
+7. Saves outputs under two subdirectories of `--output-dir`:
+   - `reconstructions/<volume_id>.nii.gz` — full-volume reconstruction.
+   - `masks/<volume_id>.nii.gz` — binary visibility mask in the same space.
 
 Run inspection with `misfit_inspect`:
 
@@ -288,6 +303,9 @@ Run inspection with `misfit_inspect`:
   `misfit_train`. Model architecture and patch size are read from this file.
 - `--output-dir DIR` (**required**): Directory where `<volume_id>.nii.gz` files
   are written.
+- `--split SPLIT`: If the index contains a `split` column, only rows whose
+  split matches this value are reconstructed. Omit to reconstruct all rows.
+  *(default: None — all rows)*
 - `--device DEVICE`: Torch device. *(default: auto)*
 
 ### Example
@@ -301,15 +319,33 @@ misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
                --output-dir  /runs/exp1/reconstructions
 ```
 
+Reconstruct only the validation split.
+
+```console
+misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+               --index       /data/index.parquet \
+               --config      /runs/exp1/config.json \
+               --output-dir  /runs/exp1/reconstructions \
+               --split       val
+```
+
 !!!note
-    The output NIfTIs are in the **original coordinate space** with
-    **denormalized intensities** so they can be directly compared to the input
-    volumes in any NIfTI viewer.
+    Both outputs are in the **original coordinate space** (same affine as the
+    input volume). The reconstruction has **denormalized intensities** and the
+    mask is binary (0/1). Load both in ITK-SNAP or 3D Slicer and overlay the
+    mask to see exactly which regions the model reconstructed from scratch.
 
 ### Output
 
-One NIfTI file per volume at `<output-dir>/<volume_id>.nii.gz`, in the original
-image space with denormalized intensities.
+```text
+output-dir/
+    reconstructions/
+        <volume_id>.nii.gz   Full-volume reconstruction with denormalized intensities.
+    masks/
+        <volume_id>.nii.gz   Binary mask: 1 = masked (reconstructed by model),
+                             0 = visible (seen by encoder). Overlay in a
+                             viewer to highlight reconstructed regions.
+```
 
 ---
 
@@ -333,17 +369,30 @@ Run embedding extraction with `misfit_embed`:
   Options: `mean_pool`, `attention_pool`.
 - `--aggregator-checkpoint PT`: Path to a trained aggregator checkpoint produced
   by `misfit_embed_train`. Required when `--aggregator attention_pool`.
+- `--split SPLIT`: If the index contains a `split` column, only rows whose
+  split matches this value are embedded. Omit to embed all rows.
+  *(default: None — all rows)*
 - `--device DEVICE`: Torch device. *(default: auto)*
 
 ### Example
 
-Extract mean-pooled embeddings (zero-shot, no aggregator training required).
+Extract mean-pooled embeddings for all volumes (zero-shot, no aggregator training required).
 
 ```console
 misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
              --index              /data/index.parquet \
              --config             /runs/exp1/config.json \
              --output-dir         /data/embeddings
+```
+
+Embed only the test split.
+
+```console
+misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+             --index              /data/index.parquet \
+             --config             /runs/exp1/config.json \
+             --output-dir         /data/embeddings \
+             --split              test
 ```
 
 Extract embeddings with a trained attention-pooling aggregator.

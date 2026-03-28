@@ -260,7 +260,15 @@ def add_evaluate_args(parser: ArgParser) -> None:
     )
     inp.add_argument(
         "--index", required=True, metavar="PARQUET",
-        help="Path to the Parquet index (from misfit_index). Only 'val' split rows are evaluated.",
+        help="Path to the Parquet index (from misfit_index).",
+    )
+    inp.add_argument(
+        "--split", default="val", metavar="SPLIT",
+        help=(
+            "If the index contains a 'split' column, only rows whose split "
+            "matches this value are evaluated. Set to '' to evaluate all rows. "
+            "Defaults to 'val'."
+        ),
     )
     inp.add_argument(
         "--config", required=True, metavar="JSON",
@@ -348,6 +356,14 @@ def add_embed_args(parser: ArgParser) -> None:
     cfg.add_argument(
         "--device", type=str, default=None, metavar="DEVICE",
         help="Torch device (e.g. 'cuda:0', 'cpu').",
+    )
+    cfg.add_argument(
+        "--split", default=None, metavar="SPLIT",
+        help=(
+            "If the index contains a 'split' column, only rows whose split "
+            "matches this value are embedded. "
+            "Defaults to None (all rows)."
+        ),
     )
 
 
@@ -478,5 +494,13 @@ def add_inspect_args(parser: ArgParser) -> None:
         help=(
             "Torch device (e.g. 'cuda:0', 'cpu'). "
             "Defaults to 'cuda' if available, else 'cpu'."
+        ),
+    )
+    cfg.add_argument(
+        "--split", default=None, metavar="SPLIT",
+        help=(
+            "If the index contains a 'split' column, only rows whose split "
+            "matches this value are reconstructed. "
+            "Defaults to None (all rows)."
         ),
     )

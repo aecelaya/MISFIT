@@ -128,33 +128,61 @@ Training writes a `config.json` to `--results` that captures every architecture 
 
 ### Stage 3 — Evaluation (`misfit_evaluate`) and Inspection (`misfit_inspect`)
 
-`misfit_evaluate` computes reconstruction metrics (MAE, MSE, PSNR, SSIM) on the validation split and writes a per-volume CSV.
+`misfit_evaluate` computes reconstruction metrics (MAE, MSE, PSNR, SSIM) and writes a per-volume CSV. It defaults to the `val` split; pass `--split test` to evaluate on the test set, or `--split ""` for all rows.
 
 ```console
 misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
                 --index      /data/index.parquet \
                 --config     /runs/exp1/config.json \
                 --output-csv /runs/exp1/eval_results.csv
+
+# Evaluate on the test split
+misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
+                --index      /data/index.parquet \
+                --config     /runs/exp1/config.json \
+                --output-csv /runs/exp1/test_results.csv \
+                --split      test
 ```
 
-`misfit_inspect` reconstructs every volume in the index and saves the output as NIfTI files — open them side-by-side with the originals in ITK-SNAP or 3D Slicer to visually assess pretraining quality.
+`misfit_inspect` reconstructs volumes and saves outputs under two subdirectories — `reconstructions/` (denormalized NIfTIs) and `masks/` (binary visibility masks, 1=visible, 0=masked). Load both in ITK-SNAP or 3D Slicer and overlay the mask (1=reconstructed, 0=visible) to highlight exactly which regions the model had to fill in from context. Defaults to all rows; use `--split val` to restrict to the validation set.
 
 ```console
 misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \
                --index      /data/index.parquet \
                --config     /runs/exp1/config.json \
-               --output-dir /runs/exp1/reconstructions
+               --output-dir /runs/exp1/inspect
+
+# Inspect only the validation split
+misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \
+               --index      /data/index.parquet \
+               --config     /runs/exp1/config.json \
+               --output-dir /runs/exp1/inspect \
+               --split      val
+```
+
+Output structure:
+```
+inspect/
+    reconstructions/   <volume_id>.nii.gz   — full-volume reconstruction
+    masks/             <volume_id>.nii.gz   — 1=masked (reconstructed), 0=visible
 ```
 
 ### Stage 4 — Embedding (`misfit_embed` + `misfit_embed_train`)
 
-`misfit_embed` tiles each volume into non-overlapping crops, encodes each crop with the pretrained encoder, and saves per-crop features as `.npz` files. With `--aggregator mean_pool` (default), no additional training is needed — embeddings are ready for zero-shot retrieval or UMAP visualization.
+`misfit_embed` tiles each volume into non-overlapping crops, encodes each crop with the pretrained encoder, and saves per-crop features as `.npz` files. With `--aggregator mean_pool` (default), no additional training is needed — embeddings are ready for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a specific split.
 
 ```console
 misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings
+
+# Embed only the test split
+misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+             --index               /data/index.parquet \
+             --config              /runs/exp1/config.json \
+             --output-dir          /data/embeddings \
+             --split               test
 ```
 
 `misfit_embed_train` fine-tunes a lightweight aggregator head on top of the frozen embeddings for a downstream task. Supports `classification` (cross-entropy) and `contrastive` (Supervised Contrastive) objectives.

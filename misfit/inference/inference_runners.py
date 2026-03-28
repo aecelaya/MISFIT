@@ -3,8 +3,13 @@
 ``reconstruct``
     Runs the full MAE forward pass on every non-overlapping patch of each
     volume, stitches the results back into the original coordinate space,
-    denormalises the intensities, and saves a ``.nii.gz`` file.  Used by
-    ``misfit_inspect`` to visually assess pretraining quality.
+    denormalises the intensities, and saves outputs under two subdirectories:
+
+    - ``reconstructions/`` — full-volume reconstruction NIfTIs.
+    - ``masks/`` — binary visibility masks (1 = visible to encoder,
+      0 = masked out), aggregated across all patches.
+
+    Used by ``misfit_inspect`` to visually assess pretraining quality.
 """
 import json
 from contextlib import nullcontext
@@ -24,9 +29,9 @@ from misfit.utils.progress_bar import get_progress_bar
 def _tiled_reconstruct(
     padded: np.ndarray,
     patch_size: Tuple[int, int, int],
-    model_fn: Callable[[torch.Tensor], torch.Tensor],
+    model_fn: Callable[[torch.Tensor], Dict[str, torch.Tensor]],
     device: Union[str, torch.device],
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """Reconstruct *padded* volume patch-by-patch and stitch results.
 
     Args:
@@ -34,15 +39,18 @@ def _tiled_reconstruct(
             is an exact multiple of the corresponding *patch_size* element.
         patch_size: Patch dimensions (pd, ph, pw).
         model_fn: Callable that maps a ``(1, 1, pd, ph, pw)`` tensor to a
-            reconstructed tensor of the same shape.
+            dict with keys ``"reconstruction"`` and ``"mask"``.
         device: Torch device used for inference tensors.
 
     Returns:
-        Reconstructed numpy array of shape (D', H', W').
+        Tuple of ``(reconstruction, mask)`` numpy arrays, each of shape
+        (D', H', W').  *mask* uses the model convention: 1 = masked voxels,
+        0 = visible voxels.
     """
     pd_, ph_, pw_ = patch_size
     D, H, W = padded.shape
-    output = np.zeros_like(padded)
+    recon_out = np.zeros_like(padded)
+    mask_out = np.zeros_like(padded)
     amp_ctx = (
         torch.amp.autocast("cuda")
         if torch.device(device).type == "cuda"
@@ -57,12 +65,15 @@ def _tiled_reconstruct(
                     torch.from_numpy(patch).unsqueeze(0).unsqueeze(0).float().to(device)
                 )
                 with torch.no_grad(), amp_ctx:
-                    recon = model_fn(tensor)
-                output[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
-                    recon.squeeze().cpu().numpy()
+                    output = model_fn(tensor)
+                recon_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
+                    output["reconstruction"].squeeze().cpu().numpy()
+                )
+                mask_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
+                    output["mask"].squeeze().cpu().numpy()
                 )
 
-    return output
+    return recon_out, mask_out
 
 
 def reconstruct(
@@ -71,6 +82,7 @@ def reconstruct(
     output_dir: Union[str, Path],
     model_config: Dict,
     device: Optional[Union[str, torch.device]] = None,
+    split: Optional[str] = None,
 ) -> None:
     """Reconstruct every volume in *index_path* and save as NIfTI.
 
@@ -80,31 +92,44 @@ def reconstruct(
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension.
     3. Tiles the padded volume into non-overlapping patches and runs MAE
        reconstruction on each patch.
-    4. Stitches the reconstructed patches back into the full padded volume.
+    4. Stitches the reconstructed patches and masks back into the full padded
+       volume.
     5. Trims padding to restore the original voxel dimensions.
-    6. Denormalises intensities (``recon × fg_std + fg_mean``).
-    7. Saves ``<volume_id>.nii.gz`` under *output_dir* using the affine stored
-       in the index.
+    6. Denormalises reconstruction intensities (``recon × fg_std + fg_mean``).
+    7. Saves outputs under two subdirectories of *output_dir*:
+       - ``reconstructions/<volume_id>.nii.gz``
+       - ``masks/<volume_id>.nii.gz`` — 1 = masked (reconstructed by model),
+         0 = visible (seen by encoder). Overlay in a viewer to highlight
+         the regions the model had to fill in.
 
     Args:
         index_path: Parquet index produced by ``misfit_index``.
         checkpoint_path: Pretrained MISFIT checkpoint (``.pt``).
-        output_dir: Directory where ``<volume_id>.nii.gz`` files are written.
+        output_dir: Root output directory.  ``reconstructions/`` and
+            ``masks/`` subdirectories are created automatically.
         model_config: Model configuration dict (``config["model"]`` from
             ``config.json``).
         device: Torch device. Defaults to CUDA if available, else CPU.
+        split: If the index contains a ``split`` column, only rows whose
+            split matches this value are processed.  ``None`` processes all
+            rows.
     """
     device = device or inference_utils.get_default_device()
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    recon_dir = output_dir / "reconstructions"
+    mask_dir = output_dir / "masks"
+    recon_dir.mkdir(parents=True, exist_ok=True)
+    mask_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = inference_utils.load_checkpoint(checkpoint_path, device)
     patch_size = tuple(model_config["patch_size"])
 
     model = inference_utils.build_model_from_checkpoint(checkpoint, model_config, device)
-    model_fn = lambda x: model(x)["reconstruction"]  # noqa: E731
+    model_fn = model  # noqa: E731 — _tiled_reconstruct calls model_fn(tensor)
 
     index_df = pd.read_parquet(index_path)
+    if split and "split" in index_df.columns:
+        index_df = index_df[index_df["split"] == split].reset_index(drop=True)
     n_total = len(index_df)
     errors: List[str] = []
 
@@ -117,7 +142,8 @@ def reconstruct(
 
         for _, row in index_df.iterrows():
             volume_id = row["volume_id"]
-            out_path = output_dir / f"{volume_id}.nii.gz"
+            recon_path = recon_dir / f"{volume_id}.nii.gz"
+            mask_path = mask_dir / f"{volume_id}.nii.gz"
 
             volume = inference_utils.load_and_normalise(
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
@@ -131,16 +157,28 @@ def reconstruct(
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
 
                 padded, original_shape = inference_utils.pad_to_multiple(volume, patch_size)
-                recon_padded = _tiled_reconstruct(padded, patch_size, model_fn, device)
+                recon_padded, mask_padded = _tiled_reconstruct(padded, patch_size, model_fn, device)
 
                 d, h, w = original_shape
                 recon_np = recon_padded[:d, :h, :w]
+                mask_np = mask_padded[:d, :h, :w]
 
+                # Denormalise reconstruction to original intensity space.
                 fg_std  = float(row["fg_std"])
                 fg_mean = float(row["fg_mean"])
                 recon_np = recon_np * fg_std + fg_mean
 
-                nib.save(nib.Nifti1Image(recon_np.astype(np.float32), affine=affine), out_path)
+                nib.save(
+                    nib.Nifti1Image(recon_np.astype(np.float32), affine=affine),
+                    recon_path,
+                )
+                # Save mask with model convention: 1 = masked (reconstructed),
+                # 0 = visible (seen by encoder). Overlay in a viewer to highlight
+                # the regions the model had to reconstruct from context.
+                nib.save(
+                    nib.Nifti1Image(mask_np.astype(np.float32), affine=affine),
+                    mask_path,
+                )
             except Exception as exc:  # pylint: disable=broad-except
                 errors.append(f"Reconstruction failed for {volume_id}: {exc}")
 

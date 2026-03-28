@@ -156,6 +156,7 @@ def test_add_evaluate_args_defaults():
     assert ns.checkpoint == "best.pt"
     assert ns.config == "/runs/exp1/config.json"
     assert ns.device is None
+    assert ns.split == "val"
 
 
 def test_add_inspect_args_defaults():
@@ -170,6 +171,7 @@ def test_add_inspect_args_defaults():
     assert ns.checkpoint == "best.pt"
     assert ns.config == "config.json"
     assert ns.device is None
+    assert ns.split is None
 
 
 def test_add_embed_args_defaults():
@@ -184,6 +186,7 @@ def test_add_embed_args_defaults():
     assert ns.encoder_checkpoint == "best.pt"
     assert ns.aggregator == "mean_pool"
     assert ns.config == "config.json"
+    assert ns.split is None
 
 
 def test_add_embed_train_args_defaults():

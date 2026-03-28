@@ -311,6 +311,78 @@ def test_run_all_volumes_fail_prints_error(evaluator_setup):
     assert "No volumes" in mock_err.call_args[0][0]
 
 
+def test_split_filtering_keeps_only_matching_rows(tmp_path):
+    """When split='val' the evaluator should drop non-val rows from index_df."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    data = np.random.randn(32, 32, 32).astype(np.float32)
+    nifti_path = tmp_path / "vol.nii.gz"
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(nifti_path))
+
+    base_row = {
+        "path": str(nifti_path),
+        "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
+    }
+    df = pd.DataFrame([
+        {"volume_id": "train_vol", "split": "train", **base_row},
+        {"volume_id": "val_vol",   "split": "val",   **base_row},
+        {"volume_id": "test_vol",  "split": "test",  **base_row},
+    ])
+    idx = tmp_path / "split_index.parquet"
+    df.to_parquet(idx, index=False)
+    ckpt = _make_tiny_checkpoint(tmp_path)
+    res = tmp_path / "res.csv"
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            split="val",
+        )
+
+    assert len(ev.index_df) == 1
+    assert ev.index_df.iloc[0]["volume_id"] == "val_vol"
+
+
+def test_split_none_keeps_all_rows(tmp_path):
+    """When split=None the evaluator should keep all rows regardless of split column."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    data = np.random.randn(32, 32, 32).astype(np.float32)
+    nifti_path = tmp_path / "vol.nii.gz"
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(nifti_path))
+
+    base_row = {
+        "path": str(nifti_path),
+        "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
+    }
+    df = pd.DataFrame([
+        {"volume_id": "train_vol", "split": "train", **base_row},
+        {"volume_id": "val_vol",   "split": "val",   **base_row},
+    ])
+    idx = tmp_path / "all_index.parquet"
+    df.to_parquet(idx, index=False)
+    ckpt = _make_tiny_checkpoint(tmp_path)
+    res = tmp_path / "res.csv"
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            split=None,
+        )
+
+    assert len(ev.index_df) == 2
+
+
 def test_run_partial_errors_prints_warning(evaluator_setup, tmp_path):
     """When some volumes fail n_errors > 0 → print_warning path."""
     from misfit.evaluation.evaluator import ReconstructionEvaluator

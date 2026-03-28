@@ -59,4 +59,5 @@ def inspect_entry(args=None) -> None:
         output_dir=Path(ns.output_dir),
         model_config=model_config,
         device=ns.device,
+        split=ns.split or None,
     )

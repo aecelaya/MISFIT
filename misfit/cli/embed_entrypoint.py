@@ -77,8 +77,10 @@ def embed_entry(args=None) -> None:
         device=device,
     )
 
-    # Load index.
+    # Load index and optionally filter to a single split.
     index_df = pd.read_parquet(ns.index)
+    if ns.split and "split" in index_df.columns:
+        index_df = index_df[index_df["split"] == ns.split].reset_index(drop=True)
 
     console.print(
         f"[bold]Embedding {len(index_df)} volumes[/bold]  "

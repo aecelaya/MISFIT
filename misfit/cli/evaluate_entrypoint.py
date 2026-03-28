@@ -77,5 +77,6 @@ def evaluate_entry(args=None) -> None:
         model_config=model_config,
         metrics=metrics,
         device=ns.device,
+        split=ns.split or None,
     )
     evaluator.run()
