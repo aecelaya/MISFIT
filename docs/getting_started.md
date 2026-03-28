@@ -57,29 +57,23 @@ data/
 ### Building an Index
 
 Before training, you must build a **Parquet index** with `misfit_index`. The
-index records the path, intensity statistics, voxel spacing, and affine transform
-for every volume in your dataset. These statistics are computed once and reused
-throughout the rest of the pipeline.
+index records the path, intensity statistics, voxel spacing, and affine
+transform for every volume, and assigns each volume to a `train`, `val`, or
+`test` split. These statistics are computed once and reused throughout the rest
+of the pipeline.
+
+`misfit_index` accepts a CSV or Parquet file with a `path` column listing the
+absolute paths to your NIfTI files:
 
 ```console
-misfit_index --data-dir /path/to/niftis \
+misfit_index --input  /path/to/paths.csv \
              --output /path/to/index.parquet
 ```
 
-Alternatively, if your files span multiple directories, provide a CSV manifest
-with a `path` column:
+On first run, a companion split-config file is written alongside the index
+(e.g. `index_config.json`). It records the train/val/test ratios and random
+seed used to assign the `split` column. Edit it and re-run `misfit_index` to
+change the proportions.
 
-```console
-misfit_index --manifest /path/to/paths.csv \
-             --output /path/to/index.parquet
-```
-
-It is good practice to build separate train and validation indexes:
-
-```console
-misfit_index --data-dir /data/train --output /data/train.parquet
-misfit_index --data-dir /data/val   --output /data/val.parquet
-```
-
-Once your indexes are built, you are ready to start pretraining. See
+Once your index is built, you are ready to start pretraining. See
 [Usage](usage.md) for details on all available commands.

@@ -5,8 +5,9 @@ Advanced Topics
 
 MISFIT writes a `config.json` file to the `--results` directory at the start of
 training. This file records the MISFIT version, model architecture, patch size,
-and all training hyperparameters. It serves as the authoritative record of how a
-checkpoint was produced.
+and all training hyperparameters. It is the **single source of truth** for
+model architecture — `misfit_evaluate`, `misfit_inspect`, and `misfit_embed` all
+require it via `--config` rather than re-accepting architecture flags.
 
 ### config.json structure
 
@@ -17,8 +18,7 @@ Below is an example `config.json` produced by `misfit_train`.
   "misfit_version": "0.1.0-alpha",
 
   "data": {
-    "index_train": "/data/train.parquet",
-    "index_val": "/data/val.parquet"
+    "index": "/data/index.parquet"
   },
 
   "model": {
@@ -54,9 +54,8 @@ Changes to other hyperparameters (learning rate, epochs, optimizer, etc.) are
 allowed and emit a warning so you are aware of the discrepancy.
 
 ```console
-misfit_train --index-train /data/train.parquet \
-             --index-val   /data/val.parquet \
-             --results     /runs/exp1 \
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
              --resume
 ```
 
@@ -66,9 +65,8 @@ If you want to discard a previous run and start from scratch, pass `--overwrite`
 This deletes the existing `config.json` and checkpoints before training begins.
 
 ```console
-misfit_train --index-train /data/train.parquet \
-             --index-val   /data/val.parquet \
-             --results     /runs/exp1 \
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
              --overwrite
 ```
 
@@ -129,11 +127,9 @@ A few practical guidelines:
   the raw voxel count suggests. Consider resampling to isotropic spacing as a
   preprocessing step.
 
-- **The patch size is fixed at inference time.** `misfit_inspect` and
-  `misfit_evaluate` read `patch_size` directly from the checkpoint's saved args,
-  so you do not need to specify it again. `misfit_embed` accepts a separate
-  `--patch-size` argument because embedding crops can differ from the pretraining
-  crop size.
+- **The patch size is fixed at inference time.** `misfit_inspect`, `misfit_evaluate`,
+  and `misfit_embed` all read `patch_size` from `config.json` via `--config`.
+  You do not need to specify it again on the command line.
 
 ---
 
@@ -202,10 +198,9 @@ cluster that supports NCCL. Distributed setup is handled automatically when
 ```console
 torchrun --nproc_per_node=4 \
     $(which misfit_train) \
-        --index-train /data/train.parquet \
-        --index-val   /data/val.parquet \
-        --results     /runs/exp1 \
-        --batch-size  2
+        --index      /data/index.parquet \
+        --results    /runs/exp1 \
+        --batch-size 2
 ```
 
 !!!note
@@ -225,9 +220,8 @@ torchrun --nnodes=2 \
          --master_addr=$MASTER_ADDR \
          --master_port=29500 \
     $(which misfit_train) \
-        --index-train /data/train.parquet \
-        --index-val   /data/val.parquet \
-        --results     /runs/exp1
+        --index   /data/index.parquet \
+        --results /runs/exp1
 ```
 
 ---
@@ -260,11 +254,17 @@ Requires training with `misfit_embed_train` before use. Pass the resulting
 
 ## Embedding Training Objectives
 
+Both objectives train only the aggregator — the pretrained encoder weights are
+frozen. This makes embedding training fast and memory-efficient even on large
+feature sets.
+
 ### Classification (`classification`)
 
-Optimizes a cross-entropy loss for multi-class label prediction. The
-aggregator learns to produce discriminative embeddings for the target label
-column in your `--labels-csv`.
+Optimizes a cross-entropy loss for multi-class label prediction. The aggregator
+learns to produce discriminative embeddings for the `label` column in your
+`--input` CSV. Labels are treated as strings and mapped to integer indices
+lexicographically; the mapping is saved in `aggregator.pt` for
+inference-time decoding.
 
 ### Contrastive (`contrastive`)
 
@@ -276,7 +276,28 @@ Contrastive training generally produces more generalizable embeddings than
 classification training, at the cost of requiring balanced sampling.
 `--batch-size` must be even.
 
-!!!note
-    Both objectives train only the aggregator — the pretrained encoder weights
-    are frozen. This makes embedding training fast and memory-efficient even on
-    large feature sets.
+---
+
+## Preparing the Embedding Training Input CSV
+
+`misfit_embed_train` accepts a single unified CSV with four required columns:
+
+| Column | Description |
+|---|---|
+| `volume_id` | Volume identifier — used for logging only. |
+| `split` | Dataset split. Only `split='train'` rows are used for training. |
+| `features_path` | Absolute path to the `.npz` file produced by `misfit_embed`. |
+| `label` | String label for the training objective. |
+
+A minimal example:
+
+```csv
+volume_id,split,features_path,label
+CT_001,train,/data/embeddings/CT_001.npz,adenocarcinoma
+CT_002,train,/data/embeddings/CT_002.npz,squamous_cell
+CT_003,val,/data/embeddings/CT_003.npz,adenocarcinoma
+CT_004,val,/data/embeddings/CT_004.npz,squamous_cell
+```
+
+You can include val and test rows in the same file — only `split='train'` rows
+are loaded for aggregator training.

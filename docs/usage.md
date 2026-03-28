@@ -4,46 +4,24 @@ Usage
 ## Overview
 
 MISFIT is a **command-line tool** for pretraining and deploying 3D medical
-imaging foundation models. The core pipeline consists of three stages:
+imaging foundation models. The core pipeline consists of four stages:
 
-1. **Indexing** — Scans a directory (or manifest) of NIfTI files and computes
-per-volume intensity statistics, spacing, and affine transforms. Produces a
-Parquet index file that all downstream commands consume.
+1. **Indexing** — Scans a manifest of NIfTI files, computes per-volume intensity
+statistics and spacing, assigns train/val/test splits, and produces a Parquet
+index that all downstream commands consume.
 
 2. **Pretraining** — Trains a SwinUNETR masked autoencoder (MAE) on the indexed
 dataset. The encoder learns to reconstruct randomly masked patches of each
 volume, producing generalizable semantic representations without any labels.
 
-3. **Evaluation / Deployment** — A suite of commands for assessing pretraining
-quality, generating full-volume reconstructions, and extracting embeddings for
-downstream tasks.
+3. **Evaluation / Inspection** — Commands for measuring reconstruction quality
+on the validation set and generating full-volume reconstruction NIfTIs for
+visual inspection.
 
-MISFIT also provides a `misfit_run` convenience command to chain indexing and
-pretraining in a single call.
-
----
-
-## Running the full pipeline
-
-To index a dataset and immediately launch pretraining, use `misfit_run`:
-
-- `--data-dir DIR` or `--manifest CSV` (**required**): Source of NIfTI files.
-- `--output PARQUET` (**required**): Path for the output Parquet index.
-- `--index-train PARQUET` (**required**): Index to use for training (can be the
-  same as `--output`).
-- `--index-val PARQUET` (**required**): Index to use for validation.
-- `--results DIR` (**required**): Output directory for checkpoints and logs.
-- All `misfit_train` arguments are also accepted (see [Training](#training) below).
-
-### Example
-
-```console
-misfit_run --data-dir /data/niftis \
-           --output /data/index.parquet \
-           --index-train /data/index.parquet \
-           --index-val /data/val.parquet \
-           --results /runs/exp1
-```
+4. **Embedding** — Extracts per-volume feature vectors from the pretrained
+encoder for downstream tasks such as classification, retrieval, and anomaly
+detection. A lightweight aggregator can be fine-tuned on labeled data with
+`misfit_embed_train`.
 
 ---
 
@@ -51,32 +29,40 @@ misfit_run --data-dir /data/niftis \
 
 The **indexing step** scans your NIfTI files and records the path, intensity
 statistics (p1, p99, foreground mean, foreground std), voxel spacing, image
-shape, and affine transform for each volume. The output is a single Parquet file
-consumed by all downstream MISFIT commands.
+shape, and affine transform for each volume. It also assigns each volume a
+`split` label (`train`, `val`, or `test`) using configurable ratios. The output
+is a single Parquet file consumed by all downstream MISFIT commands.
 
-Run indexing alone with `misfit_index`:
+Run indexing with `misfit_index`:
 
-- `--data-dir DIR` or `--manifest CSV` (**required**, mutually exclusive):
-  Either recursively search `DIR` for `.nii` and `.nii.gz` files, or provide a
-  CSV with a `path` column listing NIfTI file paths explicitly.
-- `--output PARQUET` (**required**): Destination path for the Parquet index.
-- `--num-workers N`: Number of parallel worker processes. *(default: 32)*
+- `--input FILE` (**required**): CSV or Parquet file with a `path` column
+  listing absolute paths to NIfTI files.
+- `--output PARQUET` (**required**): Destination path for the output Parquet
+  index.
+- `--num-workers-index N`: Number of parallel worker processes. *(default: 32)*
+
+### Split configuration
+
+On first run, `misfit_index` writes a companion `<output_stem>_config.json`
+file alongside the Parquet index. This file records the split ratios and
+random seed used to assign the `split` column. Edit it and re-run
+`misfit_index` to change the split proportions.
 
 ### Example
 
-Index a directory of NIfTI files using 16 parallel workers.
+Index from a CSV manifest.
 
 ```console
-misfit_index --data-dir /data/niftis \
-             --output /data/index.parquet \
-             --num-workers 16
+misfit_index --input  /data/paths.csv \
+             --output /data/index.parquet
 ```
 
-Index from an explicit manifest CSV.
+Index with 64 parallel workers.
 
 ```console
-misfit_index --manifest /data/paths.csv \
-             --output /data/index.parquet
+misfit_index --input             /data/paths.csv \
+             --output            /data/index.parquet \
+             --num-workers-index 64
 ```
 
 ### Output
@@ -88,6 +74,7 @@ one NIfTI volume and contains the following columns:
 |---|---|
 | `volume_id` | Unique identifier derived from the filename (no extension). |
 | `path` | Absolute path to the NIfTI file. |
+| `split` | Dataset split: `train`, `val`, or `test`. |
 | `p1` | 1st-percentile foreground intensity (lower clip bound for normalization). |
 | `p99` | 99th-percentile foreground intensity (upper clip bound). |
 | `fg_mean` | Foreground mean intensity after clipping. |
@@ -103,18 +90,21 @@ one NIfTI volume and contains the following columns:
 The **training step** pretrains a SwinUNETR masked autoencoder on the indexed
 dataset. At each iteration a random 75% of patch tokens are masked, and the
 model learns to reconstruct the missing voxels from the visible context.
+Train/val split is determined by the `split` column in the index.
 
 Run training with `misfit_train`:
 
 ### Data
 
-- `--index-train PARQUET` (**required**): Training Parquet index.
-- `--index-val PARQUET` (**required**): Validation Parquet index.
+- `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.
+  Rows with `split='train'` are used for training; rows with `split='val'` for
+  validation.
 - `--num-cpu-workers N`: CPU worker processes for data loading. *(default: 8)*
 
 ### Output
 
-- `--results DIR` (**required**): Directory for checkpoints and TensorBoard logs.
+- `--results DIR` (**required**): Directory for checkpoints, `config.json`, and
+  TensorBoard logs.
 
 ### Model
 
@@ -157,12 +147,11 @@ Run training with `misfit_train`:
 
 ### Example
 
-Train a base SwinMAE for 200 epochs on a single GPU.
+Train a base SwinMAE for 200 epochs.
 
 ```console
-misfit_train --index-train /data/train.parquet \
-             --index-val   /data/val.parquet \
-             --results     /runs/exp1
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1
 ```
 
 Train a small model on 4 GPUs using `torchrun`.
@@ -170,18 +159,16 @@ Train a small model on 4 GPUs using `torchrun`.
 ```console
 torchrun --nproc_per_node=4 \
     $(which misfit_train) \
-        --index-train /data/train.parquet \
-        --index-val   /data/val.parquet \
-        --results     /runs/exp1 \
-        --model       swinmae-small
+        --index   /data/index.parquet \
+        --results /runs/exp1 \
+        --model   swinmae-small
 ```
 
 Resume a run that was interrupted.
 
 ```console
-misfit_train --index-train /data/train.parquet \
-             --index-val   /data/val.parquet \
-             --results     /runs/exp1 \
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
              --resume
 ```
 
@@ -197,15 +184,19 @@ results/
                             hyperparameters, and MISFIT version).
 ```
 
+`config.json` is the **single source of truth** for model architecture. It is
+required by `misfit_evaluate`, `misfit_inspect`, and `misfit_embed` to
+reconstruct the correct model without re-specifying any flags.
+
 ---
 
 ## Evaluation
 
-The **evaluation step** measures reconstruction quality on a held-out validation
-set. For each volume, the evaluator tiles the full volume into non-overlapping
+The **evaluation step** measures reconstruction quality on the validation split.
+For each volume, the evaluator tiles the full volume into non-overlapping
 patches, runs a complete MAE forward pass on each patch (with a fresh random
-mask), computes masked reconstruction metrics per patch, and averages the results
-across all patches to produce one score per volume.
+mask), computes masked reconstruction metrics per patch, and averages the
+results across all patches to produce one score per volume.
 
 !!!note
     Metrics are computed on the **masked patches only** — the voxels the encoder
@@ -215,34 +206,29 @@ Run evaluation with `misfit_evaluate`:
 
 - `--checkpoint PT` (**required**): Path to a checkpoint produced by
   `misfit_train`.
-- `--index-val PARQUET` (**required**): Validation Parquet index.
-- `--results DIR` (**required**): Output directory for `evaluation_results.csv`.
-- `--metrics METRIC ...`: Metrics to compute. *(default: all)*
-  Available metrics: `masked_mae`, `masked_mse`, `masked_psnr`, `ssim`.
+- `--index PARQUET` (**required**): Parquet index. Only rows with `split='val'`
+  are evaluated.
+- `--config JSON` (**required**): Path to the `config.json` produced by
+  `misfit_train`. Model architecture and metrics to compute are read from this
+  file.
+- `--output-csv CSV` (**required**): Path where the evaluation results CSV will
+  be written.
 - `--device DEVICE`: Torch device (e.g. `cuda:0`, `cpu`). *(default: auto)*
 
 ### Example
 
-Evaluate a checkpoint with all metrics.
+Evaluate a checkpoint.
 
 ```console
-misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
-                --index-val  /data/val.parquet \
-                --results    /runs/exp1/eval
-```
-
-Evaluate with only SSIM and masked MAE.
-
-```console
-misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
-                --index-val  /data/val.parquet \
-                --results    /runs/exp1/eval \
-                --metrics    ssim masked_mae
+misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+                --index       /data/index.parquet \
+                --config      /runs/exp1/config.json \
+                --output-csv  /runs/exp1/eval_results.csv
 ```
 
 ### Output
 
-A single CSV file at `<results>/evaluation_results.csv`. Each row is one volume.
+A single CSV file at the path given by `--output-csv`. Each row is one volume.
 Five summary rows are appended at the bottom of the file.
 
 | `volume_id` | `masked_mae` | `masked_mse` | `masked_psnr` | `ssim` |
@@ -290,21 +276,21 @@ Run inspection with `misfit_inspect`:
 
 - `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint.
 - `--index PARQUET` (**required**): Parquet index of volumes to reconstruct.
+- `--config JSON` (**required**): Path to the `config.json` produced by
+  `misfit_train`. Model architecture and patch size are read from this file.
 - `--output-dir DIR` (**required**): Directory where `<volume_id>.nii.gz` files
   are written.
-- `--inferer NAME`: Inference strategy per patch. *(default: `whole_volume`)*
-  Options: `whole_volume`, `sliding_window`.
-- `--tta NAME`: Test-time augmentation strategy. *(default: `none`)*
 - `--device DEVICE`: Torch device. *(default: auto)*
 
 ### Example
 
-Reconstruct all volumes in a validation index.
+Reconstruct all volumes in the index.
 
 ```console
-misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \
-               --index      /data/val.parquet \
-               --output-dir /runs/exp1/reconstructions
+misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+               --index       /data/index.parquet \
+               --config      /runs/exp1/config.json \
+               --output-dir  /runs/exp1/reconstructions
 ```
 
 !!!note
@@ -321,22 +307,24 @@ image space with denormalized intensities.
 
 ## Embedding
 
-The **embedding step** uses the pretrained encoder to extract a per-volume
-feature vector for every volume in an index. These embeddings can be used
-directly for zero-shot retrieval (using `mean_pool` aggregation) or fine-tuned
-for a downstream task with `misfit_embed_train`.
+The **embedding step** uses the pretrained encoder to extract per-crop feature
+vectors for every volume in an index. These embeddings can be used directly for
+zero-shot retrieval (using `mean_pool` aggregation) or fine-tuned for a
+downstream task with `misfit_embed_train`.
 
 Run embedding extraction with `misfit_embed`:
 
-- `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint.
+- `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
+  checkpoint.
 - `--index PARQUET` (**required**): Parquet index of volumes to embed.
+- `--config JSON` (**required**): Path to the `config.json` produced by
+  `misfit_train`. Model architecture and patch size are read from this file.
 - `--output-dir DIR` (**required**): Directory where `.npz` files are saved.
 - `--aggregator NAME`: Aggregation strategy for combining patch-level features
   into a single volume-level embedding. *(default: `mean_pool`)*
   Options: `mean_pool`, `attention_pool`.
 - `--aggregator-checkpoint PT`: Path to a trained aggregator checkpoint produced
   by `misfit_embed_train`. Required when `--aggregator attention_pool`.
-- `--patch-size P`: Edge length of each cubic crop in voxels. *(default: 96)*
 - `--device DEVICE`: Torch device. *(default: auto)*
 
 ### Example
@@ -344,19 +332,21 @@ Run embedding extraction with `misfit_embed`:
 Extract mean-pooled embeddings (zero-shot, no aggregator training required).
 
 ```console
-misfit_embed --checkpoint  /runs/exp1/models/best_model.pt \
-             --index       /data/cohort.parquet \
-             --output-dir  /data/embeddings
+misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+             --index              /data/index.parquet \
+             --config             /runs/exp1/config.json \
+             --output-dir         /data/embeddings
 ```
 
 Extract embeddings with a trained attention-pooling aggregator.
 
 ```console
-misfit_embed --checkpoint             /runs/exp1/models/best_model.pt \
-             --index                  /data/cohort.parquet \
-             --output-dir             /data/embeddings \
-             --aggregator             attention_pool \
-             --aggregator-checkpoint  /runs/agg/aggregator.pt
+misfit_embed --encoder-checkpoint  /runs/exp1/models/best_model.pt \
+             --index               /data/index.parquet \
+             --config              /runs/exp1/config.json \
+             --output-dir          /data/embeddings \
+             --aggregator          attention_pool \
+             --aggregator-checkpoint /runs/agg/aggregator.pt
 ```
 
 ### Output
@@ -380,12 +370,19 @@ Run aggregator training with `misfit_embed_train`:
 
 ### Input
 
-- `--features-dir DIR` (**required**): Directory of `.npz` files produced by
-  `misfit_embed`.
-- `--labels-csv CSV` (**required**): CSV with at least a `volume_id` column and
-  one label column. Rows are joined to feature files on `volume_id`.
-- `--label-col COL` (**required**): Column in `--labels-csv` to use as the
-  training target.
+- `--input CSV` (**required**): Unified CSV with columns:
+
+  | Column | Description |
+  |---|---|
+  | `volume_id` | Volume identifier. |
+  | `split` | Dataset split. Only rows where `split='train'` are used. |
+  | `features_path` | Absolute path to the `.npz` file produced by `misfit_embed`. |
+  | `label` | String label for the training objective. |
+
+  Labels are always treated as strings. Integer or boolean labels should be
+  converted to strings before passing. The mapping from label strings to
+  integer indices is saved in the output `aggregator.pt` checkpoint for
+  inference-time decoding.
 
 ### Output
 
@@ -417,28 +414,25 @@ Run aggregator training with `misfit_embed_train`:
 Train an attention-pooling aggregator for classification.
 
 ```console
-misfit_embed_train --features-dir /data/embeddings \
-                   --labels-csv   /data/labels.csv \
-                   --label-col    diagnosis \
-                   --output-dir   /runs/agg \
-                   --embed-dim    768
+misfit_embed_train --input      /data/train_manifest.csv \
+                   --output-dir /runs/agg \
+                   --embed-dim  768
 ```
 
 Train with a contrastive objective.
 
 ```console
-misfit_embed_train --features-dir /data/embeddings \
-                   --labels-csv   /data/labels.csv \
-                   --label-col    diagnosis \
-                   --output-dir   /runs/agg \
-                   --embed-dim    768 \
-                   --objective    contrastive
+misfit_embed_train --input      /data/train_manifest.csv \
+                   --output-dir /runs/agg \
+                   --embed-dim  768 \
+                   --objective  contrastive
 ```
 
 ### Output
 
 ```text
 output-dir/
-    aggregator.pt   Trained aggregator weights. Pass to misfit_embed
-                    via --aggregator-checkpoint to use at inference time.
+    aggregator.pt   Trained aggregator weights and label_to_idx mapping.
+                    Pass to misfit_embed via --aggregator-checkpoint to
+                    use at inference time.
 ```
