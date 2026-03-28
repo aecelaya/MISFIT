@@ -3,12 +3,9 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
 [![Python](https://img.shields.io/pypi/pyversions/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)]()
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical imaging foundation models using masked autoencoders (MAE). Give it a directory of unlabeled NIfTI files and it produces a pretrained encoder — no labels required.
-
-Developed in collaboration with **Rice University** and **The University of Texas MD Anderson Cancer Center**.
 
 ---
 
@@ -202,24 +199,3 @@ results/
 `config.json` is the single source of truth for model architecture. Every downstream command (`misfit_evaluate`, `misfit_inspect`, `misfit_embed`) requires it via `--config` rather than re-accepting architecture flags. This prevents silent mismatches between training and inference.
 
 When resuming with `--resume`, MISFIT validates that the model name and patch size are unchanged (hard error if not). Changes to other hyperparameters emit a warning but are allowed.
-
----
-
-## Citation
-
-If you use MISFIT in your research, please cite:
-
-```bibtex
-@software{misfit2026,
-  title  = {{MISFIT}: Medical Imaging Semantic Foundation Toolkit},
-  author = {Celaya, Adrian and Fuentes, David and Riviere, Beatrice},
-  year   = {2026},
-  url    = {https://github.com/mist-medical/MISFIT}
-}
-```
-
----
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE) for details.
