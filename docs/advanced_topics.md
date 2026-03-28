@@ -39,6 +39,13 @@ Below is an example `config.json` produced by `misfit_train`.
     "loss": "normalized_masked_mse",
     "amp": true,
     "seed": 42
+  },
+
+  "evaluation": {
+    "masked_mae":  {},
+    "masked_mse":  {},
+    "masked_psnr": {},
+    "ssim":        {}
   }
 }
 ```
@@ -119,8 +126,11 @@ SwinUNETR downsampling stages).
 A few practical guidelines:
 
 - **GPU memory** is the primary constraint. A 32 GB GPU with batch size 2 can
-  comfortably fit `96 96 96` at float32. Reduce to `64 64 64` if you run out of
-  memory, or set `"amp": false` in `config.json` to disable mixed precision.
+  comfortably fit `96 96 96`. Reduce to `64 64 64` if you run out of memory.
+  Mixed-precision (AMP) is always enabled on new runs. To disable it, let
+  training run for at least one epoch (so `config.json` is written), then set
+  `"amp": false` in the `training` section of `config.json` and restart with
+  `--resume`.
 
 - **Voxel spacing matters.** If your data has 5 mm slice thickness (thick-slice
   CT or MRI), a `96 96 96` crop at 1 mm isotropic covers much more anatomy than

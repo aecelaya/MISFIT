@@ -75,13 +75,16 @@ one NIfTI volume and contains the following columns:
 | `volume_id` | Unique identifier derived from the filename (no extension). |
 | `path` | Absolute path to the NIfTI file. |
 | `split` | Dataset split: `train`, `val`, or `test`. |
+| `shape_d` / `shape_h` / `shape_w` | Voxel dimensions (depth, height, width). |
+| `spacing_d` / `spacing_h` / `spacing_w` | Voxel spacing in mm. |
+| `affine` | JSON-encoded 4×4 affine transform matrix. |
+| `fg_x_start` / `fg_x_end` | Foreground bounding box extent along x. |
+| `fg_y_start` / `fg_y_end` | Foreground bounding box extent along y. |
+| `fg_z_start` / `fg_z_end` | Foreground bounding box extent along z. |
 | `p1` | 1st-percentile foreground intensity (lower clip bound for normalization). |
 | `p99` | 99th-percentile foreground intensity (upper clip bound). |
 | `fg_mean` | Foreground mean intensity after clipping. |
 | `fg_std` | Foreground standard deviation after clipping. |
-| `shape_d` / `shape_h` / `shape_w` | Voxel dimensions (depth, height, width). |
-| `spacing_d` / `spacing_h` / `spacing_w` | Voxel spacing in mm. |
-| `affine` | JSON-encoded 4×4 affine transform matrix. |
 
 ---
 
@@ -176,10 +179,11 @@ misfit_train --index   /data/index.parquet \
 
 ```text
 results/
-    logs/                   TensorBoard event files.
+    checkpoints/
+        checkpoint.pt       Latest checkpoint (overwritten each epoch).
     models/
         best_model.pt       Checkpoint with the lowest validation loss.
-        checkpoint.pt       Latest checkpoint (overwritten each epoch).
+    logs/                   TensorBoard event files.
     config.json             Reproducibility config (architecture, patch size,
                             hyperparameters, and MISFIT version).
 ```
