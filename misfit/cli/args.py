@@ -296,6 +296,58 @@ def add_evaluate_args(parser: ArgParser) -> None:
     )
 
 
+def add_encode_args(parser: ArgParser) -> None:
+    """Add ``misfit_encode`` arguments to *parser*.
+
+    Args:
+        parser: The :class:`ArgParser` to populate.
+    """
+    # --- Input ---
+    inp = parser.add_argument_group("Encode: Input")
+    inp.add_argument(
+        "--encoder-checkpoint", required=True, metavar="PT",
+        dest="encoder_checkpoint",
+        help="Path to a pretrained MISFIT encoder checkpoint (.pt).",
+    )
+    inp.add_argument(
+        "--index", required=True, metavar="PARQUET",
+        help="Path to the Parquet index of volumes to encode.",
+    )
+
+    # --- Output ---
+    out = parser.add_argument_group("Encode: Output")
+    out.add_argument(
+        "--output-dir", required=True, metavar="DIR",
+        help=(
+            "Directory where per-volume .npz files are saved. "
+            "Each file contains 'feature_map (N_crops, C, D', H', W')' "
+            "and 'positions (N_crops, 3)'."
+        ),
+    )
+
+    # --- Model config ---
+    cfg = parser.add_argument_group("Encode: Configuration")
+    cfg.add_argument(
+        "--config", required=True, metavar="JSON",
+        help=(
+            "Path to the config.json produced by misfit_train. "
+            "Model architecture and patch size are read from the 'model' section."
+        ),
+    )
+    cfg.add_argument(
+        "--split", default=None, metavar="SPLIT",
+        help=(
+            "If the index contains a 'split' column, only rows whose split "
+            "matches this value are encoded. "
+            "Defaults to None (all rows)."
+        ),
+    )
+    cfg.add_argument(
+        "--device", type=str, default=None, metavar="DEVICE",
+        help="Torch device (e.g. 'cuda:0', 'cpu').",
+    )
+
+
 def add_embed_args(parser: ArgParser) -> None:
     """Add ``misfit_embed`` arguments to *parser*.
 

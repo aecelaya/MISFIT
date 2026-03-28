@@ -417,6 +417,52 @@ One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
 
 ---
 
+## Encoding
+
+The **encoding step** extracts the full spatial bottleneck feature map from the
+pretrained encoder for every crop of every volume.  Unlike `misfit_embed`, which
+global-average-pools each crop down to a single ``(C,)`` vector, `misfit_encode`
+preserves the spatial structure within each crop, producing
+``(N_crops, C, D', H', W')`` tensors where ``D' = H' = W' = patch_size / 32``
+(e.g. 3 for a 96-voxel crop).
+
+Use `misfit_encode` when you need spatially-rich features for:
+- Training aggregators that attend over spatial tokens within each crop
+- Dense prediction fine-tuning (segmentation, detection)
+- Any downstream model that benefits from sub-crop spatial context
+
+Run encoding with `misfit_encode`:
+
+- `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
+  checkpoint.
+- `--index PARQUET` (**required**): Parquet index of volumes to encode.
+- `--config JSON` (**required**): Path to the `config.json` produced by
+  `misfit_train`. Model architecture and patch size are read from this file.
+- `--output-dir DIR` (**required**): Directory where `.npz` files are saved.
+- `--split SPLIT`: If the index contains a `split` column, only rows whose
+  split matches this value are encoded. Defaults to None (all rows).
+- `--device DEVICE`: Torch device. *(default: auto)*
+
+### Example
+
+```console
+misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
+              --index               /data/index.parquet \
+              --config              /runs/exp1/config.json \
+              --output-dir          /data/encodings
+```
+
+### Output
+
+One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
+
+| Key | Shape | Description |
+|---|---|---|
+| `feature_map` | `(N_crops, C, D', H', W')` | Full spatial bottleneck feature maps. |
+| `positions` | `(N_crops, 3)` | Normalised 3D centre coordinates of each crop. |
+
+---
+
 ## Embedding Training
 
 The **embedding training step** fine-tunes a lightweight aggregator head on top

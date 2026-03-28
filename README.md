@@ -16,7 +16,8 @@ MISFIT trains a [SwinUNETR](https://arxiv.org/abs/2201.01266)-based masked autoe
 ```
 Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
                                                                ↓
-                                              misfit_embed  →  Volume Embeddings
+                                             misfit_encode  →  Raw Spatial Features (N_crops, C, D', H', W')
+                                              misfit_embed  →  Pooled Crop Features (N_crops, C)
                                                                ↓
                                         misfit_embed_train  →  Classifier / Retrieval
 ```
@@ -26,7 +27,7 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 ## Key Features
 
 - **No labels required** — pretrains entirely on unlabeled NIfTI volumes
-- **End-to-end pipeline** — six CLI commands take you from raw files to downstream-ready embeddings
+- **End-to-end pipeline** — seven CLI commands take you from raw files to downstream-ready embeddings
 - **3D-native** — operates on full volumetric data, not 2D slices
 - **Mixed modality** — the `normalized_masked_mse` loss normalizes per-patch variance, handling CT and MRI in the same training run
 - **Scalable** — single-GPU to multi-node training via `torchrun`; the same command runs everywhere
@@ -167,9 +168,18 @@ inspect/
     masks/             <volume_id>.nii.gz   — 1=masked (reconstructed), 0=visible
 ```
 
-### Stage 4 — Embedding (`misfit_embed` + `misfit_embed_train`)
+### Stage 4 — Encoding & Embedding (`misfit_encode`, `misfit_embed` + `misfit_embed_train`)
 
-`misfit_embed` tiles each volume into non-overlapping crops, encodes each crop with the pretrained encoder, and saves per-crop features as `.npz` files. With `--aggregator mean_pool` (default), no additional training is needed — embeddings are ready for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a specific split.
+`misfit_encode` saves the **full spatial bottleneck feature map** `(N_crops, C, D', H', W')` for every crop — useful for training spatially-rich aggregators or dense prediction fine-tuning.
+
+```console
+misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
+              --index               /data/index.parquet \
+              --config              /runs/exp1/config.json \
+              --output-dir          /data/encodings
+```
+
+`misfit_embed` tiles each volume into non-overlapping crops, encodes each crop with the pretrained encoder, GAP-pools to `(N_crops, C)`, and saves per-crop features as `.npz` files. With `--aggregator mean_pool` (default), no additional training is needed — embeddings are ready for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a specific split.
 
 ```console
 misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \

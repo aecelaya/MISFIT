@@ -52,6 +52,7 @@ misfit_index    = "misfit.cli.index_entrypoint:index_entry"
 misfit_train    = "misfit.cli.train_entrypoint:train_entry"
 misfit_evaluate = "misfit.cli.evaluate_entrypoint:evaluate_entry"
 misfit_inspect  = "misfit.cli.inspect_entrypoint:inspect_entry"
+misfit_encode      = "misfit.cli.encode_entrypoint:encode_entry"
 misfit_embed       = "misfit.cli.embed_entrypoint:embed_entry"
 misfit_embed_train = "misfit.cli.embed_train_entrypoint:embed_train_entry"
 
