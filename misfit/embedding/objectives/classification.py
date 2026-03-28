@@ -1,11 +1,10 @@
 """Classification objective — cross-entropy loss with a linear head."""
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import BatchSampler, RandomSampler
+from torch.utils.data import BatchSampler
 
 from misfit.embedding.objectives.base import (
     CropFeaturesDataset,

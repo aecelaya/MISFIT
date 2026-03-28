@@ -1,7 +1,5 @@
 """EmbedTrainer — trains an aggregator on cached per-crop feature files."""
-import warnings
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import torch

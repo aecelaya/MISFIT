@@ -5,7 +5,7 @@ per-column summary statistics (mean, std, quartiles).
 """
 import warnings
 from functools import partial
-from typing import Dict, List
+from typing import List
 
 import numpy as np
 import pandas as pd

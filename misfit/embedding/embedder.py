@@ -1,5 +1,4 @@
 """Embedder — tiles a volume into crops, encodes each, aggregates to one vector."""
-from pathlib import Path
 from typing import Callable, Optional, Tuple
 
 import numpy as np

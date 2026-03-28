@@ -17,7 +17,7 @@ import pandas as pd
 import torch
 
 from misfit.inference import inference_utils
-from misfit.utils.console import print_error, print_section_header, print_success, print_warning
+from misfit.utils.console import print_section_header, print_success, print_warning
 from misfit.utils.progress_bar import get_progress_bar
 
 

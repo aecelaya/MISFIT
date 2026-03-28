@@ -5,6 +5,7 @@ process. They have no shared state and rely only on standard library and
 nibabel/numpy, keeping the pickling overhead low.
 """
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
@@ -93,6 +94,12 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
         # Handle 4D volumes (e.g., fMRI, DWI): take first frame.
         volume = np.asarray(img.dataobj, dtype=np.float32)
         if volume.ndim == 4:
+            warnings.warn(
+                f"{path}: 4D volume detected (shape {volume.shape}), "
+                "using first frame only. If this is a multi-echo or "
+                "diffusion series, consider preprocessing to 3D first.",
+                stacklevel=2,
+            )
             volume = volume[..., 0]
         if volume.ndim != 3:
             return {
@@ -114,6 +121,13 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
 
         # Fall back to the full volume if foreground detection fails.
         if not fg_mask.any():
+            warnings.warn(
+                f"{path}: foreground detection returned an empty mask "
+                "(all voxels at or below the 0.5th percentile). "
+                "Falling back to full-volume statistics. "
+                "This may indicate a corrupted or near-empty scan.",
+                stacklevel=2,
+            )
             fg_mask = np.ones(volume.shape, dtype=bool)
 
         # --- Foreground bounding box ---

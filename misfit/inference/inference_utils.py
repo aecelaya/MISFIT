@@ -1,6 +1,6 @@
 """Utility functions for MISFIT inference modules."""
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np

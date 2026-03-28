@@ -4,6 +4,7 @@ Streams NIfTI volumes on the fly from a Parquet metadata index built by
 misfit_index. Normalization (clip + z-score) is applied using precomputed
 per-volume statistics stored in the index — no recomputation at training time.
 """
+import warnings
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
@@ -107,6 +108,11 @@ class MISFITDataset(Dataset):
 
         # Handle 4D volumes (fMRI, DWI): take the first frame.
         if volume.ndim == 4:
+            warnings.warn(
+                f"{row['path']}: 4D volume encountered during training "
+                f"(shape {volume.shape}), using first frame only.",
+                stacklevel=2,
+            )
             volume = volume[..., 0]
 
         # Clip + z-score using precomputed index statistics.

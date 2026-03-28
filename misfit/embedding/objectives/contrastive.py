@@ -1,6 +1,5 @@
 """Contrastive objective — Supervised Contrastive loss with K=2 enforcement."""
 import warnings
-from pathlib import Path
 from typing import Iterator, List, Optional
 
 import pandas as pd

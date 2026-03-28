@@ -17,7 +17,6 @@ Multi-node (4 nodes × 8 GPUs)::
         --index index.parquet --results /runs/exp1 --model swinmae-base
 """
 from argparse import ArgumentDefaultsHelpFormatter
-from typing import Optional, List
 
 from misfit.cli.args import ArgParser, add_train_args
 from misfit.training.trainers.mae_trainer import MAETrainer
