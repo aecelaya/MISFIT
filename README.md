@@ -17,9 +17,10 @@ MISFIT trains a [SwinUNETR](https://arxiv.org/abs/2201.01266)-based masked autoe
 Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
                                                                ↓
                                              misfit_encode  →  Raw Spatial Features (N_crops, C, D', H', W')
-                                              misfit_embed  →  Pooled Crop Features (N_crops, C)
                                                                ↓
-                                        misfit_embed_train  →  Classifier / Retrieval
+                                        misfit_embed_train  →  Trained Aggregator (optional)
+                                                               ↓
+                                              misfit_embed  →  Global Embedding (C,)  →  Retrieval / Classifier
 ```
 
 ---
