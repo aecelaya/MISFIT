@@ -170,7 +170,7 @@ inspect/
 
 ### Stage 4 — Encoding & Embedding (`misfit_encode`, `misfit_embed` + `misfit_embed_train`)
 
-`misfit_encode` saves the **full spatial bottleneck feature map** `(N_crops, C, D', H', W')` for every crop — useful for training spatially-rich aggregators or dense prediction fine-tuning.
+`misfit_encode` caches the **full spatial bottleneck feature map** `(N_crops, C, D', H', W')` for every crop to disk — useful for fast aggregator training without re-running the encoder.
 
 ```console
 misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
@@ -179,7 +179,7 @@ misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
               --output-dir          /data/encodings
 ```
 
-`misfit_embed` tiles each volume into non-overlapping crops, encodes each crop with the pretrained encoder, GAP-pools to `(N_crops, C)`, and saves per-crop features as `.npz` files. With `--aggregator mean_pool` (default), no additional training is needed — embeddings are ready for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a specific split.
+`misfit_embed` runs the full encode-and-aggregate pipeline end-to-end, saving a single global `(C,)` embedding vector per volume. With `--aggregator mean_pool` (default), no aggregator training is needed — embeddings are ready immediately for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a specific split.
 
 ```console
 misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
@@ -195,7 +195,7 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
              --split               test
 ```
 
-`misfit_embed_train` fine-tunes a lightweight aggregator head on top of the frozen embeddings for a downstream task. Supports `classification` (cross-entropy) and `contrastive` (Supervised Contrastive) objectives.
+`misfit_embed_train` fine-tunes a lightweight aggregator on the **cached features from `misfit_encode`** for a downstream task. Supports `classification` (cross-entropy) and `contrastive` (Supervised Contrastive) objectives.
 
 ```console
 misfit_embed_train --input      /data/train_manifest.csv \
@@ -203,7 +203,7 @@ misfit_embed_train --input      /data/train_manifest.csv \
                    --embed-dim  768
 ```
 
-The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`. Only `split='train'` rows are used for training.
+The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`. `features_path` points to the `.npz` files produced by `misfit_encode`. Only `split='train'` rows are used for training.
 
 ---
 

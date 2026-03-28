@@ -337,10 +337,7 @@ def test_embed_entry_calls_extract_features(tmp_path):
         mock_agg_instance = MagicMock()
         mock_agg_cls.return_value = MagicMock(return_value=mock_agg_instance)
         mock_embedder_instance = MagicMock()
-        mock_embedder_instance.extract_crop_features.return_value = (
-            np.zeros((2, 16), dtype=np.float32),
-            np.zeros((2, 3), dtype=np.float32),
-        )
+        mock_embedder_instance.embed.return_value = torch.zeros(16)
         mock_embedder_cls.return_value = mock_embedder_instance
 
         embed_entry([
@@ -389,8 +386,8 @@ def test_embed_entry_skips_existing_output(tmp_path):
             "--index", str(manifest),
             "--output-dir", str(output_dir),
         ])
-        # extract_crop_features should never be called since file exists.
-        mock_embedder_cls.return_value.extract_crop_features.assert_not_called()
+        # embed should never be called since file exists.
+        mock_embedder_cls.return_value.embed.assert_not_called()
 
 
 def test_embed_entry_with_aggregator_checkpoint(tmp_path):
@@ -518,7 +515,7 @@ def test_embed_entry_exception_during_processing(tmp_path):
     import misfit.embedding.embedder as _emb_mod
 
     mock_embedder = MagicMock()
-    mock_embedder.extract_crop_features.side_effect = RuntimeError("explode")
+    mock_embedder.embed.side_effect = RuntimeError("explode")
 
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
@@ -573,9 +570,9 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
             "--output-dir", str(output_dir),
         ])
 
-    # No .npz written and extract_crop_features never called
+    # No .npz written and embed never called
     assert not (output_dir / "bad.npz").exists()
-    mock_embedder.extract_crop_features.assert_not_called()
+    mock_embedder.embed.assert_not_called()
 
 
 def test_embed_entry_split_filters_index(tmp_path):
@@ -602,10 +599,7 @@ def test_embed_entry_split_filters_index(tmp_path):
     import misfit.embedding.embedder as _emb_mod
 
     mock_embedder = MagicMock()
-    mock_embedder.extract_crop_features.return_value = (
-        np.zeros((2, 16), dtype=np.float32),
-        np.zeros((2, 3), dtype=np.float32),
-    )
+    mock_embedder.embed.return_value = torch.zeros(16)
 
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint", return_value=MagicMock()), \
@@ -621,5 +615,5 @@ def test_embed_entry_split_filters_index(tmp_path):
             "--split", "val",
         ])
 
-    # Only val_vol should have been processed (one call to extract_crop_features)
-    assert mock_embedder.extract_crop_features.call_count == 1
+    # Only val_vol should have been processed (one call to embed)
+    assert mock_embedder.embed.call_count == 1

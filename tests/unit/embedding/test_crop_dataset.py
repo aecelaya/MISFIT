@@ -7,10 +7,10 @@ import torch
 from misfit.embedding.objectives.base import CropFeaturesDataset, crop_collate_fn
 
 
-def _make_npz(path, n_crops=5, C=16):
+def _make_npz(path, n_crops=5, C=16, d=3):
     np.savez(
         path,
-        features=np.random.randn(n_crops, C).astype(np.float32),
+        feature_map=np.random.randn(n_crops, C, d, d, d).astype(np.float32),
         positions=np.random.rand(n_crops, 3).astype(np.float32),
     )
 

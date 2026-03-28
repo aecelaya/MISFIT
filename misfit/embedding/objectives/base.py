@@ -11,12 +11,13 @@ from torch.utils.data import BatchSampler, Dataset
 
 
 class CropFeaturesDataset(Dataset):
-    """Dataset of pre-extracted per-crop feature files.
+    """Dataset of pre-extracted per-crop feature files produced by ``misfit_encode``.
 
     Each ``.npz`` file corresponds to one volume and contains two arrays:
 
-    - ``features``: ``(N_crops, C)`` float32 — per-crop embeddings produced
-      by global-average-pooling the encoder bottleneck.
+    - ``feature_map``: ``(N_crops, C, D', H', W')`` float32 — raw spatial
+      bottleneck feature maps from the encoder.  GAP is applied internally
+      to yield ``(N_crops, C)`` before passing to the aggregator.
     - ``positions``: ``(N_crops, 3)`` float32 — normalised 3-D crop
       coordinates in ``[0, 1]``.
 
@@ -53,8 +54,9 @@ class CropFeaturesDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         npz_path, label = self.samples[idx]
         data = np.load(npz_path)
-        features  = torch.from_numpy(data["features"]).float()   # (N, C)
-        positions = torch.from_numpy(data["positions"]).float()  # (N, 3)
+        feature_map = torch.from_numpy(data["feature_map"]).float()  # (N, C, D', H', W')
+        features = feature_map.mean(dim=(2, 3, 4))                   # GAP → (N, C)
+        positions = torch.from_numpy(data["positions"]).float()       # (N, 3)
         return features, positions, label
 
 

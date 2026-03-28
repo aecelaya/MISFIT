@@ -1,4 +1,4 @@
-"""CLI entrypoint for ``misfit_embed`` — extract global image embeddings."""
+"""CLI entrypoint for ``misfit_embed`` — encode a volume and aggregate to a single embedding vector."""
 import sys
 from pathlib import Path
 
@@ -12,7 +12,7 @@ from misfit.utils.io import read_json_file
 
 
 def embed_entry(args=None) -> None:
-    """Extract per-volume global embeddings and save as ``.npz`` files."""
+    """Encode each volume end-to-end and save a single global embedding vector as a ``.npz`` file."""
     parser = ArgParser(
         prog="misfit_embed",
         description=(
@@ -105,14 +105,14 @@ def embed_entry(args=None) -> None:
 
             try:
                 volume_t = torch.from_numpy(volume).float().unsqueeze(0)  # (1, D, H, W)
-                features, positions = embedder.extract_crop_features(volume_t)
-                np.savez_compressed(out_path, features=features, positions=positions)
+                embedding = embedder.embed(volume_t)  # (C,) global vector
+                np.savez_compressed(out_path, embedding=embedding.cpu().numpy())
             except Exception as exc:
                 print_error(f"Skipping {row['volume_id']}: {exc}")
 
             progress.advance(task)
 
-    console.print(f"[green]Features saved to {output_dir}[/green]")
+    console.print(f"[green]Embeddings saved to {output_dir}[/green]")
 
 
 def _infer_embed_dim(model, patch_size: int, device: torch.device) -> int:

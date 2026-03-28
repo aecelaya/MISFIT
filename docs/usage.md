@@ -351,10 +351,12 @@ output-dir/
 
 ## Embedding
 
-The **embedding step** uses the pretrained encoder to extract per-crop feature
-vectors for every volume in an index. These embeddings can be used directly for
-zero-shot retrieval (using `mean_pool` aggregation) or fine-tuned for a
-downstream task with `misfit_embed_train`.
+The **embedding step** tiles each volume into non-overlapping crops, encodes
+each crop with the pretrained encoder, and aggregates all crop features into a
+single global `(C,)` embedding vector per volume.  With `--aggregator mean_pool`
+(default) no training is needed — embeddings are ready immediately for zero-shot
+retrieval or UMAP visualization.  Pass a trained aggregator checkpoint via
+`--aggregator-checkpoint` for task-specific pooling.
 
 Run embedding extraction with `misfit_embed`:
 
@@ -412,8 +414,7 @@ One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
 
 | Key | Shape | Description |
 |---|---|---|
-| `features` | `(N_crops, C)` | Per-crop encoder feature vectors. |
-| `positions` | `(N_crops, 3)` | Voxel-space centre coordinates of each crop. |
+| `embedding` | `(C,)` | Single global embedding vector for the volume. |
 
 ---
 
@@ -466,8 +467,10 @@ One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
 ## Embedding Training
 
 The **embedding training step** fine-tunes a lightweight aggregator head on top
-of frozen embeddings extracted by `misfit_embed`. The aggregator learns to pool
-the per-crop feature vectors into a single discriminative volume-level embedding.
+of frozen per-crop features extracted by `misfit_encode`. The aggregator learns
+to pool the per-crop feature vectors into a single discriminative volume-level
+embedding.  Because the encoder features are pre-computed and cached on disk,
+training is fast even for large datasets.
 
 Run aggregator training with `misfit_embed_train`:
 
@@ -479,7 +482,7 @@ Run aggregator training with `misfit_embed_train`:
   |---|---|
   | `volume_id` | Volume identifier. |
   | `split` | Dataset split. Only rows where `split='train'` are used. |
-  | `features_path` | Absolute path to the `.npz` file produced by `misfit_embed`. |
+  | `features_path` | Absolute path to the `.npz` file produced by `misfit_encode`. |
   | `label` | String label for the training objective. |
 
   Labels are always treated as strings. Integer or boolean labels should be
@@ -499,7 +502,7 @@ Run aggregator training with `misfit_embed_train`:
   Options: `classification` (cross-entropy), `contrastive` (Supervised
   Contrastive with K=2 pairs per group).
 - `--embed-dim C` (**required**): Dimensionality of the encoder bottleneck
-  features. Must match the feature files from `misfit_embed`.
+  features. Must match the feature files from `misfit_encode`.
 - `--no-position-encoding`: Disable learned 3D position encoding in
   `AttentionPoolAggregator`. *(default: off)*
 
@@ -537,5 +540,5 @@ misfit_embed_train --input      /data/train_manifest.csv \
 output-dir/
     aggregator.pt   Trained aggregator weights and label_to_idx mapping.
                     Pass to misfit_embed via --aggregator-checkpoint to
-                    use at inference time.
+                    apply the trained aggregator at inference time.
 ```
