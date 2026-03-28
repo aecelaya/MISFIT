@@ -48,10 +48,10 @@ def test_build_head_is_linear(obj):
 
 
 def test_build_batch_sampler_returns_none(obj, tmp_path):
-    df = pd.DataFrame({"volume_id": ["v1"], "label": ["a"]})
+    df = pd.DataFrame({"volume_id": ["v1"], "features_path": [str(tmp_path / "v1.npz")], "label": ["a"]})
     obj.validate_labels(df, "label")
     from misfit.embedding.objectives.base import CropFeaturesDataset
-    ds = CropFeaturesDataset(tmp_path, df, "label", obj.label_to_idx)
+    ds = CropFeaturesDataset(df, "label", label_to_idx=obj.label_to_idx)
     sampler = obj.build_batch_sampler(ds, 4)
     assert sampler is None
 
@@ -71,8 +71,12 @@ def test_build_dataset_returns_dataset(obj, tmp_path):
     np.savez(tmp_path / "v1.npz",
              features=np.random.randn(3, 16).astype(np.float32),
              positions=np.random.rand(3, 3).astype(np.float32))
-    df = pd.DataFrame({"volume_id": ["v1"], "label": ["a"]})
+    df = pd.DataFrame({
+        "volume_id": ["v1"],
+        "features_path": [str(tmp_path / "v1.npz")],
+        "label": ["a"],
+    })
     obj.validate_labels(df, "label")
     from misfit.embedding.objectives.base import CropFeaturesDataset
-    ds = obj.build_dataset(tmp_path, df, "label")
+    ds = obj.build_dataset(df, "label")
     assert isinstance(ds, CropFeaturesDataset)

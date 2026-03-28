@@ -189,12 +189,11 @@ def test_add_embed_train_args_defaults():
     p = ArgParser()
     add_embed_train_args(p)
     ns = p.parse_args([
-        "--features-dir", "/feats",
-        "--labels-csv", "labels.csv",
-        "--label-col", "diagnosis",
+        "--input", "input.csv",
         "--output-dir", "/out",
         "--embed-dim", "128",
     ])
+    assert ns.input == "input.csv"
     assert ns.objective == "classification"
     assert ns.aggregator == "attention_pool"
     assert ns.embed_dim == 128

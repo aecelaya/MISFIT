@@ -29,9 +29,9 @@ class EmbedTrainer:
     - Adam optimiser with cosine LR decay.
 
     Args:
-        features_dir: Directory of ``{volume_id}.npz`` files.
-        labels_csv: Path to CSV with ``volume_id`` + label columns.
-        label_col: Column to use as the training target.
+        input_csv: Unified CSV with columns ``volume_id``, ``split``,
+            ``features_path``, ``label``.  Only rows where
+            ``split == "train"`` are used for training.
         objective_name: ``"classification"`` or ``"contrastive"``.
         aggregator_name: ``"mean_pool"`` or ``"attention_pool"``.
         embed_dim: Dimensionality ``C`` of each crop feature vector.
@@ -48,9 +48,7 @@ class EmbedTrainer:
 
     def __init__(
         self,
-        features_dir: Path,
-        labels_csv: Path,
-        label_col: str,
+        input_csv: Path,
         objective_name: str,
         aggregator_name: str,
         embed_dim: int,
@@ -62,9 +60,7 @@ class EmbedTrainer:
         device: str = "cuda",
         use_position_encoding: bool = True,
     ) -> None:
-        self.features_dir = Path(features_dir)
-        self.labels_csv = Path(labels_csv)
-        self.label_col = label_col
+        self.input_csv = Path(input_csv)
         self.output_dir = Path(output_dir)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -93,16 +89,16 @@ class EmbedTrainer:
         """Run the full training loop and save the trained aggregator."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        labels_df = pd.read_csv(self.labels_csv)
-        labels_df = self.objective.validate_labels(labels_df, self.label_col)
+        df = pd.read_csv(self.input_csv)
+        train_df = df[df["split"] == "train"].copy()
+        train_df = self.objective.validate_labels(train_df, "label")
 
-        dataset = self.objective.build_dataset(
-            self.features_dir, labels_df, self.label_col
-        )
+        dataset = self.objective.build_dataset(train_df, "label")
         if len(dataset) == 0:
             raise RuntimeError(
-                "No feature files matched the label CSV.  "
-                "Run `misfit_embed` first."
+                "No feature files found for the train split.  "
+                "Check that 'features_path' values exist and "
+                "that at least one row has split='train'."
             )
 
         batch_sampler = self.objective.build_batch_sampler(dataset, self.batch_size)
@@ -231,6 +227,7 @@ class EmbedTrainer:
                 "aggregator": self.aggregator.name
                 if hasattr(self.aggregator, "name")
                 else type(self.aggregator).__name__,
+                "label_to_idx": getattr(self.objective, "label_to_idx", {}),
             },
             self.output_dir / "aggregator.pt",
         )

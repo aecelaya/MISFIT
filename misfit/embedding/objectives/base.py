@@ -13,8 +13,7 @@ from torch.utils.data import BatchSampler, DataLoader, Dataset
 class CropFeaturesDataset(Dataset):
     """Dataset of pre-extracted per-crop feature files.
 
-    Each ``.npz`` file under *features_dir* corresponds to one volume and
-    contains two arrays:
+    Each ``.npz`` file corresponds to one volume and contains two arrays:
 
     - ``features``: ``(N_crops, C)`` float32 — per-crop embeddings produced
       by global-average-pooling the encoder bottleneck.
@@ -22,8 +21,9 @@ class CropFeaturesDataset(Dataset):
       coordinates in ``[0, 1]``.
 
     Args:
-        features_dir: Directory of ``{volume_id}.npz`` files.
-        labels_df: DataFrame with at least ``volume_id`` and one label column.
+        labels_df: DataFrame with at least ``features_path`` and one label
+            column.  ``features_path`` must be the absolute path to the
+            ``.npz`` file for each volume.
         label_col: Name of the label column to use.
         label_to_idx: Optional mapping from raw label value to integer index.
             If ``None``, raw values are used as-is (must already be integers).
@@ -31,17 +31,15 @@ class CropFeaturesDataset(Dataset):
 
     def __init__(
         self,
-        features_dir: Path,
         labels_df: pd.DataFrame,
         label_col: str,
         label_to_idx: Optional[dict] = None,
     ) -> None:
-        self.features_dir = Path(features_dir)
         self.label_to_idx = label_to_idx
 
         self.samples: List[Tuple[Path, Any]] = []
         for _, row in labels_df.iterrows():
-            npz_path = self.features_dir / f"{row['volume_id']}.npz"
+            npz_path = Path(row["features_path"])
             if not npz_path.exists():
                 continue
             label = row[label_col]
@@ -121,7 +119,7 @@ class TrainingObjective(ABC):
 
     @abstractmethod
     def build_dataset(
-        self, features_dir: Path, labels_df: pd.DataFrame, label_col: str
+        self, labels_df: pd.DataFrame, label_col: str
     ) -> CropFeaturesDataset:
         """Build the training dataset."""
 

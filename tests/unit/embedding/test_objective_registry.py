@@ -40,7 +40,7 @@ def test_register_objective_duplicate_raises():
     class MyObj(TrainingObjective):
         name = "_test_dup_obj_xyz"
         def validate_labels(self, df, col): return df
-        def build_dataset(self, fd, df, col): return None
+        def build_dataset(self, df, col): return None
         def build_batch_sampler(self, ds, bs): return None
         def build_head(self, dim): return None
         def compute_loss(self, out, labels): return out.sum()
@@ -50,7 +50,7 @@ def test_register_objective_duplicate_raises():
         class MyObj2(TrainingObjective):
             name = "_test_dup_obj_xyz2"
             def validate_labels(self, df, col): return df
-            def build_dataset(self, fd, df, col): return None
+            def build_dataset(self, df, col): return None
             def build_batch_sampler(self, ds, bs): return None
             def build_head(self, dim): return None
             def compute_loss(self, out, labels): return out.sum()

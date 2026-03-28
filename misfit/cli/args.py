@@ -350,21 +350,13 @@ def add_embed_train_args(parser: ArgParser) -> None:
     # --- Input ---
     inp = parser.add_argument_group("Embed Train: Input")
     inp.add_argument(
-        "--features-dir", required=True, metavar="DIR",
+        "--input", required=True, metavar="CSV",
         help=(
-            "Directory of {volume_id}.npz files produced by misfit_embed."
+            "Unified CSV with columns: volume_id, split, features_path, label.  "
+            "Only rows where split='train' are used for training.  "
+            "features_path must be the absolute path to each volume's .npz file "
+            "produced by misfit_embed."
         ),
-    )
-    inp.add_argument(
-        "--labels-csv", required=True, metavar="CSV",
-        help=(
-            "CSV with at least 'volume_id' and one label column.  "
-            "Rows are joined to feature files on 'volume_id'."
-        ),
-    )
-    inp.add_argument(
-        "--label-col", required=True, metavar="COL",
-        help="Column in --labels-csv to use as the training target.",
     )
 
     # --- Output ---

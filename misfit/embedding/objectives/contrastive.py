@@ -202,12 +202,10 @@ class ContrastiveObjective(TrainingObjective):
 
     def build_dataset(
         self,
-        features_dir: Path,
         labels_df: pd.DataFrame,
         label_col: str,
     ) -> CropFeaturesDataset:
         return CropFeaturesDataset(
-            features_dir=features_dir,
             labels_df=labels_df,
             label_col=label_col,
             label_to_idx=self.label_to_idx,

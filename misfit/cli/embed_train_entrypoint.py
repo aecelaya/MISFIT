@@ -24,9 +24,7 @@ def embed_train_entry(args=None) -> None:
 
     try:
         trainer = EmbedTrainer(
-            features_dir=Path(ns.features_dir),
-            labels_csv=Path(ns.labels_csv),
-            label_col=ns.label_col,
+            input_csv=Path(ns.input),
             objective_name=ns.objective,
             aggregator_name=ns.aggregator,
             embed_dim=ns.embed_dim,

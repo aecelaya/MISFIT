@@ -262,9 +262,7 @@ def test_embed_train_entry_calls_trainer(tmp_path):
         instance = MockTrainer.return_value
         instance.run.return_value = None
         embed_train_entry([
-            "--features-dir", str(tmp_path),
-            "--labels-csv", "labels.csv",
-            "--label-col", "dx",
+            "--input", str(tmp_path / "input.csv"),
             "--output-dir", str(tmp_path),
             "--embed-dim", "64",
         ])
@@ -279,9 +277,7 @@ def test_embed_train_entry_value_error_exits(tmp_path):
         MockTrainer.side_effect = ValueError("bad value")
         with pytest.raises(SystemExit):
             embed_train_entry([
-                "--features-dir", str(tmp_path),
-                "--labels-csv", "labels.csv",
-                "--label-col", "dx",
+                "--input", str(tmp_path / "input.csv"),
                 "--output-dir", str(tmp_path),
                 "--embed-dim", "64",
             ])
@@ -294,9 +290,7 @@ def test_embed_train_entry_runtime_error_exits(tmp_path):
         MockTrainer.side_effect = RuntimeError("no files")
         with pytest.raises(SystemExit):
             embed_train_entry([
-                "--features-dir", str(tmp_path),
-                "--labels-csv", "labels.csv",
-                "--label-col", "dx",
+                "--input", str(tmp_path / "input.csv"),
                 "--output-dir", str(tmp_path),
                 "--embed-dim", "64",
             ])

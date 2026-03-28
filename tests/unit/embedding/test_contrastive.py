@@ -138,10 +138,11 @@ def test_build_batch_sampler_returns_grouped_sampler(cont_obj, tmp_path):
 
     df = pd.DataFrame({
         "volume_id": ["v1", "v2", "v3", "v4"],
+        "features_path": [str(tmp_path / f"{v}.npz") for v in ("v1", "v2", "v3", "v4")],
         "group": ["A", "A", "B", "B"],
     })
     df = cont_obj.validate_labels(df, "group")
-    dataset = cont_obj.build_dataset(tmp_path, df, "group")
+    dataset = cont_obj.build_dataset(df, "group")
 
     sampler = cont_obj.build_batch_sampler(dataset, batch_size=4)
     assert isinstance(sampler, GroupedBatchSampler)
@@ -165,10 +166,11 @@ def test_build_batch_sampler_returns_none_when_all_singletons(cont_obj, tmp_path
 
     df = pd.DataFrame({
         "volume_id": ["v1", "v2", "v3", "v4"],
+        "features_path": [str(tmp_path / f"{v}.npz") for v in ("v1", "v2", "v3", "v4")],
         "group": ["A", "A", "B", "B"],
     })
     df = cont_obj.validate_labels(df, "group")
-    dataset = cont_obj.build_dataset(tmp_path, df, "group")
+    dataset = cont_obj.build_dataset(df, "group")
 
     with pytest.warns(UserWarning, match="Falling back"):
         sampler = cont_obj.build_batch_sampler(dataset, batch_size=4)
