@@ -1,22 +1,15 @@
-"""High-level batch inference runners for MISFIT.
-
-Provides two entry points that mirror MIST's ``infer_from_dataframe``:
-
-``extract_features``
-    Runs the pretrained encoder over a Parquet index and saves per-volume
-    bottleneck feature maps as ``.npy`` files.  These are the representations
-    you pass to downstream fine-tuning pipelines (e.g. MIST).
+"""High-level batch reconstruction runner for MISFIT.
 
 ``reconstruct``
-    Runs the full MAE forward pass and saves the reconstruction of each
-    volume as a ``.nii.gz`` file in the original normalised space.  Useful
-    for visualising what the model has learned.
-
-Both runners use the :class:`~misfit.inference.predictor.Predictor` so
-TTA and inferer choice are consistently configurable.
+    Runs the full MAE forward pass on every non-overlapping patch of each
+    volume, stitches the results back into the original coordinate space,
+    denormalises the intensities, and saves a ``.nii.gz`` file.  Used by
+    ``misfit_inspect`` to visually assess pretraining quality.
 """
+import json
+from contextlib import nullcontext
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -24,179 +17,92 @@ import pandas as pd
 import torch
 
 from misfit.inference import inference_utils
-from misfit.inference.ensemblers.ensembler_registry import get_ensembler
-from misfit.inference.inferers.inferer_registry import get_inferer
-from misfit.inference.predictor import Predictor
-from misfit.inference.tta.strategies import get_strategy
 from misfit.utils.console import print_error, print_section_header, print_success, print_warning
 from misfit.utils.progress_bar import get_progress_bar
 
 
-def _build_predictor(
-    checkpoint: dict,
-    inferer_name: str,
-    tta_strategy: str,
-    model_fn_key: str,
+def _tiled_reconstruct(
+    padded: np.ndarray,
+    patch_size: Tuple[int, int, int],
+    model_fn: Callable[[torch.Tensor], torch.Tensor],
     device: Union[str, torch.device],
-    patch_size: tuple,
-    amp: bool,
-) -> Predictor:
-    """Shared Predictor construction for both runners."""
-    model = inference_utils.build_model_from_checkpoint(checkpoint, device)
-
-    if model_fn_key == "reconstruction":
-        model_fn = lambda x: model(x)["reconstruction"]  # noqa: E731
-    elif model_fn_key == "features":
-        model_fn = lambda x: model.encoder(x)[-1]  # noqa: E731
-    else:
-        raise ValueError(f"Unknown model_fn_key: '{model_fn_key}'")
-
-    inferer_cls = get_inferer(inferer_name)
-    if inferer_name == "whole_volume":
-        inferer = inferer_cls(patch_size=patch_size, amp=amp, device=device)
-    else:
-        inferer = inferer_cls(patch_size=patch_size, device=device)
-
-    ensembler = get_ensembler("mean")
-    tta_transforms = get_strategy(tta_strategy)()
-
-    return Predictor(
-        model_fn=model_fn,
-        inferer=inferer,
-        ensembler=ensembler,
-        tta_transforms=tta_transforms,
-        device=device,
-    )
-
-
-def extract_features(
-    index_path: Union[str, Path],
-    checkpoint_path: Union[str, Path],
-    output_dir: Union[str, Path],
-    tta_strategy: str = "none",
-    inferer_name: str = "whole_volume",
-    device: Optional[Union[str, torch.device]] = None,
-    amp: bool = False,
-) -> None:
-    """Extract encoder bottleneck features for every volume in *index_path*.
-
-    For each volume, loads and normalises the NIfTI, runs the encoder
-    (optionally with TTA), and saves the bottleneck feature map as a
-    ``.npy`` file under *output_dir*.
-
-    The saved array has shape ``(C, D', H', W')`` where ``C`` is the
-    bottleneck channel count and ``D'/H'/W'`` are ``patch_size / 32``.
+) -> np.ndarray:
+    """Reconstruct *padded* volume patch-by-patch and stitch results.
 
     Args:
-        index_path: Parquet index produced by ``misfit_index``.
-        checkpoint_path: Pretrained MISFIT checkpoint (``.pt``).
-        output_dir: Directory where ``<volume_id>.npy`` files are written.
-        tta_strategy: Name of the TTA strategy to use (``"none"`` or
-            ``"all_flips"``). Defaults to ``"none"``.
-        inferer_name: Inferer to use (``"whole_volume"`` or
-            ``"sliding_window"``). Defaults to ``"whole_volume"``.
-        device: Torch device. Defaults to CUDA if available, else CPU.
-        amp: Use automatic mixed precision. Defaults to False.
+        padded: Zero-padded volume of shape (D', H', W') where each dimension
+            is an exact multiple of the corresponding *patch_size* element.
+        patch_size: Patch dimensions (pd, ph, pw).
+        model_fn: Callable that maps a ``(1, 1, pd, ph, pw)`` tensor to a
+            reconstructed tensor of the same shape.
+        device: Torch device used for inference tensors.
+
+    Returns:
+        Reconstructed numpy array of shape (D', H', W').
     """
-    device = device or inference_utils.get_default_device()
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    checkpoint = inference_utils.load_checkpoint(checkpoint_path, device)
-    patch_size = tuple(checkpoint["args"]["patch_size"])
-
-    predictor = _build_predictor(
-        checkpoint=checkpoint,
-        inferer_name=inferer_name,
-        tta_strategy=tta_strategy,
-        model_fn_key="features",
-        device=device,
-        patch_size=patch_size,
-        amp=amp,
+    pd_, ph_, pw_ = patch_size
+    D, H, W = padded.shape
+    output = np.zeros_like(padded)
+    amp_ctx = (
+        torch.amp.autocast("cuda")
+        if torch.device(device).type == "cuda"
+        else nullcontext()
     )
 
-    index_df = pd.read_parquet(index_path)
-    n_total = len(index_df)
-    errors: List[str] = []
+    for di in range(0, D, pd_):
+        for hi in range(0, H, ph_):
+            for wi in range(0, W, pw_):
+                patch = padded[di:di + pd_, hi:hi + ph_, wi:wi + pw_]
+                tensor = (
+                    torch.from_numpy(patch).unsqueeze(0).unsqueeze(0).float().to(device)
+                )
+                with torch.no_grad(), amp_ctx:
+                    recon = model_fn(tensor)
+                output[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
+                    recon.squeeze().cpu().numpy()
+                )
 
-    print_section_header(
-        f"Extracting features: {n_total:,} volumes → {output_dir}"
-    )
-
-    with get_progress_bar() as progress:
-        task = progress.add_task("Feature extraction", total=n_total)
-
-        for _, row in index_df.iterrows():
-            volume_id = row["volume_id"]
-            out_path = output_dir / f"{volume_id}.npy"
-
-            volume = inference_utils.load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
-            )
-            if volume is None:
-                errors.append(f"Could not load: {row['path']}")
-                progress.advance(task)
-                continue
-
-            volume = inference_utils.centre_crop_or_pad(volume, patch_size)
-            tensor = torch.from_numpy(volume).unsqueeze(0).unsqueeze(0).float()
-
-            try:
-                features = predictor(tensor)           # (1, C, D', H', W')
-                np.save(out_path, features.squeeze(0).cpu().numpy())
-            except Exception as exc:  # pylint: disable=broad-except
-                errors.append(f"Inference failed for {volume_id}: {exc}")
-
-            progress.advance(task)
-
-    if errors:
-        print_warning("\n".join(errors))
-    print_success(
-        f"Features saved for {n_total - len(errors):,}/{n_total:,} volumes."
-    )
+    return output
 
 
 def reconstruct(
     index_path: Union[str, Path],
     checkpoint_path: Union[str, Path],
     output_dir: Union[str, Path],
-    tta_strategy: str = "none",
-    inferer_name: str = "whole_volume",
+    model_config: Dict,
     device: Optional[Union[str, torch.device]] = None,
-    amp: bool = False,
 ) -> None:
     """Reconstruct every volume in *index_path* and save as NIfTI.
 
-    Runs the full MAE forward pass (encode masked input → decode) and
-    writes the reconstruction as ``<volume_id>.nii.gz`` under *output_dir*.
-    The NIfTI is in the normalised, patch-cropped space — intensities are
-    z-score normalised values, not original HU / signal units.
+    For each volume the function:
+
+    1. Loads and z-score normalises the NIfTI data.
+    2. Zero-pads to the nearest multiple of *patch_size* in every dimension.
+    3. Tiles the padded volume into non-overlapping patches and runs MAE
+       reconstruction on each patch.
+    4. Stitches the reconstructed patches back into the full padded volume.
+    5. Trims padding to restore the original voxel dimensions.
+    6. Denormalises intensities (``recon × fg_std + fg_mean``).
+    7. Saves ``<volume_id>.nii.gz`` under *output_dir* using the affine stored
+       in the index.
 
     Args:
         index_path: Parquet index produced by ``misfit_index``.
         checkpoint_path: Pretrained MISFIT checkpoint (``.pt``).
         output_dir: Directory where ``<volume_id>.nii.gz`` files are written.
-        tta_strategy: TTA strategy name. Defaults to ``"none"``.
-        inferer_name: Inferer name. Defaults to ``"whole_volume"``.
+        model_config: Model configuration dict (``config["model"]`` from
+            ``config.json``).
         device: Torch device. Defaults to CUDA if available, else CPU.
-        amp: Use automatic mixed precision. Defaults to False.
     """
     device = device or inference_utils.get_default_device()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = inference_utils.load_checkpoint(checkpoint_path, device)
-    patch_size = tuple(checkpoint["args"]["patch_size"])
+    patch_size = tuple(model_config["patch_size"])
 
-    predictor = _build_predictor(
-        checkpoint=checkpoint,
-        inferer_name=inferer_name,
-        tta_strategy=tta_strategy,
-        model_fn_key="reconstruction",
-        device=device,
-        patch_size=patch_size,
-        amp=amp,
-    )
+    model = inference_utils.build_model_from_checkpoint(checkpoint, model_config, device)
+    model_fn = lambda x: model(x)["reconstruction"]  # noqa: E731
 
     index_df = pd.read_parquet(index_path)
     n_total = len(index_df)
@@ -221,13 +127,20 @@ def reconstruct(
                 progress.advance(task)
                 continue
 
-            volume = inference_utils.centre_crop_or_pad(volume, patch_size)
-            tensor = torch.from_numpy(volume).unsqueeze(0).unsqueeze(0).float()
-
             try:
-                recon = predictor(tensor)                # (1, 1, D, H, W)
-                recon_np = recon.squeeze().cpu().numpy()  # (D, H, W)
-                nib.save(nib.Nifti1Image(recon_np, affine=np.eye(4)), out_path)
+                affine = np.array(json.loads(row["affine"]), dtype=np.float64)
+
+                padded, original_shape = inference_utils.pad_to_multiple(volume, patch_size)
+                recon_padded = _tiled_reconstruct(padded, patch_size, model_fn, device)
+
+                d, h, w = original_shape
+                recon_np = recon_padded[:d, :h, :w]
+
+                fg_std  = float(row["fg_std"])
+                fg_mean = float(row["fg_mean"])
+                recon_np = recon_np * fg_std + fg_mean
+
+                nib.save(nib.Nifti1Image(recon_np.astype(np.float32), affine=affine), out_path)
             except Exception as exc:  # pylint: disable=broad-except
                 errors.append(f"Reconstruction failed for {volume_id}: {exc}")
 

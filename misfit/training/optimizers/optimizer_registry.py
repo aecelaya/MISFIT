@@ -49,6 +49,11 @@ def get_optimizer(
     return OPTIMIZER_REGISTRY[key](params, learning_rate, weight_decay, eps)
 
 
+def list_optimizers() -> list:
+    """Return a sorted list of registered optimizer names."""
+    return sorted(OPTIMIZER_REGISTRY.keys())
+
+
 @register_optimizer("adam")
 def _adam(params, lr, weight_decay, eps):
     return optim.Adam(params, lr=lr, weight_decay=weight_decay, eps=eps)

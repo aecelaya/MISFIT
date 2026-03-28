@@ -2,22 +2,19 @@
 
 Single-GPU::
 
-    misfit_train --index-train train.parquet --index-val val.parquet \\
-        --results /runs/exp1 --model swinmae-base
+    misfit_train --index index.parquet --results /runs/exp1 --model swinmae-base
 
 Multi-GPU (single node)::
 
     torchrun --nproc_per_node=4 $(which misfit_train) \\
-        --index-train train.parquet --index-val val.parquet \\
-        --results /runs/exp1 --model swinmae-base
+        --index index.parquet --results /runs/exp1 --model swinmae-base
 
 Multi-node (4 nodes × 8 GPUs)::
 
     torchrun --nproc_per_node=8 --nnodes=4 \\
              --node_rank=<rank> --master_addr=<addr> --master_port=29500 \\
              $(which misfit_train) \\
-        --index-train train.parquet --index-val val.parquet \\
-        --results /runs/exp1 --model swinmae-base
+        --index index.parquet --results /runs/exp1 --model swinmae-base
 """
 from argparse import ArgumentDefaultsHelpFormatter
 from typing import Optional, List

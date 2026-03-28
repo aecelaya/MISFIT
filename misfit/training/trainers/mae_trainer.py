@@ -42,8 +42,13 @@ from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
 from misfit.training.training_utils import RunningMean, set_seed
-from misfit.utils.console import console
-from misfit.utils.progress_bar import get_progress_bar
+from misfit.utils import (
+    console,
+    get_progress_bar,
+    print_warning,
+    read_json_file,
+    write_json_file,
+)
 
 
 class MAETrainer:
@@ -67,6 +72,7 @@ class MAETrainer:
         self.is_main = self.rank == 0
 
         self.device = torch.device(f"cuda:{self.local_rank}")
+        self.amp = True  # Always on by default; can be changed in config.json.
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -89,7 +95,7 @@ class MAETrainer:
     def _build_model(self) -> nn.Module:
         model = get_model_from_registry(
             self.args.model,
-            in_channels=self.args.in_channels,
+            in_channels=1,
             img_size=tuple(self.args.patch_size),
             mask_patch_size=self.args.mask_patch_size,
             mask_ratio=self.args.mask_ratio,
@@ -107,7 +113,7 @@ class MAETrainer:
         return loss_cls()
 
     def _build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        eps = tc.AMP_EPS if self.args.amp else tc.NO_AMP_EPS
+        eps = tc.AMP_EPS if self.amp else tc.NO_AMP_EPS
         return get_optimizer(
             name=self.args.optimizer,
             params=model.parameters(),
@@ -153,7 +159,7 @@ class MAETrainer:
         images = batch.to(self.device, non_blocking=True)
         optimizer.zero_grad()
 
-        amp_ctx = torch.amp.autocast("cuda") if self.args.amp else nullcontext()
+        amp_ctx = torch.amp.autocast("cuda") if self.amp else nullcontext()
         with amp_ctx:
             output = model(images)
             loss = criterion(
@@ -192,7 +198,7 @@ class MAETrainer:
             Scalar loss value for this batch.
         """
         images = batch.to(self.device, non_blocking=True)
-        amp_ctx = torch.amp.autocast("cuda") if self.args.amp else nullcontext()
+        amp_ctx = torch.amp.autocast("cuda") if self.amp else nullcontext()
         with torch.no_grad(), amp_ctx:
             output = model(images)
             loss = criterion(
@@ -246,7 +252,6 @@ class MAETrainer:
             "optimizer":     optimizer.state_dict(),
             "scheduler":     scheduler.state_dict(),
             "scaler":        scaler.state_dict() if scaler is not None else None,
-            "args":          vars(self.args),
         }
         tmp = path.with_suffix(".tmp")
         torch.save(checkpoint, tmp)
@@ -289,6 +294,84 @@ class MAETrainer:
         )
 
     # ------------------------------------------------------------------
+    # Config management
+    # ------------------------------------------------------------------
+
+    def _build_config(self) -> dict:
+        """Serialise current training args to a reproducibility config dict."""
+        import misfit
+        from misfit.metrics.metrics_registry import list_registered_metrics
+        return {
+            "misfit_version": misfit.__version__,
+            "data": {
+                "index": str(self.args.index),
+            },
+            "model": {
+                "name":            self.args.model,
+                "patch_size":      list(self.args.patch_size),
+                "mask_patch_size": self.args.mask_patch_size,
+                "mask_ratio":      self.args.mask_ratio,
+            },
+            "training": {
+                "epochs":        self.args.epochs,
+                "batch_size":    self.args.batch_size,
+                "optimizer":     self.args.optimizer,
+                "learning_rate": self.args.learning_rate,
+                "weight_decay":  self.args.weight_decay,
+                "lr_scheduler":  self.args.lr_scheduler,
+                "warmup_epochs": self.args.warmup_epochs,
+                "loss":          self.args.loss,
+                "amp":           self.amp,
+                "seed":          self.args.seed,
+            },
+            "evaluation": {
+                metric: {} for metric in list_registered_metrics()
+            },
+        }
+
+    def _validate_resume(self, saved_config: dict) -> None:
+        """Check that the current args are compatible with a saved config.
+
+        Hard errors (raises :class:`ValueError`) if architecture-defining
+        fields changed — resuming with a different model or patch size would
+        produce nonsensical results.  Soft mismatches (different
+        hyperparameters) emit warnings but allow training to continue.
+        """
+        # Fields that are not safe to change on resume.
+        immutable = [
+            ("model", "name",            self.args.model),
+            ("model", "patch_size",      list(self.args.patch_size)),
+            ("model", "mask_patch_size", self.args.mask_patch_size),
+        ]
+        for section, key, current in immutable:
+            saved = saved_config.get(section, {}).get(key)
+            if saved is not None and saved != current:
+                raise ValueError(
+                    f"Cannot resume: '{section}.{key}' changed from "
+                    f"{saved!r} to {current!r}.  "
+                    "Use --overwrite to start fresh."
+                )
+
+        # Fields that are allowed to change but deserve a warning.
+        soft = [
+            ("training", "epochs",        self.args.epochs),
+            ("training", "batch_size",    self.args.batch_size),
+            ("training", "optimizer",     self.args.optimizer),
+            ("training", "learning_rate", self.args.learning_rate),
+            ("training", "weight_decay",  self.args.weight_decay),
+            ("training", "lr_scheduler",  self.args.lr_scheduler),
+            ("training", "warmup_epochs", self.args.warmup_epochs),
+            ("training", "loss",          self.args.loss),
+        ]
+        for section, key, current in soft:
+            saved = saved_config.get(section, {}).get(key)
+            if saved is not None and saved != current:
+                print_warning(
+                    f"Hyperparameter '{section}.{key}' changed from "
+                    f"{saved!r} to {current!r}."
+                )
+
+    # ------------------------------------------------------------------
     # Progress bar
     # ------------------------------------------------------------------
 
@@ -306,6 +389,23 @@ class MAETrainer:
         operations (logging, checkpointing, console output) are guarded by
         ``self.is_main``.
         """
+        # --- Config guard (before distributed setup so rank 0 fails fast) ---
+        results_dir = Path(self.args.results)
+        config_path = results_dir / "config.json"
+        if self.is_main:
+            if config_path.exists() and not self.args.resume and not self.args.overwrite:
+                raise RuntimeError(
+                    f"Output directory '{results_dir}' already contains a "
+                    "config.json.  Use --resume to continue training or "
+                    "--overwrite to start fresh."
+                )
+            if self.args.resume and config_path.exists():
+                self._validate_resume(read_json_file(config_path))
+
+        # Read amp from saved config on resume (all ranks).
+        if self.args.resume and config_path.exists():
+            self.amp = read_json_file(config_path).get("training", {}).get("amp", True)
+
         self._setup_distributed()
         self._enable_cudnn_optimisations()
         set_seed(self.args.seed, self.rank)
@@ -315,34 +415,35 @@ class MAETrainer:
         criterion = self._build_loss().to(self.device)
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
-        scaler    = torch.amp.GradScaler("cuda") if self.args.amp else None
+        scaler    = torch.amp.GradScaler("cuda") if self.amp else None
 
         # --- Data loaders ---
         train_loader = get_training_dataloader(
-            index_path=self.args.index_train,
+            index_path=self.args.index,
             patch_size=tuple(self.args.patch_size),
             batch_size=self.args.batch_size,
-            num_workers=self.args.num_workers,
+            num_workers=self.args.num_cpu_workers,
             distributed=self.is_distributed,
             seed=self.args.seed,
         )
         val_loader = get_validation_dataloader(
-            index_path=self.args.index_val,
+            index_path=self.args.index,
             patch_size=tuple(self.args.patch_size),
             batch_size=self.args.batch_size,
-            num_workers=max(self.args.num_workers // 2, 1),
+            num_workers=max(self.args.num_cpu_workers // 2, 1),
             distributed=self.is_distributed,
             seed=self.args.seed,
         )
 
         # --- Output directories (rank 0 creates, then barrier) ---
-        results_dir    = Path(self.args.results)
         checkpoint_dir = results_dir / "checkpoints"
         models_dir     = results_dir / "models"
         logs_dir       = results_dir / "logs"
         if self.is_main:
             for d in (checkpoint_dir, models_dir, logs_dir):
                 d.mkdir(parents=True, exist_ok=True)
+            if not self.args.resume:
+                write_json_file(config_path, self._build_config())
         if self.is_distributed:
             dist.barrier()
 
@@ -375,7 +476,7 @@ class MAETrainer:
                 f"model={self.args.model}  "
                 f"world_size={self.world_size}  "
                 f"epochs={self.args.epochs}  "
-                f"amp={self.args.amp}\n"
+                f"amp={self.amp}\n"
             )
 
         for epoch in range(start_epoch, self.args.epochs):

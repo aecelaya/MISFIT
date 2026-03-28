@@ -5,7 +5,7 @@ misfit_index. Normalization (clip + z-score) is applied using precomputed
 per-volume statistics stored in the index — no recomputation at training time.
 """
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -42,6 +42,10 @@ class MISFITDataset(Dataset):
         augment: If True, apply random crop + flips + light intensity
             augmentation (training mode). If False, apply deterministic
             center crop only (validation mode). Defaults to True.
+        split: If provided and the index contains a ``split`` column, only
+            rows whose ``split`` value matches this string are used.
+            Typical values: ``"train"``, ``"val"``, ``"test"``.
+            Defaults to None (all rows).
     """
 
     def __init__(
@@ -49,8 +53,12 @@ class MISFITDataset(Dataset):
         index_path: Union[str, Path],
         patch_size: Tuple[int, int, int] = (96, 96, 96),
         augment: bool = True,
+        split: Optional[str] = None,
     ):
-        self.index_df = pd.read_parquet(index_path).reset_index(drop=True)
+        self.index_df = pd.read_parquet(index_path)
+        if split is not None and "split" in self.index_df.columns:
+            self.index_df = self.index_df[self.index_df["split"] == split]
+        self.index_df = self.index_df.reset_index(drop=True)
         self.patch_size = patch_size
         self.transforms = (
             build_train_transforms(patch_size)

@@ -51,8 +51,27 @@ repository = "https://github.com/mist-medical/MISFIT"
 misfit_index    = "misfit.cli.index_entrypoint:index_entry"
 misfit_train    = "misfit.cli.train_entrypoint:train_entry"
 misfit_evaluate = "misfit.cli.evaluate_entrypoint:evaluate_entry"
-misfit_infer    = "misfit.cli.infer_entrypoint:infer_entry"
-misfit_run      = "misfit.cli.run_entrypoint:run_entry"
+misfit_inspect  = "misfit.cli.inspect_entrypoint:inspect_entry"
+misfit_embed       = "misfit.cli.embed_entrypoint:embed_entry"
+misfit_embed_train = "misfit.cli.embed_train_entrypoint:embed_train_entry"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=misfit --cov-report=term-missing"
+filterwarnings = [
+    # MONAI uses deprecated non-tuple indexing internally — not our code
+    "ignore:Using a non-tuple sequence for multidimensional indexing:UserWarning:monai",
+]
+
+[tool.coverage.run]
+omit = []
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
 
 [tool.codespell]
 skip = ".git"

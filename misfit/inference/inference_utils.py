@@ -1,6 +1,6 @@
 """Utility functions for MISFIT inference modules."""
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -28,7 +28,7 @@ def load_checkpoint(
         device: Target device. Defaults to :func:`get_default_device`.
 
     Returns:
-        Checkpoint dictionary with keys ``model``, ``args``, ``epoch``, etc.
+        Checkpoint dictionary with keys ``model``, ``epoch``, etc.
     """
     device = device or get_default_device()
     return torch.load(
@@ -40,26 +40,29 @@ def load_checkpoint(
 
 def build_model_from_checkpoint(
     checkpoint: Dict,
+    model_config: Dict,
     device: Optional[Union[str, torch.device]] = None,
 ) -> nn.Module:
-    """Reconstruct a model from a checkpoint's saved args and load its weights.
+    """Reconstruct a model from a model config dict and load checkpoint weights.
 
     Args:
         checkpoint: Checkpoint dictionary (output of :func:`load_checkpoint`).
+        model_config: Model configuration dict (``config["model"]`` from
+            ``config.json``).  Must contain ``name``, ``patch_size``,
+            ``mask_patch_size``, and ``mask_ratio``.
         device: Target device. Defaults to :func:`get_default_device`.
 
     Returns:
         Model in eval mode with checkpoint weights loaded.
     """
     device = device or get_default_device()
-    args = checkpoint["args"]
 
     model = get_model_from_registry(
-        args["model"],
-        in_channels=args["in_channels"],
-        img_size=tuple(args["patch_size"]),
-        mask_patch_size=args["mask_patch_size"],
-        mask_ratio=args["mask_ratio"],
+        model_config["name"],
+        in_channels=1,
+        img_size=tuple(model_config["patch_size"]),
+        mask_patch_size=model_config["mask_patch_size"],
+        mask_ratio=model_config["mask_ratio"],
     )
     model.load_state_dict(checkpoint["model"])
     model.to(device)
@@ -101,6 +104,32 @@ def load_and_normalise(
     data = np.clip(data, p1, p99)
     data = (data - fg_mean) / max(fg_std, eps)
     return data
+
+
+def pad_to_multiple(
+    volume: np.ndarray,
+    patch_size: Tuple[int, int, int],
+) -> Tuple[np.ndarray, Tuple[int, int, int]]:
+    """Zero-pad *volume* so every dimension is a multiple of *patch_size*.
+
+    Args:
+        volume: Input array of shape (D, H, W).
+        patch_size: Target patch dimensions (pd, ph, pw).
+
+    Returns:
+        Tuple of ``(padded, original_shape)`` where *padded* has each
+        dimension as an exact multiple of the corresponding patch dimension,
+        and *original_shape* is the original ``(D, H, W)``.
+    """
+    original_shape = volume.shape
+    pad_width = []
+    for dim, p in zip(volume.shape, patch_size):
+        remainder = dim % p
+        pad = (p - remainder) % p  # 0 if already a multiple
+        pad_width.append((0, pad))
+    if any(p[1] > 0 for p in pad_width):
+        volume = np.pad(volume, pad_width, mode="constant", constant_values=0)
+    return volume, original_shape
 
 
 def centre_crop_or_pad(

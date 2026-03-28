@@ -65,6 +65,7 @@ def get_training_dataloader(
         index_path=index_path,
         patch_size=patch_size,
         augment=True,
+        split="train",
     )
 
     sampler: Optional[DistributedSampler] = None
@@ -115,6 +116,7 @@ def get_validation_dataloader(
         index_path=index_path,
         patch_size=patch_size,
         augment=False,
+        split="val",
     )
 
     sampler: Optional[DistributedSampler] = None
