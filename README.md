@@ -1,5 +1,4 @@
-# MISFIT
-### Medical Imaging Semantic Foundation Toolkit
+# MISFIT: Medical Imaging Semantic Foundation Toolkit
 
 [![PyPI version](https://img.shields.io/pypi/v/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
 [![Python](https://img.shields.io/pypi/pyversions/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
