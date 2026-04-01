@@ -145,6 +145,51 @@ def test_get_encoder_state_dict_not_empty(tiny_model):
 
 
 # ---------------------------------------------------------------------------
+# MONAI version compatibility — SwinUNETR img_size fallback
+# ---------------------------------------------------------------------------
+
+def test_swinmae_init_without_img_size_succeeds():
+    """MONAI >= 1.5: SwinUNETR constructed without img_size (normal path)."""
+    # The real SwinUNETR in the test environment should work without img_size.
+    model = SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
+    assert model is not None
+
+
+def test_swinmae_init_falls_back_to_img_size_on_type_error():
+    """MONAI < 1.5: TypeError on first call triggers fallback with img_size."""
+    calls = []
+
+    # Build a realistic mock encoder: returns 5 hidden states with the right
+    # channel shapes so the bottleneck probe and forward pass don't crash.
+    mock_encoder = MagicMock()
+    # _hidden[4] must have .shape[1] accessible (bottleneck channel count)
+    hidden = [MagicMock() for _ in range(5)]
+    hidden[4].shape = (1, 192, 1, 1, 1)
+    mock_encoder.return_value = hidden
+
+    mock_swinunetr = MagicMock()
+    mock_swinunetr.swinViT = mock_encoder
+
+    def patched_swinunetr(*args, **kwargs):
+        calls.append(kwargs.copy())
+        if len(calls) == 1:
+            # Simulate MONAI < 1.5: first call without img_size fails.
+            raise TypeError("missing a required argument: 'img_size'")
+        # Second call (fallback with img_size) succeeds.
+        return mock_swinunetr
+
+    with patch(
+        "misfit.models.swinunetr.misfit_swinunetr_mae.SwinUNETR",
+        side_effect=patched_swinunetr,
+    ):
+        model = SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
+
+    assert len(calls) == 2
+    assert "img_size" not in calls[0]
+    assert calls[1]["img_size"] == IMG_SIZE
+
+
+# ---------------------------------------------------------------------------
 # swinunetr_registry builder functions (lines 25 and 31)
 # Patch SwinMAE so no weights are allocated — we only care that the right
 # feature_size is forwarded by each builder.

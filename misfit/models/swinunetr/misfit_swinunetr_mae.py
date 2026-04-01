@@ -160,13 +160,25 @@ class SwinMAE(MISFITModel):
 
         # Build SwinUNETR-V2 and extract the swinViT backbone. The UNet
         # decoder is discarded; out_channels=2 is a placeholder.
-        _swinunetr = SwinUNETR(
-            in_channels=in_channels,
-            out_channels=2,
-            feature_size=feature_size,
-            use_v2=True,
-            spatial_dims=3,
-        )
+        # MONAI >= 1.5 removed img_size from SwinUNETR; older versions require
+        # it. Try without first, fall back to passing it for compatibility.
+        try:
+            _swinunetr = SwinUNETR(
+                in_channels=in_channels,
+                out_channels=2,
+                feature_size=feature_size,
+                use_v2=True,
+                spatial_dims=3,
+            )
+        except TypeError:
+            _swinunetr = SwinUNETR(
+                img_size=img_size,
+                in_channels=in_channels,
+                out_channels=2,
+                feature_size=feature_size,
+                use_v2=True,
+                spatial_dims=3,
+            )
         self.encoder = _swinunetr.swinViT
 
         # Learnable mask token: scalar per channel, broadcast over spatial dims.

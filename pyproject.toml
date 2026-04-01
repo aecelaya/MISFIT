@@ -62,6 +62,13 @@ addopts = "--cov=misfit --cov-report=term-missing"
 filterwarnings = [
     # MONAI uses deprecated non-tuple indexing internally — not our code
     "ignore:Using a non-tuple sequence for multidimensional indexing:UserWarning:monai",
+    # Expected behaviour: 4D volumes fall back to first frame
+    "ignore:.*4D volume encountered during training.*:UserWarning",
+    "ignore:.*4D volume detected.*:UserWarning",
+    # Expected behaviour: constant/empty volumes fall back to full-volume stats
+    "ignore:.*foreground detection returned an empty mask.*:UserWarning",
+    # CPU-only test machines don't have CUDA — autocast disables itself
+    "ignore:User provided device_type of 'cuda', but CUDA is not available:UserWarning",
 ]
 
 [tool.coverage.run]
