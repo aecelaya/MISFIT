@@ -6,11 +6,8 @@ description = "MISFIT: Medical Imaging Semantic Foundation Toolkit for training 
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-    {name = "Adrian Celaya", email = "aecelaya@rice.edu"},
+    {name = "Adrian Celaya", email = "acelaya0@gmail.com"},
     {name = "David Fuentes", email = "dtfuentes@mdanderson.org"},
-    {name = "Beatrice Riviere", email = "riviere@rice.edu"},
-    {name = "Rice University"},
-    {name = "The University of Texas MD Anderson Cancer Center"}
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -37,9 +34,9 @@ dependencies = [
     "pandas",
     "pyarrow",
     "rich",
-    "scipy",
     "scikit-learn",
     "einops",
+    "scikit-image",
     "pytest",
 ]
 

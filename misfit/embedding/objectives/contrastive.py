@@ -115,7 +115,8 @@ class SupervisedContrastiveLoss(nn.Module):
 
         # Positive mask: same label, different index.
         labels_col = labels.unsqueeze(1)  # (B, 1)
-        pos_mask = (labels_col == labels_col.T) & ~torch.eye(B, dtype=torch.bool, device=device)
+        eye = torch.eye(B, dtype=torch.bool, device=device)
+        pos_mask = (labels_col == labels_col.T) & ~eye
 
         # Exclude self from denominator.
         self_mask = ~torch.eye(B, dtype=torch.bool, device=device)
@@ -176,7 +177,9 @@ class ContrastiveObjective(TrainingObjective):
         df[label_col] = df[label_col].astype(str)
 
         group_counts = df[label_col].value_counts()
-        small_groups = group_counts[group_counts < ec.MIN_SAMPLES_PER_GROUP].index.tolist()
+        small_groups = (
+            group_counts[group_counts < ec.MIN_SAMPLES_PER_GROUP].index.tolist()
+        )
 
         if small_groups:
             warnings.warn(

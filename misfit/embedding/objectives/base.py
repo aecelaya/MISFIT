@@ -54,7 +54,8 @@ class CropFeaturesDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         npz_path, label = self.samples[idx]
         data = np.load(npz_path)
-        feature_map = torch.from_numpy(data["feature_map"]).float()  # (N, C, D', H', W')
+        # (N, C, D', H', W')
+        feature_map = torch.from_numpy(data["feature_map"]).float()
         features = feature_map.mean(dim=(2, 3, 4))                   # GAP → (N, C)
         positions = torch.from_numpy(data["positions"]).float()       # (N, 3)
         return features, positions, label

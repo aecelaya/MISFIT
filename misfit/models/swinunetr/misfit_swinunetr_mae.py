@@ -18,11 +18,10 @@ is required for Swin because windowed attention breaks with irregular token
 counts.
 
 Transfer learning compatibility:
-    get_encoder_state_dict() strips the 'encoder.' prefix, returning bare
-    sub-module parameter names (e.g., 'patch_embed.proj.weight'). These
-    correspond directly to the swinViT weights inside MIST's SwinUNETR
-    checkpoints (stored as 'model.swinViT.<name>'). A key-remapping helper
-    is provided in misfit.models.model_loader for convenience.
+    get_encoder_state_dict() remaps keys from 'encoder.<name>' to
+    'model.swinViT.<name>', matching the key format used by MIST's
+    MistSwinUNETR checkpoints.  The returned state dict can be saved with
+    torch.save and passed directly to ``mist_train --pretrained-weights``.
 """
 
 from collections import OrderedDict
@@ -274,17 +273,19 @@ class SwinMAE(MISFITModel):
     def get_encoder_state_dict(self) -> OrderedDict:
         """Return encoder-only weights for downstream transfer learning.
 
-        Strips the 'encoder.' prefix so the returned keys correspond directly
-        to MONAI's SwinTransformer sub-module names (e.g.,
-        'patch_embed.proj.weight'). These map to 'model.swinViT.<name>' in
-        MIST SwinUNETR checkpoints.
+        Remaps keys from ``encoder.<name>`` to ``model.swinViT.<name>`` so
+        the returned state dict is directly compatible with MIST's
+        ``MistSwinUNETR`` checkpoint format.  The remapped state dict can be
+        saved with ``torch.save`` and passed to ``mist_train
+        --pretrained-weights`` without any additional key manipulation.
 
         Returns:
-            OrderedDict mapping bare parameter name → tensor.
+            OrderedDict mapping ``model.swinViT.<name>`` → tensor.
         """
-        prefix = "encoder."
+        src_prefix = "encoder."
+        dst_prefix = "model.swinViT."
         return OrderedDict(
-            {k[len(prefix):]: v
+            {dst_prefix + k[len(src_prefix):]: v
              for k, v in self.state_dict().items()
-             if k.startswith(prefix)}
+             if k.startswith(src_prefix)}
         )

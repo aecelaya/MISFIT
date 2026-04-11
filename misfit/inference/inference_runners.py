@@ -95,7 +95,7 @@ def reconstruct(
     4. Stitches the reconstructed patches and masks back into the full padded
        volume.
     5. Trims padding to restore the original voxel dimensions.
-    6. Denormalises reconstruction intensities (``recon × fg_std + fg_mean``).
+    6. Denormalises reconstruction intensities (``recon x fg_std + fg_mean``).
     7. Saves outputs under two subdirectories of *output_dir*:
        - ``reconstructions/<volume_id>.nii.gz``
        - ``masks/<volume_id>.nii.gz`` — 1 = masked (reconstructed by model),
@@ -124,7 +124,9 @@ def reconstruct(
     checkpoint = inference_utils.load_checkpoint(checkpoint_path, device)
     patch_size = tuple(model_config["patch_size"])
 
-    model = inference_utils.build_model_from_checkpoint(checkpoint, model_config, device)
+    model = inference_utils.build_model_from_checkpoint(
+        checkpoint, model_config, device
+    )
     model_fn = model  # noqa: E731 — _tiled_reconstruct calls model_fn(tensor)
 
     index_df = pd.read_parquet(index_path)
@@ -156,8 +158,12 @@ def reconstruct(
             try:
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
 
-                padded, original_shape = inference_utils.pad_to_multiple(volume, patch_size)
-                recon_padded, mask_padded = _tiled_reconstruct(padded, patch_size, model_fn, device)
+                padded, original_shape = inference_utils.pad_to_multiple(
+                    volume, patch_size
+                )
+                recon_padded, mask_padded = _tiled_reconstruct(
+                    padded, patch_size, model_fn, device
+                )
 
                 d, h, w = original_shape
                 recon_np = recon_padded[:d, :h, :w]

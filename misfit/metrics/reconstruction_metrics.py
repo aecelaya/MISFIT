@@ -33,7 +33,9 @@ def compute_masked_mae(
     """
     masked_voxels = mask > 0
     n = masked_voxels.sum() + eps
-    return float(np.abs(reconstruction[masked_voxels] - target[masked_voxels]).sum() / n)
+    return float(
+        np.abs(reconstruction[masked_voxels] - target[masked_voxels]).sum() / n
+    )
 
 
 def compute_masked_mse(

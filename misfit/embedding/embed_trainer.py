@@ -174,7 +174,8 @@ class EmbedTrainer:
             labels = labels.to(self.device)          # (B,)
 
             # Aggregate each volume in the batch independently.
-            embeddings = self._batch_aggregate(features, positions, padding_mask)  # (B, C)
+            # (B, C)
+            embeddings = self._batch_aggregate(features, positions, padding_mask)
 
             head_output = head(embeddings)           # (B, num_classes) or (B, proj_dim)
             loss = self.objective.compute_loss(head_output, labels)

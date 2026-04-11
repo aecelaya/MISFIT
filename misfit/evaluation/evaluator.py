@@ -92,7 +92,9 @@ class ReconstructionEvaluator:
         # Load index and optionally filter to a single split.
         self.index_df = pd.read_parquet(self.index_path)
         if split and "split" in self.index_df.columns:
-            self.index_df = self.index_df[self.index_df["split"] == split].reset_index(drop=True)
+            self.index_df = (
+                self.index_df[self.index_df["split"] == split].reset_index(drop=True)
+            )
 
         # Load checkpoint and build model.
         self.checkpoint = torch.load(

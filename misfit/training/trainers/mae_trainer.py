@@ -118,7 +118,8 @@ class MAETrainer:
     def _build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
         # FP16 AMP requires inflated epsilon to avoid NaN in gradient updates.
         # BF16 and full-precision share the same dynamic range as float32.
-        eps = tc.AMP_FP16_EPS if (self.amp and self.amp_dtype == "fp16") else tc.NO_AMP_EPS
+        is_fp16 = self.amp and self.amp_dtype == "fp16"
+        eps = tc.AMP_FP16_EPS if is_fp16 else tc.NO_AMP_EPS
         return get_optimizer(
             name=self.args.optimizer,
             params=model.parameters(),
@@ -165,7 +166,9 @@ class MAETrainer:
         optimizer.zero_grad()
 
         _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
-        amp_ctx = torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+        amp_ctx = (
+            torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+        )
         with amp_ctx:
             output = model(images)
             loss = criterion(
@@ -205,7 +208,9 @@ class MAETrainer:
         """
         images = batch.to(self.device, non_blocking=True)
         _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
-        amp_ctx = torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+        amp_ctx = (
+            torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+        )
         with torch.no_grad(), amp_ctx:
             output = model(images)
             loss = criterion(
@@ -402,7 +407,9 @@ class MAETrainer:
         results_dir = Path(self.args.results)
         config_path = results_dir / "config.json"
         if self.is_main:
-            if config_path.exists() and not self.args.resume and not self.args.overwrite:
+            if (config_path.exists()
+                    and not self.args.resume
+                    and not self.args.overwrite):
                 raise RuntimeError(
                     f"Output directory '{results_dir}' already contains a "
                     "config.json.  Use --resume to continue training or "

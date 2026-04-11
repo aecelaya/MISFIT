@@ -1,4 +1,7 @@
-"""CLI entrypoint for ``misfit_embed`` — encode a volume and aggregate to a single embedding vector."""
+"""CLI entrypoint for ``misfit_embed``.
+
+Encode a volume and aggregate to a single embedding vector.
+"""
 import sys
 from pathlib import Path
 
@@ -12,7 +15,7 @@ from misfit.utils.io import read_json_file
 
 
 def embed_entry(args=None) -> None:
-    """Encode each volume end-to-end and save a single global embedding vector as a ``.npz`` file."""
+    """Encode each volume and save a global embedding vector as a ``.npz`` file."""
     parser = ArgParser(
         prog="misfit_embed",
         description=(
@@ -99,7 +102,9 @@ def embed_entry(args=None) -> None:
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
             )
             if volume is None:
-                print_error(f"Skipping {row['volume_id']}: could not load {row['path']}")
+                print_error(
+                    f"Skipping {row['volume_id']}: could not load {row['path']}"
+                )
                 progress.advance(task)
                 continue
 

@@ -11,6 +11,13 @@ from typing import Any, Dict, List, Union
 
 import nibabel as nib
 import numpy as np
+import skimage.filters
+
+# Percentile range used to clip the volume before Otsu thresholding. The 33rd
+# percentile lower bound anchors the clip near the air/tissue boundary in CT
+# and near background in MRI/PET, giving Otsu a clean bimodal histogram.
+_FG_PERCENTILE_LOW  = 33.0
+_FG_PERCENTILE_HIGH = 99.5
 
 
 def get_volume_id(path: Path) -> str:
@@ -56,14 +63,22 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
     on-the-fly normalization during training: foreground bounding box,
     intensity percentiles, and foreground mean/std (post-clip).
 
-    Foreground is defined as voxels above the 0.5th percentile of the full
-    volume. This threshold is robust across modalities:
-        - CT: excludes constant-value air padding (~-1024 HU)
-        - MRI: excludes zero-padded background
-        - PET: excludes near-zero background noise
+    Foreground is detected by clipping the volume to the [33rd, 99.5th]
+    percentile range and applying an Otsu threshold. The resulting binary
+    mask is used solely to derive a tight bounding box; intensity statistics
+    are then computed over all voxels within that bounding box. This mirrors
+    the approach used in MIST and is robust across CT, MRI, and PET:
+        - CT: Otsu separates tissue from air, giving a tight body bbox.
+        - MRI/PET: when the whole image is tissue, the bbox spans the full
+          volume and statistics are computed over all voxels.
+
+    If foreground detection yields an empty mask (e.g. constant volumes),
+    the full volume is used as a fallback.
 
     Intensity statistics (p1, p99, fg_mean, fg_std) are computed over
-    foreground voxels only, with p1/p99 clipping applied before mean/std.
+    bbox voxels with p1/p99 clipping applied before mean/std to suppress
+    metal artifacts, PET hotspots, and MRI bias fields.
+
     These values are used by the data loader to apply z-score normalization
     on the fly without recomputing stats per epoch.
 
@@ -87,7 +102,6 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
         img = nib.load(str(path))
 
         # --- Header (no decompression needed) ---
-        shape = img.shape
         zooms = img.header.get_zooms()
         affine = img.affine.tolist()
 
@@ -113,17 +127,21 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
         spacing_w = float(zooms[2]) if len(zooms) > 2 else 1.0
 
         # --- Foreground detection ---
-        # Voxels above the 0.5th percentile of the full volume. This robustly
-        # excludes constant-value background pads across CT, MRI, and PET
-        # without requiring modality-specific thresholds.
-        bg_threshold = float(np.percentile(volume, 0.5))
-        fg_mask = volume > bg_threshold
+        # Clip to suppress outliers, then apply Otsu threshold. The resulting
+        # mask is used only to derive a bounding box — not for masking stats.
+        lower, upper = np.percentile(
+            volume, [_FG_PERCENTILE_LOW, _FG_PERCENTILE_HIGH]
+        )
+        clipped = np.clip(volume, lower, upper)
+        try:
+            threshold = skimage.filters.threshold_otsu(clipped)
+            fg_mask = clipped > threshold
+        except Exception:  # noqa: BLE001
+            fg_mask = np.zeros(volume.shape, dtype=bool)
 
-        # Fall back to the full volume if foreground detection fails.
         if not fg_mask.any():
             warnings.warn(
-                f"{path}: foreground detection returned an empty mask "
-                "(all voxels at or below the 0.5th percentile). "
+                f"{path}: foreground detection returned an empty mask. "
                 "Falling back to full-volume statistics. "
                 "This may indicate a corrupted or near-empty scan.",
                 stacklevel=2,
@@ -132,25 +150,26 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
 
         # --- Foreground bounding box ---
         nz = np.argwhere(fg_mask)
-        fg_bbox = {
-            "fg_x_start": int(nz[:, 0].min()),
-            "fg_x_end":   int(nz[:, 0].max()),
-            "fg_y_start": int(nz[:, 1].min()),
-            "fg_y_end":   int(nz[:, 1].max()),
-            "fg_z_start": int(nz[:, 2].min()),
-            "fg_z_end":   int(nz[:, 2].max()),
-        }
+        x_start = int(nz[:, 0].min())
+        x_end   = int(nz[:, 0].max())
+        y_start = int(nz[:, 1].min())
+        y_end   = int(nz[:, 1].max())
+        z_start = int(nz[:, 2].min())
+        z_end   = int(nz[:, 2].max())
 
-        # --- Intensity statistics over foreground voxels ---
-        fg_voxels = volume[fg_mask]
-        p1  = float(np.percentile(fg_voxels, 1))
-        p99 = float(np.percentile(fg_voxels, 99))
+        # --- Intensity statistics over bbox voxels ---
+        bbox_voxels = volume[
+            x_start:x_end + 1,
+            y_start:y_end + 1,
+            z_start:z_end + 1,
+        ].ravel()
+        p1  = float(np.percentile(bbox_voxels, 1))
+        p99 = float(np.percentile(bbox_voxels, 99))
 
-        # Clip to [p1, p99] before computing mean/std so that metal artifacts,
-        # PET hotspots, and MRI bias fields don't distort the statistics.
-        fg_clipped = np.clip(fg_voxels, p1, p99)
-        fg_mean = float(fg_clipped.mean())
-        fg_std  = float(fg_clipped.std())
+        # Clip to [p1, p99] before computing mean/std to suppress outliers.
+        bbox_clipped = np.clip(bbox_voxels, p1, p99)
+        fg_mean = float(bbox_clipped.mean())
+        fg_std  = float(bbox_clipped.std())
 
         return {
             "volume_id": get_volume_id(path),
@@ -162,7 +181,12 @@ def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
             "spacing_h": spacing_h,
             "spacing_w": spacing_w,
             "affine":    json.dumps(affine),
-            **fg_bbox,
+            "fg_x_start": x_start,
+            "fg_x_end":   x_end,
+            "fg_y_start": y_start,
+            "fg_y_end":   y_end,
+            "fg_z_start": z_start,
+            "fg_z_end":   z_end,
             "p1":      p1,
             "p99":     p99,
             "fg_mean": fg_mean,

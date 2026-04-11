@@ -20,7 +20,8 @@ class Embedder(nn.Module):
     3. **Pool** — global-average-pool the spatial dimensions to get ``(C,)``
        per crop.
     4. **Aggregate** — pass the full ``(N_crops, C)`` sequence + normalised
-       3-D positions to the :class:`~misfit.embedding.aggregators.base.AbstractAggregator`.
+       3-D positions to the
+       :class:`~misfit.embedding.aggregators.base.AbstractAggregator`.
 
     Args:
         encoder_fn: Callable ``(1, 1, D, H, W) → (1, C, D', H', W')`` that

@@ -1,5 +1,6 @@
 """Tests for misfit.preprocessing.index_utils."""
 from pathlib import Path
+from unittest.mock import patch
 
 import nibabel as nib
 import numpy as np
@@ -103,6 +104,23 @@ def test_compute_volume_stats_constant_volume(tmp_path):
     nib.save(img, str(p))
     result = compute_volume_stats(p)
     assert "error" not in result
+
+
+def test_compute_volume_stats_otsu_exception_fallback(tmp_path):
+    """If threshold_otsu raises, foreground falls back to the full volume."""
+    data = np.random.randn(16, 16, 16).astype(np.float32)
+    img = nib.Nifti1Image(data, np.eye(4))
+    p = tmp_path / "vol.nii.gz"
+    nib.save(img, str(p))
+    with patch(
+        "misfit.preprocessing.index_utils.skimage.filters.threshold_otsu",
+        side_effect=ValueError("only one color"),
+    ):
+        result = compute_volume_stats(p)
+    assert "error" not in result
+    # bbox should span the full volume when falling back
+    assert result["fg_x_start"] == 0
+    assert result["fg_x_end"] == 15
 
 
 def test_compute_volume_stats_2d_error(tmp_path):

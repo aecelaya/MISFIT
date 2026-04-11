@@ -81,13 +81,13 @@ def assign_splits(
     indices = rng.permutation(n)
 
     n_train = int(round(n * ratios.get("train", 0.8)))
-    n_val   = int(round(n * ratios.get("val",   0.1)))
+    n_val = int(round(n * ratios.get("val",   0.1)))
     # test gets the remainder so the total always equals n.
 
     labels = np.empty(n, dtype=object)
-    labels[indices[:n_train]]                   = "train"
-    labels[indices[n_train:n_train + n_val]]    = "val"
-    labels[indices[n_train + n_val:]]           = "test"
+    labels[indices[:n_train]] = "train"
+    labels[indices[n_train:n_train + n_val]] = "val"
+    labels[indices[n_train + n_val:]] = "test"
 
     df["split"] = labels
     return df
@@ -112,7 +112,7 @@ def build_index(
         output_path: Destination for the Parquet index file. If None, the
             index is returned but not written to disk. Defaults to None.
         num_workers: Number of parallel worker processes. For HPC nodes with
-            fast parallel filesystems (Lustre/GPFS), 32–64 workers is a
+            fast parallel filesystems (Lustre/GPFS), 32 - 64 workers is a
             reasonable starting point. Defaults to 32.
         split_ratios: Train/val/test proportions. Defaults to
             ``DEFAULT_SPLIT_RATIOS`` (80 / 10 / 10).
@@ -164,7 +164,7 @@ def build_index(
         index_df = pd.DataFrame(columns=INDEX_COLUMNS)
 
     # Summary.
-    n_ok  = len(records)
+    n_ok = len(records)
     n_err = len(errors)
     console.print(
         f"\n[green]Indexed {n_ok:,} volumes successfully.[/green]"
@@ -181,6 +181,7 @@ def build_index(
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         index_df.to_parquet(output_path, index=False)
-        console.print(f"\n[bold green]Index saved to {output_path}[/bold green]")
+        console.print(
+            f"\n[bold green]Index saved to {output_path}[/bold green]")
 
     return index_df, errors

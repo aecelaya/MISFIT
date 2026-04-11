@@ -133,10 +133,12 @@ def test_get_encoder_state_dict_returns_ordered_dict(tiny_model):
     assert isinstance(sd, OrderedDict)
 
 
-def test_get_encoder_state_dict_no_encoder_prefix(tiny_model):
+def test_get_encoder_state_dict_keys_have_mist_prefix(tiny_model):
     sd = tiny_model.get_encoder_state_dict()
     for key in sd:
-        assert not key.startswith("encoder.")
+        assert key.startswith("model.swinViT."), (
+            f"Expected 'model.swinViT.' prefix for MIST compatibility, got: {key!r}"
+        )
 
 
 def test_get_encoder_state_dict_not_empty(tiny_model):
@@ -243,3 +245,45 @@ def test_registry_builder_forwards_feature_size(model_name, expected_feature_siz
         mask_ratio=0.75,
     )
     assert result is mock_instance
+
+
+# ---------------------------------------------------------------------------
+# Transfer learning integration — MIST swinunetr-small accepts MISFIT encoder
+# ---------------------------------------------------------------------------
+
+def test_mist_swinunetr_small_accepts_misfit_encoder(tmp_path):
+    """MISFIT SwinMAE (swinmae-small) encoder weights load into MIST swinunetr-small.
+
+    Requires MIST to be installed in the test environment; skipped otherwise.
+    Both models use feature_size=24 so encoder shapes are identical.
+    """
+    model_loader = pytest.importorskip("mist.models.model_loader")
+    pytest.importorskip("mist.models")  # trigger MIST model registrations
+    from mist.models.model_registry import get_model_from_registry
+
+    # Build MISFIT swinmae-small and export encoder in MIST-compatible format.
+    misfit_model = SwinMAE(
+        in_channels=1,
+        feature_size=24,
+        img_size=(32, 32, 32),
+        mask_patch_size=16,
+        mask_ratio=0.75,
+    )
+    encoder_sd = misfit_model.get_encoder_state_dict()
+    weights_path = tmp_path / "misfit_encoder.pt"
+    torch.save(encoder_sd, weights_path)
+
+    # Build MIST swinunetr-small and load the MISFIT encoder weights.
+    mist_model = get_model_from_registry(
+        "swinunetr-small",
+        in_channels=1,
+        out_channels=2,
+    )
+    mist_model, summary = model_loader.load_pretrained_encoder(
+        mist_model, str(weights_path)
+    )
+
+    assert len(summary["loaded"]) > 0, "No encoder weights were transferred."
+    assert len(summary["skipped"]) == 0, (
+        f"Encoder weights were skipped (key mismatch): {summary['skipped'][:5]}"
+    )

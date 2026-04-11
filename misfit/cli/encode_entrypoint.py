@@ -91,7 +91,9 @@ def encode_entry(args=None) -> None:
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
             )
             if volume is None:
-                print_error(f"Skipping {row['volume_id']}: could not load {row['path']}")
+                print_error(
+                    f"Skipping {row['volume_id']}: could not load {row['path']}"
+                )
                 progress.advance(task)
                 continue
 
@@ -155,7 +157,8 @@ def _encode_volume(
                     crop = volume_t[:, d0:d0 + p, h0:h0 + p, w0:w0 + p]
                     crop = crop.unsqueeze(0)  # (1, 1, P, P, P)
                     feat = model.encoder(crop)[-1]  # (1, C, D', H', W')
-                    feature_maps.append(feat.squeeze(0).cpu().numpy())  # (C, D', H', W')
+                    # (C, D', H', W')
+                    feature_maps.append(feat.squeeze(0).cpu().numpy())
 
                     cd = (d0 + p / 2) / D_pad
                     ch = (h0 + p / 2) / H_pad
