@@ -21,54 +21,30 @@ from misfit.cli.args import (
 # Validator types
 # ---------------------------------------------------------------------------
 
-def test_positive_int_valid():
-    assert positive_int("5") == 5
+@pytest.mark.parametrize("fn,value,expected", [
+    pytest.param(positive_int,     "5",   5,                   id="positive_int"),
+    pytest.param(positive_float,   "0.5", pytest.approx(0.5),  id="positive_float"),
+    pytest.param(non_negative_int, "0",   0,                   id="non_negative_int_zero"),
+    pytest.param(float_0_1,        "0.5", pytest.approx(0.5),  id="float_0_1_mid"),
+    pytest.param(float_0_1,        "0.0", pytest.approx(0.0),  id="float_0_1_lower_bound"),
+    pytest.param(float_0_1,        "1.0", pytest.approx(1.0),  id="float_0_1_upper_bound"),
+])
+def test_validator_accepts_valid_input(fn, value, expected):
+    assert fn(value) == expected
 
 
-def test_positive_int_zero_raises():
+@pytest.mark.parametrize("fn,value", [
+    pytest.param(positive_int,     "0",    id="positive_int_zero"),
+    pytest.param(positive_int,     "-1",   id="positive_int_negative"),
+    pytest.param(positive_float,   "0.0",  id="positive_float_zero"),
+    pytest.param(positive_float,   "-1.0", id="positive_float_negative"),
+    pytest.param(non_negative_int, "-1",   id="non_negative_int_negative"),
+    pytest.param(float_0_1,        "1.1",  id="float_0_1_above_max"),
+    pytest.param(float_0_1,        "-0.1", id="float_0_1_below_min"),
+])
+def test_validator_rejects_invalid_input(fn, value):
     with pytest.raises(argparse.ArgumentTypeError):
-        positive_int("0")
-
-
-def test_positive_int_negative_raises():
-    with pytest.raises(argparse.ArgumentTypeError):
-        positive_int("-1")
-
-
-def test_positive_float_valid():
-    assert positive_float("0.5") == pytest.approx(0.5)
-
-
-def test_positive_float_zero_raises():
-    with pytest.raises(argparse.ArgumentTypeError):
-        positive_float("0.0")
-
-
-def test_positive_float_negative_raises():
-    with pytest.raises(argparse.ArgumentTypeError):
-        positive_float("-1.0")
-
-
-def test_non_negative_int_zero():
-    assert non_negative_int("0") == 0
-
-
-def test_non_negative_int_negative_raises():
-    with pytest.raises(argparse.ArgumentTypeError):
-        non_negative_int("-1")
-
-
-def test_float_0_1_valid():
-    assert float_0_1("0.5") == pytest.approx(0.5)
-    assert float_0_1("0.0") == pytest.approx(0.0)
-    assert float_0_1("1.0") == pytest.approx(1.0)
-
-
-def test_float_0_1_out_of_range():
-    with pytest.raises(argparse.ArgumentTypeError):
-        float_0_1("1.1")
-    with pytest.raises(argparse.ArgumentTypeError):
-        float_0_1("-0.1")
+        fn(value)
 
 
 # ---------------------------------------------------------------------------

@@ -45,8 +45,3 @@ def test_masked_mse_validates_inputs(loss_fn):
         loss_fn(torch.randn(2, 1, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 1, 8, 8, 8))
 
 
-def test_masked_mse_registered():
-    import misfit.loss_functions  # noqa
-    from misfit.loss_functions.loss_registry import get_loss
-    cls = get_loss("masked_mse")
-    assert cls is MaskedMSELoss

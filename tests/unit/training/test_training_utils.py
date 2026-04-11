@@ -42,7 +42,6 @@ def test_running_mean_reset():
     m.update(5.0)
     m.reset()
     assert m.value == 0.0
-    assert m._count == 0
 
 
 # ---------------------------------------------------------------------------

@@ -17,57 +17,36 @@ def test_check_valid_inputs():
     check_reconstruction_inputs(r, t, m)  # should not raise
 
 
-def test_check_reconstruction_wrong_ndim():
-    r = torch.randn(2, 1, 8, 8)  # 4D not 5D
-    t = torch.randn(2, 1, 8, 8, 8)
-    m = torch.zeros(2, 1, 8, 8, 8)
-    with pytest.raises(ValueError, match="5D"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_target_wrong_ndim():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8)  # 4D
-    m = torch.zeros(2, 1, 8, 8, 8)
-    with pytest.raises(ValueError, match="5D"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_mask_wrong_ndim():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8, 8)
-    m = torch.zeros(2, 1, 8, 8)  # 4D
-    with pytest.raises(ValueError, match="5D"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_shape_mismatch():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8, 4)  # different W
-    m = torch.zeros(2, 1, 8, 8, 8)
-    with pytest.raises(ValueError, match="same shape"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_mask_channels_not_one():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8, 8)
-    m = torch.zeros(2, 2, 8, 8, 8)  # 2 channels
-    with pytest.raises(ValueError, match="1 channel"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_mask_batch_mismatch():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8, 8)
-    m = torch.zeros(3, 1, 8, 8, 8)  # batch 3 vs 2
-    with pytest.raises(ValueError, match="batch size"):
-        check_reconstruction_inputs(r, t, m)
-
-
-def test_check_mask_spatial_mismatch():
-    r = torch.randn(2, 1, 8, 8, 8)
-    t = torch.randn(2, 1, 8, 8, 8)
-    m = torch.zeros(2, 1, 4, 8, 8)  # spatial mismatch
-    with pytest.raises(ValueError, match="spatial dimensions"):
-        check_reconstruction_inputs(r, t, m)
+@pytest.mark.parametrize("recon,target,mask,match", [
+    pytest.param(
+        torch.randn(2, 1, 8, 8),    torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 1, 8, 8, 8),
+        "5D", id="recon_4d",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8),    torch.zeros(2, 1, 8, 8, 8),
+        "5D", id="target_4d",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 1, 8, 8),
+        "5D", id="mask_4d",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8, 4), torch.zeros(2, 1, 8, 8, 8),
+        "same shape", id="shape_mismatch",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 2, 8, 8, 8),
+        "1 channel", id="mask_channels",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(3, 1, 8, 8, 8),
+        "batch size", id="batch_mismatch",
+    ),
+    pytest.param(
+        torch.randn(2, 1, 8, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 1, 4, 8, 8),
+        "spatial dimensions", id="spatial_mismatch",
+    ),
+])
+def test_check_reconstruction_invalid_inputs(recon, target, mask, match):
+    with pytest.raises(ValueError, match=match):
+        check_reconstruction_inputs(recon, target, mask)

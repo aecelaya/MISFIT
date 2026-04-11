@@ -62,14 +62,14 @@ def test_training_dataloader_no_sampler_when_not_distributed(tmp_path):
 
 
 def test_training_dataloader_shuffles_by_default(tmp_path):
+    from torch.utils.data import RandomSampler
     index_path = _write_index_and_nifti(tmp_path)
     loader = get_training_dataloader(
         index_path, patch_size=(32, 32, 32), batch_size=1, num_workers=0,
         distributed=False,
     )
-    # When not distributed, shuffle=True should be set (sampler is a RandomSampler)
-    # DataLoader stores this in loader.dataset
-    assert loader.dataset is not None
+    # shuffle=True causes PyTorch to attach a RandomSampler internally.
+    assert isinstance(loader.sampler, RandomSampler)
 
 
 def test_validation_dataloader_no_shuffle(tmp_path):
