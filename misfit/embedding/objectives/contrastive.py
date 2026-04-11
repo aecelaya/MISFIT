@@ -23,13 +23,13 @@ class GroupedBatchSampler(Sampler[List[int]]):
     """Yield batches with exactly K=2 samples per group.
 
     Each batch contains ``M`` groups, each contributing exactly 2 indices, so
-    ``batch_size = M × 2``.  Groups are shuffled every epoch; within each
+    ``batch_size = M x 2``.  Groups are shuffled every epoch; within each
     group the pair is sampled without replacement.
 
     Args:
         group_indices: List of lists; ``group_indices[g]`` is the list of
             dataset indices belonging to group *g* (all have ≥ 2 members).
-        batch_size: Must be even (M × 2).  If not, it is rounded down to the
+        batch_size: Must be even (M x 2).  If not, it is rounded down to the
             nearest even number ≥ 2.
         drop_last: If ``True``, drop the final incomplete batch.
     """

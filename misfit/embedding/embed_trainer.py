@@ -36,7 +36,7 @@ class EmbedTrainer:
         output_dir: Where to save ``aggregator.pt`` and training logs.
         num_epochs: Number of training epochs.
         batch_size: Number of volumes per batch (for classification) or
-            ``M × 2`` pairs (for contrastive).
+            ``M x 2`` pairs (for contrastive).
         learning_rate: Initial learning rate for Adam.
         num_workers: DataLoader worker count.
         device: Torch device string (``"cuda"`` or ``"cpu"``).

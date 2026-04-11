@@ -50,8 +50,8 @@ def get_training_dataloader(
         patch_size: Spatial crop size (D, H, W) fed to MISFITDataset and
             SwinMAE. All dims must be divisible by 32. Defaults to (96, 96, 96).
         batch_size: Number of volumes per batch per GPU. Defaults to 2.
-        num_workers: Subprocesses for data loading. 4–16 is typical for NFS
-            or local NVMe; 16–32 for Lustre/GPFS HPC filesystems.
+        num_workers: Subprocesses for data loading. 4 - 16 is typical for NFS
+            or local NVMe; 16 - 32 for Lustre/GPFS HPC filesystems.
             Defaults to 8.
         distributed: If True, attach a DistributedSampler for multi-node /
             multi-GPU training under torchrun. Defaults to False.

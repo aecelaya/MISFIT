@@ -34,7 +34,7 @@ def build_train_transforms(
     Operations (in order):
         1. SpatialPad     — ensure volume is at least patch_size in each dim.
         2. RandSpatialCrop — randomly sample a patch_size sub-volume.
-        3. RandFlip (×3)  — independent 50% flips along each spatial axis.
+        3. RandFlip (x3)  — independent 50% flips along each spatial axis.
         4. RandGaussianNoise — light scanner-noise simulation (15% prob).
         5. RandScaleIntensity — mild brightness variation (15% prob).
         6. EnsureType     — cast to float32 torch.Tensor.
