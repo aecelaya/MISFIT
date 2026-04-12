@@ -15,7 +15,7 @@ from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
 
 PATCH_SIZE = 32
 MODEL_CONFIG = {
-    "name": "_tiny_test_model",
+    "architecture": "_tiny_test_model",
     "patch_size": [PATCH_SIZE, PATCH_SIZE, PATCH_SIZE],
     "mask_patch_size": 16,
     "mask_ratio": 0.75,

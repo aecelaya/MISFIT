@@ -155,7 +155,7 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     # --- Model ---
     model = parser.add_argument_group("Model")
     model.add_argument(
-        "--model", default="swinmae-base",
+        "--model", default="swinunetr-base",
         choices=list_registered_models(),
         help="SwinMAE variant (controls feature_size: 24 / 48 / 96).",
     )

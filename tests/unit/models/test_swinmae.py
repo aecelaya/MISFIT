@@ -198,11 +198,11 @@ def test_swinmae_init_falls_back_to_img_size_on_type_error():
 # ---------------------------------------------------------------------------
 
 def test_swinmae_small_registry_real_instantiation():
-    """swinmae-small is actually instantiated via the registry (feature_size=24)."""
+    """swinunetr-small is actually instantiated via the registry (feature_size=24)."""
     from misfit.models.model_registry import get_model_from_registry
 
     model = get_model_from_registry(
-        "swinmae-small",
+        "swinunetr-small",
         in_channels=1,
         img_size=(32, 32, 32),
         mask_patch_size=16,
@@ -217,11 +217,11 @@ def test_swinmae_small_registry_real_instantiation():
 
 
 @pytest.mark.parametrize("model_name,expected_feature_size", [
-    ("swinmae-base",  48),
-    ("swinmae-large", 96),
+    ("swinunetr-base",  48),
+    ("swinunetr-large", 96),
 ])
 def test_registry_builder_forwards_feature_size(model_name, expected_feature_size):
-    """swinmae-base and swinmae-large builders pass the correct feature_size."""
+    """swinunetr-base and swinunetr-large builders pass the correct feature_size."""
     from misfit.models.model_registry import get_model_from_registry
 
     mock_instance = MagicMock()
@@ -252,7 +252,7 @@ def test_registry_builder_forwards_feature_size(model_name, expected_feature_siz
 # ---------------------------------------------------------------------------
 
 def test_mist_swinunetr_small_accepts_misfit_encoder(tmp_path):
-    """MISFIT SwinMAE (swinmae-small) encoder weights load into MIST swinunetr-small.
+    """MISFIT SwinMAE (swinunetr-small) encoder weights load into MIST swinunetr-small.
 
     Requires MIST to be installed in the test environment; skipped otherwise.
     Both models use feature_size=24 so encoder shapes are identical.
@@ -261,7 +261,7 @@ def test_mist_swinunetr_small_accepts_misfit_encoder(tmp_path):
     pytest.importorskip("mist.models")  # trigger MIST model registrations
     from mist.models.model_registry import get_model_from_registry
 
-    # Build MISFIT swinmae-small and export encoder in MIST-compatible format.
+    # Build MISFIT swinunetr-small and export encoder in MIST-compatible format.
     misfit_model = SwinMAE(
         in_channels=1,
         feature_size=24,

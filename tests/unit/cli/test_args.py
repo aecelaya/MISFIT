@@ -101,7 +101,7 @@ def test_add_train_args_defaults():
         "--index", "index.parquet",
         "--results", "/runs/exp1",
     ])
-    assert ns.model == "swinmae-base"
+    assert ns.model == "swinunetr-base"
     assert ns.epochs == 200
     assert ns.batch_size == 2
     assert ns.amp_dtype == "fp16"
@@ -113,10 +113,10 @@ def test_add_train_args_custom():
     ns = p.parse_args([
         "--index", "index.parquet",
         "--results", "/runs/exp1",
-        "--model", "swinmae-small",
+        "--model", "swinunetr-small",
         "--epochs", "10",
     ])
-    assert ns.model == "swinmae-small"
+    assert ns.model == "swinunetr-small"
     assert ns.epochs == 10
 
 

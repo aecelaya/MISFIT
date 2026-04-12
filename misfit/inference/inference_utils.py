@@ -48,7 +48,7 @@ def build_model_from_checkpoint(
     Args:
         checkpoint: Checkpoint dictionary (output of :func:`load_checkpoint`).
         model_config: Model configuration dict (``config["model"]`` from
-            ``config.json``).  Must contain ``name``, ``patch_size``,
+            ``config.json``).  Must contain ``architecture``, ``patch_size``,
             ``mask_patch_size``, and ``mask_ratio``.
         device: Target device. Defaults to :func:`get_default_device`.
 
@@ -58,7 +58,7 @@ def build_model_from_checkpoint(
     device = device or get_default_device()
 
     model = get_model_from_registry(
-        model_config["name"],
+        model_config["architecture"],
         in_channels=1,
         img_size=tuple(model_config["patch_size"]),
         mask_patch_size=model_config["mask_patch_size"],

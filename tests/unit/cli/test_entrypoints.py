@@ -175,7 +175,7 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
     from misfit.cli.evaluate_entrypoint import evaluate_entry
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}, '
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}, '
         '"evaluation": {"masked_mae": {}, "ssim": {}}}'
     )
     with patch("misfit.cli.evaluate_entrypoint.ReconstructionEvaluator") as MockEval:
@@ -190,7 +190,7 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
         MockEval.assert_called_once()
         _, kwargs = MockEval.call_args
         assert kwargs["metrics"] == ["masked_mae", "ssim"]
-        assert kwargs["model_config"]["name"] == "swinmae-small"
+        assert kwargs["model_config"]["architecture"] == "swinunetr-small"
         instance.run.assert_called_once()
 
 
@@ -226,7 +226,7 @@ def test_inspect_entry_calls_reconstruct(tmp_path):
     from misfit.cli.inspect_entrypoint import inspect_entry
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     with patch("misfit.cli.inspect_entrypoint.reconstruct") as mock_fn:
         inspect_entry([
@@ -237,7 +237,7 @@ def test_inspect_entry_calls_reconstruct(tmp_path):
         ])
         mock_fn.assert_called_once()
         _, kwargs = mock_fn.call_args
-        assert kwargs["model_config"]["name"] == "swinmae-small"
+        assert kwargs["model_config"]["architecture"] == "swinunetr-small"
 
 
 def test_inspect_entry_missing_config_exits(tmp_path):
@@ -317,7 +317,7 @@ def test_embed_entry_calls_extract_features(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     output_dir = tmp_path / "embeddings"
@@ -363,7 +363,7 @@ def test_embed_entry_skips_existing_output(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     output_dir = tmp_path / "out"
@@ -406,7 +406,7 @@ def test_embed_entry_with_aggregator_checkpoint(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     import misfit.inference.inference_utils as _iutils3
@@ -470,7 +470,7 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_encoder_fn"
 
@@ -506,7 +506,7 @@ def test_embed_entry_exception_during_processing(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_exc"
 
@@ -549,7 +549,7 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_none"
 
@@ -581,7 +581,7 @@ def test_embed_entry_split_filters_index(tmp_path):
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"name": "swinmae-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({

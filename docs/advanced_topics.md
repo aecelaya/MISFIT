@@ -22,7 +22,7 @@ Below is an example `config.json` produced by `misfit_train`.
   },
 
   "model": {
-    "name": "swinmae-base",
+    "architecture": "swinunetr-base",
     "patch_size": [96, 96, 96],
     "mask_patch_size": 16,
     "mask_ratio": 0.75
@@ -107,9 +107,9 @@ but differ in the width of the feature maps (`feature_size`).
 
 | Variant | `--model` | `feature_size` | Parameters (approx.) | Recommended for |
 |---|---|---|---|---|
-| Small | `swinmae-small` | 24 | ~14M | Rapid prototyping, small datasets |
-| Base | `swinmae-base` | 48 | ~55M | Standard pretraining (default) |
-| Large | `swinmae-large` | 96 | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | 24 | ~14M | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | 48 | ~55M | Standard pretraining (default) |
+| Large | `swinunetr-large` | 96 | ~210M | Large-scale datasets, maximum capacity |
 
 !!!note
     The model variant is locked into `config.json` at the start of training and

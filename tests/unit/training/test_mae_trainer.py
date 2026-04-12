@@ -146,7 +146,7 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
     df.to_parquet(idx, index=False)
 
     return argparse.Namespace(
-        model="swinmae-small",
+        model="swinunetr-small",
         patch_size=list(patch_size),
         mask_patch_size=16,
         mask_ratio=0.75,
@@ -598,7 +598,7 @@ def test_train_writes_config_json(tmp_path):
     config_path = Path(args.results) / "config.json"
     assert config_path.exists()
     config = json.loads(config_path.read_text())
-    assert config["model"]["name"] == "swinmae-small"
+    assert config["model"]["architecture"] == "swinunetr-small"
     assert config["training"]["epochs"] == 1
     assert "misfit_version" in config
 
@@ -627,7 +627,7 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
     results_dir = Path(args.results)
     results_dir.mkdir(parents=True, exist_ok=True)
     old_config = results_dir / "config.json"
-    old_config.write_text('{"model": {"name": "old"}}')
+    old_config.write_text('{"model": {"architecture": "old"}}')
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
@@ -649,7 +649,7 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
 
     # Config should be overwritten with current args
     config = json.loads(old_config.read_text())
-    assert config["model"]["name"] == "swinmae-small"
+    assert config["model"]["architecture"] == "swinunetr-small"
 
 
 def test_validate_resume_raises_on_model_change(tmp_path):
@@ -660,11 +660,11 @@ def test_validate_resume_raises_on_model_change(tmp_path):
     trainer = MAETrainer(args)
 
     saved_config = {
-        "model": {"name": "swinmae-base", "patch_size": [32, 32, 32],
+        "model": {"architecture": "swinunetr-base", "patch_size": [32, 32, 32],
                   "mask_patch_size": 16},
         "training": {},
     }
-    with pytest.raises(ValueError, match="model.name"):
+    with pytest.raises(ValueError, match="model.architecture"):
         trainer._validate_resume(saved_config)
 
 
@@ -676,7 +676,7 @@ def test_validate_resume_raises_on_patch_size_change(tmp_path):
     trainer = MAETrainer(args)
 
     saved_config = {
-        "model": {"name": "swinmae-small", "patch_size": [96, 96, 96],
+        "model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],
                   "mask_patch_size": 16},
         "training": {},
     }
@@ -692,7 +692,7 @@ def test_validate_resume_warns_on_lr_change(tmp_path):
     trainer = MAETrainer(args)
 
     saved_config = {
-        "model": {"name": "swinmae-small", "patch_size": [32, 32, 32],
+        "model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],
                   "mask_patch_size": 16},
         "training": {"learning_rate": 9e-4},  # different from args (1e-4)
     }
@@ -728,7 +728,7 @@ def test_build_config_structure(tmp_path):
 
     assert set(config.keys()) == {"misfit_version", "data", "model", "training", "evaluation"}
     assert "index" in config["data"]
-    assert config["model"]["name"] == "swinmae-small"
+    assert config["model"]["architecture"] == "swinunetr-small"
     assert config["model"]["patch_size"] == [32, 32, 32]
     assert config["training"]["seed"] == 42
     assert config["training"]["amp"] is True

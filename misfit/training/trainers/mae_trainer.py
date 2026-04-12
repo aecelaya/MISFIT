@@ -319,7 +319,7 @@ class MAETrainer:
                 "index": str(self.args.index),
             },
             "model": {
-                "name":            self.args.model,
+                "architecture":    self.args.model,
                 "patch_size":      list(self.args.patch_size),
                 "mask_patch_size": self.args.mask_patch_size,
                 "mask_ratio":      self.args.mask_ratio,
@@ -352,7 +352,7 @@ class MAETrainer:
         """
         # Fields that are not safe to change on resume.
         immutable = [
-            ("model", "name",            self.args.model),
+            ("model", "architecture",    self.args.model),
             ("model", "patch_size",      list(self.args.patch_size)),
             ("model", "mask_patch_size", self.args.mask_patch_size),
         ]
@@ -584,6 +584,12 @@ class MAETrainer:
                         model, optimizer, scheduler, scaler,
                         epoch + 1, global_step, best_val_loss, best_model_path,
                     )
+                    # Export encoder weights in MIST-compatible format so the
+                    # pretrained encoder can be passed directly to mist_train
+                    # via --pretrained-weights.
+                    raw_model = model.module if self.is_distributed else model
+                    encoder_weights_path = models_dir / "encoder_weights.pt"
+                    torch.save(raw_model.get_encoder_state_dict(), encoder_weights_path)
 
             if self.is_distributed:
                 dist.barrier()

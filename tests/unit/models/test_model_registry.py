@@ -51,9 +51,9 @@ def test_list_registered_models_sorted():
 def test_list_registered_models_contains_swinmae():
     import misfit.models  # noqa — trigger registrations
     models = list_registered_models()
-    assert "swinmae-small" in models
-    assert "swinmae-base" in models
-    assert "swinmae-large" in models
+    assert "swinunetr-small" in models
+    assert "swinunetr-base" in models
+    assert "swinunetr-large" in models
 
 
 def test_registry_kwargs_passed():

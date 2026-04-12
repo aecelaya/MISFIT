@@ -9,7 +9,7 @@ def register_model(name: str) -> Callable:
     """Decorator to register a model-building function.
 
     Args:
-        name: A unique string identifier for the model (e.g., "swinmae-base").
+        name: A unique string identifier for the model (e.g., "swinunetr-base").
 
     Returns:
         The original function, unmodified.

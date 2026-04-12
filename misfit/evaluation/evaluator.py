@@ -114,7 +114,7 @@ class ReconstructionEvaluator:
         """Reconstruct the model from model config and load weights."""
         cfg = self.model_config
         model = get_model_from_registry(
-            cfg["name"],
+            cfg["architecture"],
             in_channels=1,
             img_size=tuple(cfg["patch_size"]),
             mask_patch_size=cfg["mask_patch_size"],

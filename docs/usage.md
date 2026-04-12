@@ -111,7 +111,7 @@ Run training with `misfit_train`:
 
 ### Model
 
-- `--model NAME`: SwinMAE variant to train. *(default: `swinmae-base`)*
+- `--model NAME`: SwinMAE variant to train. *(default: `swinunetr-base`)*
   See [Model Variants](advanced_topics.md#model-variants) for details.
 - `--patch-size D H W`: Spatial crop size fed to the model in voxels. Must be
   divisible by 32. *(default: `96 96 96`)*
@@ -168,7 +168,7 @@ torchrun --nproc_per_node=4 \
     $(which misfit_train) \
         --index   /data/index.parquet \
         --results /runs/exp1 \
-        --model   swinmae-small
+        --model   swinunetr-small
 ```
 
 Resume a run that was interrupted.

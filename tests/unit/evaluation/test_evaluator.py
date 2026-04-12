@@ -14,7 +14,7 @@ from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
 
 
 MODEL_CONFIG = {
-    "name": "_tiny_test_model",
+    "architecture": "_tiny_test_model",
     "patch_size": [32, 32, 32],
     "mask_patch_size": 16,
     "mask_ratio": 0.75,
@@ -181,7 +181,7 @@ def test_build_model_loads_weights(evaluator_setup):
         mask_patch_size=16, mask_ratio=0.75,
     )
     # Patch get_model_from_registry so _build_model runs but doesn't hit the
-    # real registry (which would need feature_size=24 for swinmae-small).
+    # real registry (which would need feature_size=24 for swinunetr-small).
     with patch(
         "misfit.evaluation.evaluator.get_model_from_registry",
         return_value=tiny_model,

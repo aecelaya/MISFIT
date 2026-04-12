@@ -118,7 +118,7 @@ Key options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `swinmae-base` | `swinmae-small` / `swinmae-base` / `swinmae-large` |
+| `--model` | `swinunetr-base` | `swinunetr-small` / `swinunetr-base` / `swinunetr-large` |
 | `--patch-size D H W` | `96 96 96` | Spatial crop size (must be divisible by 32) |
 | `--epochs` | `200` | Total training epochs |
 | `--batch-size` | `2` | Per-GPU batch size |
@@ -211,9 +211,9 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`. 
 
 | Variant | `--model` | Parameters | Recommended for |
 |---------|-----------|------------|-----------------|
-| Small | `swinmae-small` | ~14M | Rapid prototyping, small datasets |
-| Base | `swinmae-base` | ~55M | Standard pretraining (default) |
-| Large | `swinmae-large` | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | ~14M | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | ~55M | Standard pretraining (default) |
+| Large | `swinunetr-large` | ~210M | Large-scale datasets, maximum capacity |
 
 ---
 
