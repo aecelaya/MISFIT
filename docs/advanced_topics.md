@@ -320,3 +320,108 @@ CT_004,val,/data/embeddings/CT_004.npz,squamous_cell
 
 You can include val and test rows in the same file — only `split='train'` rows
 are loaded for aggregator training.
+
+---
+
+## MIST Integration
+
+MISFIT pretrained encoders can be transferred directly into
+[MIST](https://github.com/mist-medical/MIST) for supervised 3D medical image
+segmentation. The pretrained SwinViT encoder provides a better initialization
+than random weights, especially when labeled data is scarce.
+
+### Overview
+
+```
+Unlabeled NIfTI corpus
+        │
+        ▼
+  misfit_index          ← scan paths, compute intensity stats, assign splits
+        │
+        ▼
+  misfit_train          ← self-supervised MAE pretraining
+        │                 encoder_weights.pt saved automatically
+        ▼
+  misfit_evaluate /     ← optional: verify reconstruction quality
+  misfit_inspect
+        │
+        ▼
+  mist_train            ← supervised segmentation fine-tuning
+  --pretrained-weights  ← point at encoder_weights.pt
+```
+
+### Encoder export
+
+`misfit_train` automatically saves `encoder_weights.pt` to
+`results/models/` whenever the validation loss improves. This file contains
+encoder weights with keys remapped from `encoder.*` to `model.swinViT.*` —
+the format MIST's SwinUNETR expects — so no manual export step is required.
+
+```text
+results/
+    models/
+        best_model.pt       Full MAE checkpoint.
+        encoder_weights.pt  Encoder-only weights, remapped for MIST.
+```
+
+### Fine-tuning in MIST
+
+Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
+architecture variant must match the one used during MISFIT pretraining —
+both tools use the same variant names (`swinunetr-small`, `swinunetr-base`,
+`swinunetr-large`) with identical `feature_size` values:
+
+```console
+mist_train \
+    --numpy              /path/to/preprocessed/data \
+    --results            /path/to/mist/results \
+    --model              swinunetr-small \
+    --pretrained-weights /runs/pretrain/models/encoder_weights.pt \
+    --warmup-epochs      10
+```
+
+### Handling channel mismatches
+
+MISFIT trains on single-channel images. MIST tasks are often multi-channel
+(e.g., four MRI contrasts for brain tumor segmentation). MIST's
+`--input-channel-strategy` flag controls how the single-channel patch
+embedding is adapted to the multi-channel model:
+
+| Strategy  | Behaviour |
+|-----------|-----------|
+| `average` | Average source channels to one, then tile to match the target channel count. *(default)* |
+| `first`   | Use only the first source channel, then tile to match the target channel count. |
+| `skip`    | Keep the patch embedding at random initialization; do not transfer it. |
+
+`average` is the recommended default:
+
+```console
+mist_train \
+    --numpy                  /path/to/preprocessed/data \
+    --results                /path/to/mist/results \
+    --model                  swinunetr-small \
+    --pretrained-weights     /runs/pretrain/models/encoder_weights.pt \
+    --input-channel-strategy average \
+    --warmup-epochs          10
+```
+
+### When pretraining helps most
+
+Transfer is most beneficial in **low-label regimes** — tasks where the number
+of annotated cases is small relative to the model capacity.
+
+- **Few labeled cases (< ~50)** — expect the largest gains. The pretrained
+  encoder reduces the number of labeled cases needed to reach a given Dice
+  score.
+- **Domain match matters** — pretraining on volumes from the same scanner,
+  field strength, and modality as the target task transfers better than
+  out-of-domain pretraining.
+- **Warmup is important** — always use `--warmup-epochs` (5–10 epochs) in
+  MIST when fine-tuning from MISFIT weights. A full-LR update at epoch 0 can
+  damage pretrained encoder features before the decoder has adapted.
+
+!!! note
+    MISFIT encoder weights are only compatible with MIST's SwinUNETR
+    architectures (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`).
+    Other MIST architectures (nnUNet, MedNeXt, FMG-Net, W-Net) have different
+    encoder structures and are not compatible with MISFIT checkpoints.
