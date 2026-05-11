@@ -1,5 +1,5 @@
 """Embedder — tiles a volume into crops, encodes each, aggregates to one vector."""
-from typing import Callable, Optional, Tuple
+from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -37,7 +37,7 @@ class Embedder(nn.Module):
         encoder_fn: Callable[[torch.Tensor], torch.Tensor],
         aggregator: AbstractAggregator,
         patch_size: int = 96,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
     ) -> None:
         super().__init__()
         self.encoder_fn = encoder_fn
@@ -70,7 +70,7 @@ class Embedder(nn.Module):
     @torch.no_grad()
     def extract_crop_features(
         self, volume: torch.Tensor
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return per-crop features and positions as numpy arrays.
 
         Suitable for caching to ``.npz`` files used by
@@ -116,7 +116,7 @@ class Embedder(nn.Module):
 
     def _tile_crops(
         self, volume: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Split *volume* into non-overlapping ``patch_size³`` crops.
 
         Args:
@@ -152,7 +152,7 @@ class Embedder(nn.Module):
 
     def _extract_crop_features(
         self, volume: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Tile, encode, and GAP-pool all crops.
 
         Args:

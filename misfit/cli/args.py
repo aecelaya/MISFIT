@@ -7,7 +7,6 @@ command.
 """
 import argparse
 from argparse import ArgumentParser
-from typing import Union
 
 import misfit.loss_functions  # noqa: F401 — trigger registrations
 import misfit.models  # noqa: F401 — trigger registrations
@@ -16,12 +15,11 @@ from misfit.models.model_registry import list_registered_models
 from misfit.training.lr_schedulers.lr_scheduler_registry import list_lr_schedulers
 from misfit.training.optimizers.optimizer_registry import list_optimizers
 
-
 # ---------------------------------------------------------------------------
 # Validator types
 # ---------------------------------------------------------------------------
 
-def positive_int(value: Union[str, int]) -> int:
+def positive_int(value: str | int) -> int:
     """Argparse type: integer > 0."""
     v = int(value)
     if v <= 0:
@@ -31,7 +29,7 @@ def positive_int(value: Union[str, int]) -> int:
     return v
 
 
-def positive_float(value: Union[str, float]) -> float:
+def positive_float(value: str | float) -> float:
     """Argparse type: float > 0."""
     v = float(value)
     if v <= 0:
@@ -41,7 +39,7 @@ def positive_float(value: Union[str, float]) -> float:
     return v
 
 
-def non_negative_int(value: Union[str, int]) -> int:
+def non_negative_int(value: str | int) -> int:
     """Argparse type: integer >= 0."""
     v = int(value)
     if v < 0:
@@ -51,7 +49,7 @@ def non_negative_int(value: Union[str, int]) -> int:
     return v
 
 
-def float_0_1(value: Union[str, float]) -> float:
+def float_0_1(value: str | float) -> float:
     """Argparse type: float in [0, 1]."""
     v = float(value)
     if not 0.0 <= v <= 1.0:

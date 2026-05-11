@@ -171,6 +171,7 @@ def test_embed_trainer_only_train_split_used(tmp_path):
 def test_embed_trainer_checkpoint_contains_label_to_idx(tmp_path):
     """Saved checkpoint includes label_to_idx for inference-time decoding."""
     import torch
+
     from misfit.embedding.embed_trainer import EmbedTrainer
 
     input_csv = _make_input_csv(

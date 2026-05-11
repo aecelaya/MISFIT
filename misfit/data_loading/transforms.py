@@ -10,11 +10,10 @@ already been clip-normalized by the Dataset.__getitem__ method.
 Spatial padding is applied before cropping so that volumes smaller than
 patch_size (e.g., small organ ROIs) are handled without errors.
 """
-from typing import Tuple
 
 from monai.transforms import (
-    Compose,
     CenterSpatialCrop,
+    Compose,
     EnsureType,
     RandFlip,
     RandGaussianNoise,
@@ -27,7 +26,7 @@ from misfit.data_loading.data_loading_constants import dc
 
 
 def build_train_transforms(
-    patch_size: Tuple[int, int, int] = (96, 96, 96),
+    patch_size: tuple[int, int, int] = (96, 96, 96),
 ) -> Compose:
     """Build the training transform pipeline.
 
@@ -74,7 +73,7 @@ def build_train_transforms(
 
 
 def build_val_transforms(
-    patch_size: Tuple[int, int, int] = (96, 96, 96),
+    patch_size: tuple[int, int, int] = (96, 96, 96),
 ) -> Compose:
     """Build the validation transform pipeline.
 

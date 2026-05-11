@@ -6,12 +6,12 @@ transformer's attention layers are sensitive to large gradients early in
 training. A 5–20 epoch warmup (starting at 1% of base LR) stabilises
 training significantly.
 """
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 import torch.optim as optim
 from torch.optim.lr_scheduler import (
-    CosineAnnealingLR,
     ConstantLR,
+    CosineAnnealingLR,
     LinearLR,
     PolynomialLR,
     SequentialLR,
@@ -19,7 +19,7 @@ from torch.optim.lr_scheduler import (
 
 from misfit.training.lr_schedulers.lr_scheduler_constants import lc
 
-LR_SCHEDULER_REGISTRY: Dict[str, Callable] = {}
+LR_SCHEDULER_REGISTRY: dict[str, Callable] = {}
 
 
 def register_lr_scheduler(name: str) -> Callable:
@@ -82,7 +82,7 @@ def get_lr_scheduler(
     return main_scheduler
 
 
-def list_lr_schedulers() -> List[str]:
+def list_lr_schedulers() -> list[str]:
     """Return a sorted list of registered scheduler names."""
     return sorted(LR_SCHEDULER_REGISTRY.keys())
 

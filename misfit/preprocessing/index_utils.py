@@ -7,7 +7,7 @@ nibabel/numpy, keeping the pickling overhead low.
 import json
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any
 
 import nibabel as nib
 import numpy as np
@@ -40,7 +40,7 @@ def get_volume_id(path: Path) -> str:
     return path.stem
 
 
-def collect_nifti_paths(data_dir: Union[str, Path]) -> List[Path]:
+def collect_nifti_paths(data_dir: str | Path) -> list[Path]:
     """Recursively collect all NIfTI files under a directory.
 
     Args:
@@ -56,7 +56,7 @@ def collect_nifti_paths(data_dir: Union[str, Path]) -> List[Path]:
     return paths
 
 
-def compute_volume_stats(nifti_path: Union[str, Path]) -> Dict[str, Any]:
+def compute_volume_stats(nifti_path: str | Path) -> dict[str, Any]:
     """Compute per-volume metadata for the MISFIT metadata index.
 
     Loads the full NIfTI volume and computes all statistics needed for

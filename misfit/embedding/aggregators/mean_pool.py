@@ -1,10 +1,9 @@
 """Mean-pool aggregator — zero-shot, no training required."""
-from typing import Optional
 
 import torch
 
-from misfit.embedding.aggregators.base import AbstractAggregator
 from misfit.embedding.aggregators.aggregator_registry import register_aggregator
+from misfit.embedding.aggregators.base import AbstractAggregator
 
 
 @register_aggregator("mean_pool")
@@ -18,8 +17,8 @@ class MeanPoolAggregator(AbstractAggregator):
     def forward(
         self,
         crop_features: torch.Tensor,
-        positions: Optional[torch.Tensor] = None,
-        padding_mask: Optional[torch.Tensor] = None,
+        positions: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return the mean of all valid (non-padded) crop embeddings.
 

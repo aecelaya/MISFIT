@@ -1,6 +1,6 @@
 """Tests for misfit.embedding.aggregators.mean_pool.MeanPoolAggregator."""
-import torch
 import pytest
+import torch
 
 from misfit.embedding.aggregators.mean_pool import MeanPoolAggregator
 

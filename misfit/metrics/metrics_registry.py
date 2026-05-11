@@ -6,7 +6,6 @@ maps names to callable instances, and ``@register_metric`` decorates
 concrete classes to self-register on import.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List
 
 import numpy as np
 
@@ -64,7 +63,7 @@ class ReconstructionMetric(ABC):
 # Global registry
 # ---------------------------------------------------------------------------
 
-METRIC_REGISTRY: Dict[str, ReconstructionMetric] = {}
+METRIC_REGISTRY: dict[str, ReconstructionMetric] = {}
 
 
 def register_metric(cls):
@@ -88,7 +87,7 @@ def get_metric(name: str) -> ReconstructionMetric:
     return METRIC_REGISTRY[name]
 
 
-def list_registered_metrics() -> List[str]:
+def list_registered_metrics() -> list[str]:
     """Return a sorted list of all registered metric names."""
     return sorted(METRIC_REGISTRY.keys())
 

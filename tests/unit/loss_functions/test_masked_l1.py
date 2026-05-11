@@ -1,6 +1,6 @@
 """Tests for misfit.loss_functions.reconstruction.masked_l1."""
-import torch
 import pytest
+import torch
 
 from misfit.loss_functions.reconstruction.masked_l1 import MaskedL1Loss
 

@@ -1,6 +1,5 @@
 """Abstract base class for MISFIT crop aggregators."""
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -27,8 +26,8 @@ class AbstractAggregator(nn.Module, ABC):
     def forward(
         self,
         crop_features: torch.Tensor,
-        positions: Optional[torch.Tensor] = None,
-        padding_mask: Optional[torch.Tensor] = None,
+        positions: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Aggregate crop features into a single volume embedding.
 

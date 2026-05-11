@@ -1,12 +1,12 @@
 """Optimizer registry for MISFIT training."""
-from typing import Callable, Dict, Iterator
+from collections.abc import Callable, Iterator
 
 import torch
 import torch.optim as optim
 
 from misfit.training.optimizers.optimizer_constants import oc
 
-OPTIMIZER_REGISTRY: Dict[str, Callable] = {}
+OPTIMIZER_REGISTRY: dict[str, Callable] = {}
 
 
 def register_optimizer(name: str) -> Callable:

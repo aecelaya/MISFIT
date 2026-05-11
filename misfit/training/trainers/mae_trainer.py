@@ -22,7 +22,6 @@ import argparse
 import os
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -30,12 +29,12 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 
+import misfit.loss_functions  # noqa: F401 — trigger loss registrations
+import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.data_loading.dataloader import (
     get_training_dataloader,
     get_validation_dataloader,
 )
-import misfit.loss_functions  # noqa: F401 — trigger loss registrations
-import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.loss_functions.loss_registry import get_loss
 from misfit.models.model_registry import get_model_from_registry
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
@@ -148,7 +147,7 @@ class MAETrainer:
         batch: torch.Tensor,
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
-        scaler: Optional[torch.amp.GradScaler],
+        scaler: torch.amp.GradScaler | None,
     ) -> float:
         """Forward + backward + optimizer step for one batch.
 
@@ -162,7 +161,8 @@ class MAETrainer:
         Returns:
             Scalar loss value for this batch.
         """
-        images = batch.to(self.device, non_blocking=True)
+        images = batch["image"].to(self.device, non_blocking=True)
+        spacing = batch["spacing"].to(self.device, non_blocking=True)
         optimizer.zero_grad()
 
         _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
@@ -170,7 +170,7 @@ class MAETrainer:
             torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
         )
         with amp_ctx:
-            output = model(images)
+            output = model(images, spacing=spacing)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
@@ -206,13 +206,14 @@ class MAETrainer:
         Returns:
             Scalar loss value for this batch.
         """
-        images = batch.to(self.device, non_blocking=True)
+        images = batch["image"].to(self.device, non_blocking=True)
+        spacing = batch["spacing"].to(self.device, non_blocking=True)
         _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
         amp_ctx = (
             torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
         )
         with torch.no_grad(), amp_ctx:
-            output = model(images)
+            output = model(images, spacing=spacing)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
@@ -244,7 +245,7 @@ class MAETrainer:
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
-        scaler: Optional[torch.amp.GradScaler],
+        scaler: torch.amp.GradScaler | None,
         epoch: int,
         global_step: int,
         best_val_loss: float,
@@ -274,9 +275,9 @@ class MAETrainer:
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
-        scaler: Optional[torch.amp.GradScaler],
+        scaler: torch.amp.GradScaler | None,
         path: Path,
-    ) -> Tuple[int, int, float]:
+    ) -> tuple[int, int, float]:
         """Load a checkpoint and restore all training state.
 
         Args:
@@ -489,7 +490,7 @@ class MAETrainer:
                 )
 
         # --- TensorBoard (rank 0 only) ---
-        writer: Optional[SummaryWriter] = (
+        writer: SummaryWriter | None = (
             SummaryWriter(str(logs_dir)) if self.is_main else None
         )
 

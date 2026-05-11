@@ -17,7 +17,6 @@ import json
 import sys
 from argparse import ArgumentDefaultsHelpFormatter
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 
@@ -34,7 +33,7 @@ def _split_config_path(output_path: Path) -> Path:
     return output_path.parent / (output_path.stem + "_config.json")
 
 
-def _read_or_create_split_config(output_path: Path) -> Dict:
+def _read_or_create_split_config(output_path: Path) -> dict:
     """Load the split config if it exists, otherwise create it with defaults.
 
     The config file lives at ``<output_stem>_config.json`` next to the parquet.
@@ -61,7 +60,7 @@ def _read_or_create_split_config(output_path: Path) -> Dict:
     return config
 
 
-def _load_input_paths(input_path: Path) -> List[Path]:
+def _load_input_paths(input_path: Path) -> list[Path]:
     """Load NIfTI paths from a CSV or Parquet input file.
 
     The file must contain a ``path`` column. Both ``.csv`` and ``.parquet``

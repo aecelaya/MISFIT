@@ -1,21 +1,21 @@
 """Tests for misfit.cli.args."""
 import argparse
+
 import pytest
 
 from misfit.cli.args import (
     ArgParser,
+    add_embed_args,
+    add_embed_train_args,
     add_evaluate_args,
     add_index_args,
     add_inspect_args,
     add_train_args,
-    add_embed_args,
-    add_embed_train_args,
     float_0_1,
     non_negative_int,
     positive_float,
     positive_int,
 )
-
 
 # ---------------------------------------------------------------------------
 # Validator types

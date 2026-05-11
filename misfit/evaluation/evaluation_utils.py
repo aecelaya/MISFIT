@@ -5,13 +5,12 @@ per-column summary statistics (mean, std, quartiles).
 """
 import warnings
 from functools import partial
-from typing import List
 
 import numpy as np
 import pandas as pd
 
 
-def initialize_results_dataframe(metric_names: List[str]) -> pd.DataFrame:
+def initialize_results_dataframe(metric_names: list[str]) -> pd.DataFrame:
     """Return an empty DataFrame with the correct evaluation columns.
 
     Args:
@@ -63,7 +62,7 @@ def compute_results_stats(results_df: pd.DataFrame) -> pd.DataFrame:
             "volume_id": label,
             **{col: _safe(func, col) for col in metric_cols},
         }
-        for label, func in zip(stats_labels, stats_functions)
+        for label, func in zip(stats_labels, stats_functions, strict=True)
     ]
 
     return pd.concat(

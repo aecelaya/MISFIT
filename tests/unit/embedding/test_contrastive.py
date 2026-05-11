@@ -13,7 +13,6 @@ from misfit.embedding.objectives.contrastive import (
     _L2NormLayer,
 )
 
-
 # ---------------------------------------------------------------------------
 # GroupedBatchSampler
 # ---------------------------------------------------------------------------
@@ -108,7 +107,7 @@ def test_contrastive_validate_labels_drops_small_groups(cont_obj):
     })
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        cleaned = cont_obj.validate_labels(df, "group")
+        cont_obj.validate_labels(df, "group")
         assert any("Dropping" in str(warning.message) for warning in w)
     # group 'a' dropped (only 1 sample)
     assert "a" not in cont_obj.label_to_idx
@@ -126,9 +125,7 @@ def test_contrastive_validate_labels_too_few_groups_raises(cont_obj):
 
 def test_build_batch_sampler_returns_grouped_sampler(cont_obj, tmp_path):
     """build_batch_sampler returns a GroupedBatchSampler when groups have ≥2 files."""
-    import numpy as np
     import pandas as pd
-    from misfit.embedding.objectives.base import CropFeaturesDataset
 
     # Create 4 .npz files: 2 per group
     for vid in ("v1", "v2", "v3", "v4"):
@@ -150,9 +147,7 @@ def test_build_batch_sampler_returns_grouped_sampler(cont_obj, tmp_path):
 
 def test_build_batch_sampler_returns_none_when_all_singletons(cont_obj, tmp_path):
     """build_batch_sampler returns None when no group has ≥2 cached files (lines 233-239)."""
-    import numpy as np
     import pandas as pd
-    from misfit.embedding.objectives.base import CropFeaturesDataset
 
     # validate_labels requires ≥2 valid groups — give it two groups with 2 samples each
     # but only write ONE .npz file per group so build_batch_sampler sees singletons

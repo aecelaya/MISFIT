@@ -9,7 +9,6 @@ import torch
 import misfit.models  # noqa — trigger registrations
 from misfit.models.swinunetr.misfit_swinunetr_mae import MAEDecoder, SwinMAE
 
-
 # Use tiny feature_size=12 for speed (not in registry, direct construction)
 IMG_SIZE = (32, 32, 32)
 MASK_PATCH_SIZE = 16
@@ -184,7 +183,7 @@ def test_swinmae_init_falls_back_to_img_size_on_type_error():
         "misfit.models.swinunetr.misfit_swinunetr_mae.SwinUNETR",
         side_effect=patched_swinunetr,
     ):
-        model = SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
+        SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
 
     assert len(calls) == 2
     assert "img_size" not in calls[0]

@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 import pandas as pd
+import torch
 
 from misfit.cli.args import ArgParser, add_embed_args
 from misfit.utils import console, get_progress_bar, print_error

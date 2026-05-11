@@ -6,7 +6,6 @@ per-volume statistics stored in the index — no recomputation at training time.
 """
 import warnings
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -51,10 +50,10 @@ class MISFITDataset(Dataset):
 
     def __init__(
         self,
-        index_path: Union[str, Path],
-        patch_size: Tuple[int, int, int] = (96, 96, 96),
+        index_path: str | Path,
+        patch_size: tuple[int, int, int] = (96, 96, 96),
         augment: bool = True,
-        split: Optional[str] = None,
+        split: str | None = None,
     ):
         self.index_df = pd.read_parquet(index_path)
         if split is not None and "split" in self.index_df.columns:
@@ -102,9 +101,14 @@ class MISFITDataset(Dataset):
             img = nib.load(str(row["path"]))
             volume = np.asarray(img.dataobj, dtype=np.float32)
         except Exception:  # noqa: BLE001
-            # Corrupt or missing file — return zeros and let training continue.
-            # The indexer catches most bad files; this is a last-resort guard.
-            return torch.zeros(1, *self.patch_size, dtype=torch.float32)
+            spacing = torch.tensor(
+                [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
+                dtype=torch.float32,
+            )
+            return {
+                "image": torch.zeros(1, *self.patch_size, dtype=torch.float32),
+                "spacing": spacing,
+            }
 
         # Handle 4D volumes (fMRI, DWI): take the first frame.
         if volume.ndim == 4:
@@ -121,5 +125,10 @@ class MISFITDataset(Dataset):
         # Add channel dim (1, D, H, W) for MONAI transforms.
         volume_t = torch.from_numpy(volume.copy()).unsqueeze(0)
 
+        spacing = torch.tensor(
+            [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
+            dtype=torch.float32,
+        )
+
         # Apply spatial crop and augmentation.
-        return self.transforms(volume_t)
+        return {"image": self.transforms(volume_t), "spacing": spacing}

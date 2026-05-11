@@ -1,6 +1,4 @@
 """Tests for misfit.inference.inference_utils."""
-import json
-from pathlib import Path
 from unittest.mock import patch
 
 import nibabel as nib
@@ -18,7 +16,6 @@ from misfit.inference.inference_utils import (
     pad_to_multiple,
 )
 from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-
 
 MODEL_CONFIG = {
     "architecture": "swinunetr-small",

@@ -1,6 +1,6 @@
 """Tests for misfit.loss_functions.reconstruction.normalized_mse."""
-import torch
 import pytest
+import torch
 
 from misfit.loss_functions.reconstruction.normalized_mse import NormalizedMaskedMSELoss
 

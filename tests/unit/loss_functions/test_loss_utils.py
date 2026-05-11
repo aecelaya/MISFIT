@@ -1,6 +1,6 @@
 """Tests for misfit.loss_functions.loss_utils."""
-import torch
 import pytest
+import torch
 
 from misfit.loss_functions.loss_utils import check_reconstruction_inputs
 

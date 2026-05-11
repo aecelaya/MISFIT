@@ -1,8 +1,6 @@
 """Tests for misfit.embedding.objectives.base.CropFeaturesDataset and crop_collate_fn."""
 import numpy as np
 import pandas as pd
-import pytest
-import torch
 
 from misfit.embedding.objectives.base import CropFeaturesDataset, crop_collate_fn
 

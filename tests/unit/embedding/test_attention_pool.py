@@ -1,6 +1,6 @@
 """Tests for misfit.embedding.aggregators.attention_pool.AttentionPoolAggregator."""
-import torch
 import pytest
+import torch
 
 from misfit.embedding.aggregators.attention_pool import AttentionPoolAggregator
 

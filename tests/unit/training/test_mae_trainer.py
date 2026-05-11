@@ -6,7 +6,6 @@ patterns used in MIST's test_base_trainer.py.
 """
 import argparse
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -19,7 +18,6 @@ import torch
 import torch.nn as nn
 
 import misfit.models  # noqa — trigger registrations
-
 
 # ---------------------------------------------------------------------------
 # Shared mock helpers (ported from MIST's test_base_trainer.py patterns)
@@ -196,8 +194,8 @@ def test_trainer_build_model(tmp_path):
 
 
 def test_trainer_build_loss_masked_mse(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
     criterion = trainer._build_loss()
@@ -205,8 +203,8 @@ def test_trainer_build_loss_masked_mse(tmp_path):
 
 
 def test_trainer_build_loss_normalized_mse(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.loss_functions.reconstruction.normalized_mse import NormalizedMaskedMSELoss
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     args.loss = "normalized_masked_mse"
     trainer = MAETrainer(args)
@@ -215,8 +213,8 @@ def test_trainer_build_loss_normalized_mse(tmp_path):
 
 
 def test_trainer_build_optimizer(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
     model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
@@ -226,8 +224,8 @@ def test_trainer_build_optimizer(tmp_path):
 
 
 def test_trainer_build_scheduler(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
     model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
@@ -238,8 +236,8 @@ def test_trainer_build_scheduler(tmp_path):
 
 
 def test_trainer_save_and_load_checkpoint(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
     trainer.device = torch.device("cpu")
@@ -262,8 +260,8 @@ def test_trainer_save_and_load_checkpoint(tmp_path):
 
 
 def test_trainer_load_checkpoint_nonexistent(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
     trainer.device = torch.device("cpu")
@@ -291,9 +289,9 @@ def test_trainer_aggregate_loss_non_distributed(tmp_path):
 
 
 def test_trainer_training_step(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
@@ -305,16 +303,16 @@ def test_trainer_training_step(tmp_path):
     criterion = MaskedMSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    batch = torch.randn(1, 1, 32, 32, 32)
+    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     loss_val = trainer._training_step(model, batch, criterion, optimizer, scaler=None)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
 
 
 def test_trainer_validation_step(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
@@ -325,7 +323,7 @@ def test_trainer_validation_step(tmp_path):
     model.eval()
     criterion = MaskedMSELoss()
 
-    batch = torch.randn(1, 1, 32, 32, 32)
+    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     loss_val = trainer._validation_step(model, batch, criterion)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
@@ -349,8 +347,8 @@ def test_trainer_make_progress(tmp_path):
 
 def test_trainer_load_checkpoint_with_scaler(tmp_path):
     """_load_checkpoint loads scaler state when scaler is provided and key exists."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
@@ -372,9 +370,8 @@ def test_trainer_load_checkpoint_with_scaler(tmp_path):
 
 def test_trainer_train_runs_single_epoch(tmp_path):
     """train() completes one epoch without error using mocked cuda calls."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-    from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.epochs = 1
@@ -385,16 +382,16 @@ def test_trainer_train_runs_single_epoch(tmp_path):
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
 
-    dummy_batch = torch.randn(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     mock_loader = [dummy_batch]
 
     with patch("torch.cuda.set_device"), \
          patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
-               return_value=tiny_model), \
+               autospec=True, return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()
@@ -405,8 +402,8 @@ def test_trainer_train_runs_single_epoch(tmp_path):
 
 def test_trainer_train_with_resume(tmp_path):
     """train() with resume=True loads checkpoint and continues."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.epochs = 1
@@ -415,16 +412,16 @@ def test_trainer_train_with_resume(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
-    dummy_batch = torch.randn(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     mock_loader = [dummy_batch]
 
     with patch("torch.cuda.set_device"), \
          patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
-               return_value=tiny_model), \
+               autospec=True, return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         # Checkpoint doesn't exist → _load_checkpoint returns (0, 0, inf) → no error
@@ -475,9 +472,9 @@ def test_build_model_distributed_wraps_with_ddp(tmp_path, monkeypatch, fake_dist
 
 def test_training_step_with_scaler_calls_amp_methods(tmp_path):
     """_training_step uses scaler.scale/unscale_/step/update when scaler is provided (lines 166-170)."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
@@ -489,7 +486,7 @@ def test_training_step_with_scaler_calls_amp_methods(tmp_path):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scaler = FakeScaler()
 
-    batch = torch.randn(1, 1, 32, 32, 32)
+    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     loss_val = trainer._training_step(model, batch, criterion, optimizer, scaler=scaler)
 
     assert isinstance(loss_val, float)
@@ -528,8 +525,8 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
     monkeypatch.setenv("WORLD_SIZE", "2")
     monkeypatch.setattr(mt, "DDP", DummyDDP)
 
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.epochs = 1
@@ -537,7 +534,7 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = torch.randn(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
 
     # Mock loader needs a sampler with set_epoch (DistributedSampler contract)
     mock_sampler = MagicMock()
@@ -549,9 +546,9 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()
@@ -573,13 +570,13 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
 
 def test_train_writes_config_json(tmp_path):
     """A fresh training run writes config.json to the results dir."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = torch.zeros(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -588,9 +585,9 @@ def test_train_writes_config_json(tmp_path):
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()
@@ -619,8 +616,8 @@ def test_train_raises_if_config_exists_without_flags(tmp_path):
 
 def test_train_overwrite_ignores_existing_config(tmp_path):
     """--overwrite allows training to proceed even with an existing config.json."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.overwrite = True
@@ -631,7 +628,7 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = torch.zeros(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -640,9 +637,9 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()  # must not raise
@@ -739,7 +736,6 @@ def test_build_config_structure(tmp_path):
 
 def test_bf16_no_grad_scaler(tmp_path):
     """BF16 dtype sets amp_dtype correctly and skips GradScaler."""
-    import torch
     from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
@@ -752,8 +748,8 @@ def test_bf16_no_grad_scaler(tmp_path):
     assert config["training"]["amp_dtype"] == "bf16"
 
     # _build_optimizer should use standard epsilon for BF16.
-    from misfit.training.trainer_constants import tc
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainer_constants import tc
     model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                     mask_patch_size=16, mask_ratio=0.75)
     opt = trainer._build_optimizer(model)
@@ -763,9 +759,9 @@ def test_bf16_no_grad_scaler(tmp_path):
 
 def test_fp16_uses_amp_epsilon(tmp_path):
     """FP16 dtype uses inflated optimizer epsilon."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    from misfit.training.trainer_constants import tc
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainer_constants import tc
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.amp_dtype = "fp16"
@@ -779,8 +775,8 @@ def test_fp16_uses_amp_epsilon(tmp_path):
 
 def test_train_resume_reads_and_validates_config(tmp_path):
     """--resume with a compatible config.json calls _validate_resume (line 404)."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
     args.resume = True
@@ -791,7 +787,7 @@ def test_train_resume_reads_and_validates_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = torch.zeros(1, 1, 32, 32, 32)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -807,9 +803,9 @@ def test_train_resume_reads_and_validates_config(tmp_path):
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
          patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
-               return_value=mock_loader), \
+               autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
-               return_value=mock_loader):
+               autospec=True, return_value=mock_loader):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()  # must not raise; config is compatible

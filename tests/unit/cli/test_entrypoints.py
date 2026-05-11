@@ -1,6 +1,4 @@
 """Tests for CLI entrypoints."""
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import nibabel as nib
@@ -10,7 +8,6 @@ import pytest
 import torch
 
 import misfit.models  # noqa
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,7 +48,7 @@ class TestIndexEntry:
         from misfit.cli.index_entrypoint import index_entry
         manifest = self._write_csv(tmp_path)
         output = tmp_path / "index.parquet"
-        with patch("misfit.cli.index_entrypoint.build_index") as mock_build:
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
             mock_build.return_value = (None, [])
             with pytest.raises(SystemExit) as exc_info:
                 index_entry([
@@ -65,7 +62,7 @@ class TestIndexEntry:
         from misfit.cli.index_entrypoint import index_entry
         manifest = self._write_parquet(tmp_path)
         output = tmp_path / "index.parquet"
-        with patch("misfit.cli.index_entrypoint.build_index") as mock_build:
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
             mock_build.return_value = (None, [])
             with pytest.raises(SystemExit) as exc_info:
                 index_entry([
@@ -104,8 +101,9 @@ class TestIndexEntry:
             ])
 
     def test_existing_split_config_is_reused(self, tmp_path):
-        from misfit.cli.index_entrypoint import index_entry, _split_config_path
         import json
+
+        from misfit.cli.index_entrypoint import _split_config_path, index_entry
         manifest = self._write_csv(tmp_path)
         output = tmp_path / "index.parquet"
         # Pre-write a config so the "config exists" branch is taken.
@@ -113,7 +111,7 @@ class TestIndexEntry:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, "w") as fh:
             json.dump({"train": 0.7, "val": 0.15, "test": 0.15, "seed": 0}, fh)
-        with patch("misfit.cli.index_entrypoint.build_index") as mock_build:
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
             mock_build.return_value = (None, [])
             with pytest.raises(SystemExit) as exc_info:
                 index_entry([
@@ -140,7 +138,7 @@ class TestIndexEntry:
         from misfit.cli.index_entrypoint import index_entry
         manifest = self._write_csv(tmp_path)
         output = tmp_path / "index.parquet"
-        with patch("misfit.cli.index_entrypoint.build_index") as mock_build:
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
             mock_build.return_value = (None, ["error1"])
             with pytest.raises(SystemExit) as exc_info:
                 index_entry([
@@ -156,7 +154,7 @@ class TestIndexEntry:
 
 def test_train_entry_calls_trainer(tmp_path):
     from misfit.cli.train_entrypoint import train_entry
-    with patch("misfit.cli.train_entrypoint.MAETrainer") as MockTrainer:
+    with patch("misfit.cli.train_entrypoint.MAETrainer", autospec=True) as MockTrainer:
         instance = MockTrainer.return_value
         instance.train.return_value = None
         train_entry([
@@ -178,7 +176,7 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
         '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}, '
         '"evaluation": {"masked_mae": {}, "ssim": {}}}'
     )
-    with patch("misfit.cli.evaluate_entrypoint.ReconstructionEvaluator") as MockEval:
+    with patch("misfit.cli.evaluate_entrypoint.ReconstructionEvaluator", autospec=True) as MockEval:
         instance = MockEval.return_value
         instance.run.return_value = None
         evaluate_entry([
@@ -228,7 +226,7 @@ def test_inspect_entry_calls_reconstruct(tmp_path):
     config_path.write_text(
         '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
-    with patch("misfit.cli.inspect_entrypoint.reconstruct") as mock_fn:
+    with patch("misfit.cli.inspect_entrypoint.reconstruct", autospec=True) as mock_fn:
         inspect_entry([
             "--checkpoint", "best.pt",
             "--config", str(config_path),
@@ -256,9 +254,9 @@ def test_inspect_entry_missing_config_exits(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_embed_train_entry_calls_trainer(tmp_path):
-    from misfit.cli.embed_train_entrypoint import embed_train_entry
     import misfit.embedding  # noqa
-    with patch("misfit.embedding.embed_trainer.EmbedTrainer") as MockTrainer:
+    from misfit.cli.embed_train_entrypoint import embed_train_entry
+    with patch("misfit.embedding.embed_trainer.EmbedTrainer", autospec=True) as MockTrainer:
         instance = MockTrainer.return_value
         instance.run.return_value = None
         embed_train_entry([
@@ -271,9 +269,9 @@ def test_embed_train_entry_calls_trainer(tmp_path):
 
 
 def test_embed_train_entry_value_error_exits(tmp_path):
-    from misfit.cli.embed_train_entrypoint import embed_train_entry
     import misfit.embedding  # noqa
-    with patch("misfit.embedding.embed_trainer.EmbedTrainer") as MockTrainer:
+    from misfit.cli.embed_train_entrypoint import embed_train_entry
+    with patch("misfit.embedding.embed_trainer.EmbedTrainer", autospec=True) as MockTrainer:
         MockTrainer.side_effect = ValueError("bad value")
         with pytest.raises(SystemExit):
             embed_train_entry([
@@ -284,9 +282,9 @@ def test_embed_train_entry_value_error_exits(tmp_path):
 
 
 def test_embed_train_entry_runtime_error_exits(tmp_path):
-    from misfit.cli.embed_train_entrypoint import embed_train_entry
     import misfit.embedding  # noqa
-    with patch("misfit.embedding.embed_trainer.EmbedTrainer") as MockTrainer:
+    from misfit.cli.embed_train_entrypoint import embed_train_entry
+    with patch("misfit.embedding.embed_trainer.EmbedTrainer", autospec=True) as MockTrainer:
         MockTrainer.side_effect = RuntimeError("no files")
         with pytest.raises(SystemExit):
             embed_train_entry([
@@ -323,9 +321,9 @@ def test_embed_entry_calls_extract_features(tmp_path):
     output_dir = tmp_path / "embeddings"
 
     # embed_entry does lazy imports, so we patch the source modules.
-    import misfit.inference.inference_utils as _iutils
     import misfit.embedding.aggregators.aggregator_registry as _areg
     import misfit.embedding.embedder as _emb_mod
+    import misfit.inference.inference_utils as _iutils
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
     patch.object(_iutils, "build_model_from_checkpoint") as mock_model, \
     patch.object(_areg, "get_aggregator") as mock_agg_cls, \
@@ -371,9 +369,9 @@ def test_embed_entry_skips_existing_output(tmp_path):
     # Pre-create the output file so the embedder loop should skip it.
     (output_dir / "vol.npz").write_bytes(b"dummy")
 
-    import misfit.inference.inference_utils as _iutils2
     import misfit.embedding.aggregators.aggregator_registry as _areg2
     import misfit.embedding.embedder as _emb_mod2
+    import misfit.inference.inference_utils as _iutils2
     with patch.object(_iutils2, "load_checkpoint", return_value={"model": {}}), \
     patch.object(_iutils2, "build_model_from_checkpoint", return_value=MagicMock()), \
     patch.object(_areg2, "get_aggregator",
@@ -409,9 +407,9 @@ def test_embed_entry_with_aggregator_checkpoint(tmp_path):
         '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
-    import misfit.inference.inference_utils as _iutils3
     import misfit.embedding.aggregators.aggregator_registry as _areg3
     import misfit.embedding.embedder as _emb_mod3
+    import misfit.inference.inference_utils as _iutils3
     with patch.object(_iutils3, "load_checkpoint", return_value={"model": {}}), \
     patch.object(_iutils3, "build_model_from_checkpoint", return_value=MagicMock()), \
     patch.object(_areg3, "get_aggregator",
@@ -455,8 +453,8 @@ def test_embed_entry_infer_embed_dim(tmp_path):
 def test_embed_entry_encoder_fn_is_called(tmp_path):
     """encoder_fn closure body is exercised when Embedder runs for real."""
     from misfit.cli.embed_entrypoint import embed_entry
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.embedding.aggregators.mean_pool import MeanPoolAggregator
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
@@ -474,8 +472,8 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
     )
     output_dir = tmp_path / "out_encoder_fn"
 
-    import misfit.inference.inference_utils as _iutils
     import misfit.embedding.aggregators.aggregator_registry as _areg
+    import misfit.inference.inference_utils as _iutils
 
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
@@ -510,9 +508,9 @@ def test_embed_entry_exception_during_processing(tmp_path):
     )
     output_dir = tmp_path / "out_exc"
 
-    import misfit.inference.inference_utils as _iutils
     import misfit.embedding.aggregators.aggregator_registry as _areg
     import misfit.embedding.embedder as _emb_mod
+    import misfit.inference.inference_utils as _iutils
 
     mock_embedder = MagicMock()
     mock_embedder.embed.side_effect = RuntimeError("explode")
@@ -553,9 +551,9 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
     )
     output_dir = tmp_path / "out_none"
 
-    import misfit.inference.inference_utils as _iutils_n
     import misfit.embedding.aggregators.aggregator_registry as _areg_n
     import misfit.embedding.embedder as _emb_mod_n
+    import misfit.inference.inference_utils as _iutils_n
 
     mock_embedder = MagicMock()
     with patch.object(_iutils_n, "load_checkpoint", return_value={"model": {}}), \
@@ -594,9 +592,9 @@ def test_embed_entry_split_filters_index(tmp_path):
 
     output_dir = tmp_path / "embeddings"
 
-    import misfit.inference.inference_utils as _iutils
     import misfit.embedding.aggregators.aggregator_registry as _areg
     import misfit.embedding.embedder as _emb_mod
+    import misfit.inference.inference_utils as _iutils
 
     mock_embedder = MagicMock()
     mock_embedder.embed.return_value = torch.zeros(16)

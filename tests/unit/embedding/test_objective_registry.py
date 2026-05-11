@@ -2,13 +2,13 @@
 import pytest
 
 import misfit.embedding  # noqa — trigger registrations
+from misfit.embedding.objectives.base import TrainingObjective
 from misfit.embedding.objectives.objective_registry import (
     OBJECTIVE_REGISTRY,
     get_objective,
     list_objectives,
     register_objective,
 )
-from misfit.embedding.objectives.base import TrainingObjective
 
 
 def test_list_objectives_sorted():

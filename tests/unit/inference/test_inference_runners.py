@@ -6,12 +6,10 @@ from unittest.mock import patch
 import nibabel as nib
 import numpy as np
 import pandas as pd
-import pytest
 import torch
 
-import misfit.models    # noqa — trigger model registrations
+import misfit.models  # noqa — trigger model registrations
 from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

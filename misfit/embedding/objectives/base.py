@@ -1,7 +1,7 @@
 """Abstract base class and shared dataset for MISFIT embedding objectives."""
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -34,11 +34,11 @@ class CropFeaturesDataset(Dataset):
         self,
         labels_df: pd.DataFrame,
         label_col: str,
-        label_to_idx: Optional[dict] = None,
+        label_to_idx: dict | None = None,
     ) -> None:
         self.label_to_idx = label_to_idx
 
-        self.samples: List[Tuple[Path, Any]] = []
+        self.samples: list[tuple[Path, Any]] = []
         for _, row in labels_df.iterrows():
             npz_path = Path(row["features_path"])
             if not npz_path.exists():
@@ -51,7 +51,7 @@ class CropFeaturesDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, int]:
         npz_path, label = self.samples[idx]
         data = np.load(npz_path)
         # (N, C, D', H', W')
@@ -62,8 +62,8 @@ class CropFeaturesDataset(Dataset):
 
 
 def crop_collate_fn(
-    batch: List[Tuple[torch.Tensor, torch.Tensor, Any]]
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    batch: list[tuple[torch.Tensor, torch.Tensor, Any]]
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Collate variable-length crop sequences with zero-padding.
 
     Returns:
@@ -72,7 +72,7 @@ def crop_collate_fn(
         padding_mask: ``(B, N_max)`` — ``True`` where padded
         labels:       ``(B,)``
     """
-    features_list, positions_list, labels = zip(*batch)
+    features_list, positions_list, labels = zip(*batch, strict=True)
     max_n = max(f.shape[0] for f in features_list)
     C = features_list[0].shape[1]
 
@@ -81,7 +81,7 @@ def crop_collate_fn(
     padded_positions = torch.zeros(B, max_n, 3)
     padding_mask     = torch.ones(B, max_n, dtype=torch.bool)  # True = padded
 
-    for i, (feats, pos) in enumerate(zip(features_list, positions_list)):
+    for i, (feats, pos) in enumerate(zip(features_list, positions_list, strict=True)):
         n = feats.shape[0]
         padded_features[i, :n]  = feats
         padded_positions[i, :n] = pos
@@ -129,7 +129,7 @@ class TrainingObjective(ABC):
     @abstractmethod
     def build_batch_sampler(
         self, dataset: CropFeaturesDataset, batch_size: int
-    ) -> Optional[BatchSampler]:
+    ) -> BatchSampler | None:
         """Return a custom :class:`~torch.utils.data.BatchSampler` or ``None``."""
 
     @abstractmethod

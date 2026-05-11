@@ -4,10 +4,8 @@ import torch
 import torch.nn as nn
 
 from misfit.training.lr_schedulers.lr_scheduler_registry import (
-    LR_SCHEDULER_REGISTRY,
     get_lr_scheduler,
     list_lr_schedulers,
-    register_lr_scheduler,
 )
 
 

@@ -1,11 +1,10 @@
 """Attention-pool aggregator — lightweight, trainable."""
-from typing import Optional
 
 import torch
 import torch.nn as nn
 
-from misfit.embedding.aggregators.base import AbstractAggregator
 from misfit.embedding.aggregators.aggregator_registry import register_aggregator
+from misfit.embedding.aggregators.base import AbstractAggregator
 
 
 @register_aggregator("attention_pool")
@@ -34,15 +33,15 @@ class AttentionPoolAggregator(AbstractAggregator):
         nn.init.trunc_normal_(self.query, std=0.02)
         self.scale = embed_dim ** -0.5
 
-        self.pos_proj: Optional[nn.Linear] = (
+        self.pos_proj: nn.Linear | None = (
             nn.Linear(3, embed_dim, bias=False) if use_position_encoding else None
         )
 
     def forward(
         self,
         crop_features: torch.Tensor,
-        positions: Optional[torch.Tensor] = None,
-        padding_mask: Optional[torch.Tensor] = None,
+        positions: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute attended global embedding.
 

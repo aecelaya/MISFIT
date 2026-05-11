@@ -1,5 +1,4 @@
 """Classification objective — cross-entropy loss with a linear head."""
-from typing import Optional
 
 import pandas as pd
 import torch
@@ -70,7 +69,7 @@ class ClassificationObjective(TrainingObjective):
 
     def build_batch_sampler(
         self, dataset: CropFeaturesDataset, batch_size: int
-    ) -> Optional[BatchSampler]:
+    ) -> BatchSampler | None:
         """Return ``None`` — standard random batching is sufficient."""
         return None
 

@@ -12,9 +12,9 @@
     Used by ``misfit_inspect`` to visually assess pretraining quality.
 """
 import json
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -28,10 +28,10 @@ from misfit.utils.progress_bar import get_progress_bar
 
 def _tiled_reconstruct(
     padded: np.ndarray,
-    patch_size: Tuple[int, int, int],
-    model_fn: Callable[[torch.Tensor], Dict[str, torch.Tensor]],
-    device: Union[str, torch.device],
-) -> Tuple[np.ndarray, np.ndarray]:
+    patch_size: tuple[int, int, int],
+    model_fn: Callable[[torch.Tensor], dict[str, torch.Tensor]],
+    device: str | torch.device,
+) -> tuple[np.ndarray, np.ndarray]:
     """Reconstruct *padded* volume patch-by-patch and stitch results.
 
     Args:
@@ -77,12 +77,12 @@ def _tiled_reconstruct(
 
 
 def reconstruct(
-    index_path: Union[str, Path],
-    checkpoint_path: Union[str, Path],
-    output_dir: Union[str, Path],
-    model_config: Dict,
-    device: Optional[Union[str, torch.device]] = None,
-    split: Optional[str] = None,
+    index_path: str | Path,
+    checkpoint_path: str | Path,
+    output_dir: str | Path,
+    model_config: dict,
+    device: str | torch.device | None = None,
+    split: str | None = None,
 ) -> None:
     """Reconstruct every volume in *index_path* and save as NIfTI.
 
@@ -133,7 +133,7 @@ def reconstruct(
     if split and "split" in index_df.columns:
         index_df = index_df[index_df["split"] == split].reset_index(drop=True)
     n_total = len(index_df)
-    errors: List[str] = []
+    errors: list[str] = []
 
     print_section_header(
         f"Reconstructing: {n_total:,} volumes → {output_dir}"

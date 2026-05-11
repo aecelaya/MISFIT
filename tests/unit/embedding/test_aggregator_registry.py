@@ -36,8 +36,6 @@ def test_register_aggregator_duplicate_raises():
     name = "_test_dup_agg_xyz"
     AGGREGATOR_REGISTRY.pop(name, None)
 
-    import torch
-    from typing import Optional
 
     @register_aggregator(name)
     class MyAgg(AbstractAggregator):

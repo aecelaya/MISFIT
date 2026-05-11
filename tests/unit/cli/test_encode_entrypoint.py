@@ -1,7 +1,7 @@
 """Tests for misfit.cli.encode_entrypoint."""
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import nibabel as nib
 import numpy as np
@@ -11,7 +11,6 @@ import torch
 
 import misfit.models  # noqa — trigger registrations
 from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-
 
 PATCH_SIZE = 32
 MODEL_CONFIG = {
@@ -191,7 +190,7 @@ def test_encode_entry_skips_on_load_failure(tmp_path):
 
 def test_encode_entry_skips_on_exception(tmp_path):
     """encode_entry catches exceptions and does not propagate them."""
-    from misfit.cli.encode_entrypoint import encode_entry, _encode_volume
+    from misfit.cli.encode_entrypoint import encode_entry
 
     index_path = _make_index(tmp_path)
     config_path = _make_config(tmp_path)

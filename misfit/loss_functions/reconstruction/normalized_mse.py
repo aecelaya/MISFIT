@@ -75,7 +75,7 @@ class NormalizedMaskedMSELoss(ReconstructionLoss):
         B, C, D, H, W = target.shape
         p = self.patch_size
 
-        for dim, size in zip(("D", "H", "W"), (D, H, W)):
+        for dim, size in zip(("D", "H", "W"), (D, H, W), strict=True):
             if size % p != 0:
                 raise ValueError(
                     f"Spatial dimension {dim}={size} is not divisible by "

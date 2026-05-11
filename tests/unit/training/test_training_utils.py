@@ -7,7 +7,6 @@ import torch
 
 from misfit.training.training_utils import RunningMean, set_seed
 
-
 # ---------------------------------------------------------------------------
 # RunningMean
 # ---------------------------------------------------------------------------

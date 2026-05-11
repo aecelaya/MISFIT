@@ -18,7 +18,6 @@ Typical usage::
 """
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -45,7 +44,7 @@ _STATS_COLUMNS = [
 INDEX_COLUMNS = ["volume_id", "path", "split"] + _STATS_COLUMNS[2:]
 
 # Default 80 / 10 / 10 split ratios.
-DEFAULT_SPLIT_RATIOS: Dict[str, float] = {
+DEFAULT_SPLIT_RATIOS: dict[str, float] = {
     "train": 0.8,
     "val":   0.1,
     "test":  0.1,
@@ -54,7 +53,7 @@ DEFAULT_SPLIT_RATIOS: Dict[str, float] = {
 
 def assign_splits(
     df: pd.DataFrame,
-    ratios: Dict[str, float],
+    ratios: dict[str, float],
     seed: int = 42,
 ) -> pd.DataFrame:
     """Assign a ``split`` column (``"train"`` / ``"val"`` / ``"test"``) to *df*.
@@ -94,12 +93,12 @@ def assign_splits(
 
 
 def build_index(
-    nifti_paths: List[Path],
-    output_path: Optional[Path] = None,
+    nifti_paths: list[Path],
+    output_path: Path | None = None,
     num_workers: int = 32,
-    split_ratios: Optional[Dict[str, float]] = None,
+    split_ratios: dict[str, float] | None = None,
     split_seed: int = 42,
-) -> Tuple[pd.DataFrame, List[str]]:
+) -> tuple[pd.DataFrame, list[str]]:
     """Build the MISFIT metadata index from a list of NIfTI files.
 
     Processes each file in a separate worker process to parallelize I/O and

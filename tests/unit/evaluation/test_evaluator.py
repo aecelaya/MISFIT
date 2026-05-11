@@ -12,7 +12,6 @@ import torch
 import misfit.models  # noqa — trigger registrations
 from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
 
-
 MODEL_CONFIG = {
     "architecture": "_tiny_test_model",
     "patch_size": [32, 32, 32],
@@ -86,8 +85,6 @@ def evaluator_setup(tmp_path):
 def _make_evaluator(ckpt, idx, res, metrics=None):
     """Create a ReconstructionEvaluator with _build_model patched to use the tiny checkpoint."""
     from misfit.evaluation.evaluator import ReconstructionEvaluator
-    device = torch.device("cpu")
-
     # We need to patch _build_model so it uses our tiny feature_size=12 model.
     with patch.object(
         ReconstructionEvaluator,
@@ -279,7 +276,7 @@ def test_run_skips_volume_on_load_failure(evaluator_setup):
     ev = _make_evaluator(ckpt, idx, res)
 
     with patch.object(ev, "_load_and_normalise", return_value=None):
-        df = ev.run()
+        ev.run()
 
     # CSV exists but contains only summary rows (no per-volume data row)
     assert res.exists()
@@ -293,7 +290,7 @@ def test_run_skips_volume_on_inference_failure(evaluator_setup):
     with patch.object(
         ev, "_run_tiled_inference", side_effect=RuntimeError("inference boom")
     ):
-        df = ev.run()   # must not propagate the exception
+        ev.run()  # must not propagate the exception
 
     assert res.exists()
 

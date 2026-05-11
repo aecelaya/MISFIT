@@ -1,6 +1,6 @@
 """Contrastive objective — Supervised Contrastive loss with K=2 enforcement."""
 import warnings
-from typing import Iterator, List, Optional
+from collections.abc import Iterator
 
 import pandas as pd
 import torch
@@ -14,12 +14,11 @@ from misfit.embedding.objectives.base import (
 )
 from misfit.embedding.objectives.objective_registry import register_objective
 
-
 # ---------------------------------------------------------------------------
 # GroupedBatchSampler
 # ---------------------------------------------------------------------------
 
-class GroupedBatchSampler(Sampler[List[int]]):
+class GroupedBatchSampler(Sampler[list[int]]):
     """Yield batches with exactly K=2 samples per group.
 
     Each batch contains ``M`` groups, each contributing exactly 2 indices, so
@@ -36,7 +35,7 @@ class GroupedBatchSampler(Sampler[List[int]]):
 
     def __init__(
         self,
-        group_indices: List[List[int]],
+        group_indices: list[list[int]],
         batch_size: int,
         drop_last: bool = True,
     ) -> None:
@@ -48,10 +47,10 @@ class GroupedBatchSampler(Sampler[List[int]]):
         self.group_indices = group_indices
         self.drop_last = drop_last
 
-    def __iter__(self) -> Iterator[List[int]]:
+    def __iter__(self) -> Iterator[list[int]]:
         # Shuffle group order each epoch.
         group_order = torch.randperm(len(self.group_indices)).tolist()
-        batch: List[int] = []
+        batch: list[int] = []
 
         for g in group_order:
             members = self.group_indices[g]
@@ -215,7 +214,7 @@ class ContrastiveObjective(TrainingObjective):
 
     def build_batch_sampler(
         self, dataset: CropFeaturesDataset, batch_size: int
-    ) -> Optional[BatchSampler]:
+    ) -> BatchSampler | None:
         """Build a :class:`GroupedBatchSampler` ensuring K=2 per group.
 
         Returns ``None`` (falls back to random) if the dataset is too small

@@ -1,15 +1,16 @@
 """Registry for MISFIT embedding training objectives."""
-from typing import Callable, Dict, List, Type, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from misfit.embedding.objectives.base import TrainingObjective
 
 T = TypeVar("T", bound=TrainingObjective)
-OBJECTIVE_REGISTRY: Dict[str, Type[TrainingObjective]] = {}
+OBJECTIVE_REGISTRY: dict[str, type[TrainingObjective]] = {}
 
 
-def register_objective(name: str) -> Callable[[Type[T]], Type[T]]:
+def register_objective(name: str) -> Callable[[type[T]], type[T]]:
     """Class decorator — registers a :class:`TrainingObjective` subclass."""
-    def decorator(cls: Type[T]) -> Type[T]:
+    def decorator(cls: type[T]) -> type[T]:
         if not issubclass(cls, TrainingObjective):
             raise TypeError(f"{cls.__name__} must inherit from TrainingObjective.")
         if name in OBJECTIVE_REGISTRY:
@@ -20,12 +21,12 @@ def register_objective(name: str) -> Callable[[Type[T]], Type[T]]:
     return decorator
 
 
-def list_objectives() -> List[str]:
+def list_objectives() -> list[str]:
     """Return a sorted list of all registered objective names."""
     return sorted(OBJECTIVE_REGISTRY.keys())
 
 
-def get_objective(name: str) -> Type[TrainingObjective]:
+def get_objective(name: str) -> type[TrainingObjective]:
     """Return the objective *class* for *name*.
 
     Raises:

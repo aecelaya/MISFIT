@@ -1,11 +1,9 @@
 """Tests for misfit.preprocessing.indexer."""
 from pathlib import Path
-from unittest.mock import patch
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
-import pytest
 
 from misfit.preprocessing.indexer import INDEX_COLUMNS, assign_splits, build_index
 

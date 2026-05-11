@@ -1,10 +1,10 @@
 """IO utilities for MISFIT runtime operations."""
 import json
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any
 
 
-def read_json_file(json_file: Union[str, Path]) -> Dict[str, Any]:
+def read_json_file(json_file: str | Path) -> dict[str, Any]:
     """Read a JSON file and return its contents as a dictionary.
 
     Args:
@@ -13,13 +13,13 @@ def read_json_file(json_file: Union[str, Path]) -> Dict[str, Any]:
     Returns:
         Dictionary with the JSON file data.
     """
-    with open(json_file, "r", encoding="utf-8") as f:
+    with open(json_file, encoding="utf-8") as f:
         return json.load(f)
 
 
 def write_json_file(
-    json_file: Union[str, Path],
-    data: Dict[str, Any],
+    json_file: str | Path,
+    data: dict[str, Any],
 ) -> None:
     """Write a dictionary to a JSON file.
 

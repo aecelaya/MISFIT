@@ -2,6 +2,7 @@
 from unittest.mock import patch
 
 import pytest
+from rich.console import Console
 
 from misfit.utils.console import (
     console,
@@ -11,7 +12,6 @@ from misfit.utils.console import (
     print_success,
     print_warning,
 )
-from rich.console import Console
 
 
 def test_console_singleton():

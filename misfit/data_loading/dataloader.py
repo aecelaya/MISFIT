@@ -23,7 +23,6 @@ Typical multi-node usage (inside a torchrun worker)::
     )
 """
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -31,8 +30,8 @@ from misfit.data_loading.dataset import MISFITDataset
 
 
 def get_training_dataloader(
-    index_path: Union[str, Path],
-    patch_size: Tuple[int, int, int] = (96, 96, 96),
+    index_path: str | Path,
+    patch_size: tuple[int, int, int] = (96, 96, 96),
     batch_size: int = 2,
     num_workers: int = 8,
     distributed: bool = False,
@@ -68,7 +67,7 @@ def get_training_dataloader(
         split="train",
     )
 
-    sampler: Optional[DistributedSampler] = None
+    sampler: DistributedSampler | None = None
     if distributed:
         sampler = DistributedSampler(dataset, shuffle=True, seed=seed)
 
@@ -89,8 +88,8 @@ def get_training_dataloader(
 
 
 def get_validation_dataloader(
-    index_path: Union[str, Path],
-    patch_size: Tuple[int, int, int] = (96, 96, 96),
+    index_path: str | Path,
+    patch_size: tuple[int, int, int] = (96, 96, 96),
     batch_size: int = 1,
     num_workers: int = 4,
     distributed: bool = False,
@@ -119,7 +118,7 @@ def get_validation_dataloader(
         split="val",
     )
 
-    sampler: Optional[DistributedSampler] = None
+    sampler: DistributedSampler | None = None
     if distributed:
         sampler = DistributedSampler(dataset, shuffle=False, seed=seed)
 

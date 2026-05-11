@@ -1,6 +1,5 @@
 """Utility functions for MISFIT inference modules."""
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -17,9 +16,9 @@ def get_default_device() -> str:
 
 
 def load_checkpoint(
-    checkpoint_path: Union[str, Path],
-    device: Optional[Union[str, torch.device]] = None,
-) -> Dict:
+    checkpoint_path: str | Path,
+    device: str | torch.device | None = None,
+) -> dict:
     """Load a MISFIT checkpoint from disk.
 
     Args:
@@ -39,9 +38,9 @@ def load_checkpoint(
 
 
 def build_model_from_checkpoint(
-    checkpoint: Dict,
-    model_config: Dict,
-    device: Optional[Union[str, torch.device]] = None,
+    checkpoint: dict,
+    model_config: dict,
+    device: str | torch.device | None = None,
 ) -> nn.Module:
     """Reconstruct a model from a model config dict and load checkpoint weights.
 
@@ -71,13 +70,13 @@ def build_model_from_checkpoint(
 
 
 def load_and_normalise(
-    nifti_path: Union[str, Path],
+    nifti_path: str | Path,
     p1: float,
     p99: float,
     fg_mean: float,
     fg_std: float,
     eps: float = 1e-8,
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """Load a NIfTI volume and apply clip + z-score normalisation.
 
     Args:
@@ -108,8 +107,8 @@ def load_and_normalise(
 
 def pad_to_multiple(
     volume: np.ndarray,
-    patch_size: Tuple[int, int, int],
-) -> Tuple[np.ndarray, Tuple[int, int, int]]:
+    patch_size: tuple[int, int, int],
+) -> tuple[np.ndarray, tuple[int, int, int]]:
     """Zero-pad *volume* so every dimension is a multiple of *patch_size*.
 
     Args:
@@ -123,7 +122,7 @@ def pad_to_multiple(
     """
     original_shape = volume.shape
     pad_width = []
-    for dim, p in zip(volume.shape, patch_size):
+    for dim, p in zip(volume.shape, patch_size, strict=True):
         remainder = dim % p
         pad = (p - remainder) % p  # 0 if already a multiple
         pad_width.append((0, pad))
@@ -134,7 +133,7 @@ def pad_to_multiple(
 
 def centre_crop_or_pad(
     volume: np.ndarray,
-    target: Tuple[int, int, int],
+    target: tuple[int, int, int],
 ) -> np.ndarray:
     """Pad (if needed) then centre-crop a volume to *target* shape.
 
@@ -147,7 +146,7 @@ def centre_crop_or_pad(
     """
     # Pad any axis that is smaller than the target.
     pad_width = []
-    for dim, t in zip(volume.shape, target):
+    for dim, t in zip(volume.shape, target, strict=True):
         deficit = max(0, t - dim)
         pad_before = deficit // 2
         pad_width.append((pad_before, deficit - pad_before))
@@ -156,7 +155,7 @@ def centre_crop_or_pad(
 
     # Centre crop.
     slices = []
-    for dim, t in zip(volume.shape, target):
+    for dim, t in zip(volume.shape, target, strict=True):
         start = (dim - t) // 2
         slices.append(slice(start, start + t))
     return volume[tuple(slices)]

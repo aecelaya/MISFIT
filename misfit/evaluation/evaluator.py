@@ -20,7 +20,6 @@ Typical usage::
 """
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import nibabel as nib
 import numpy as np
@@ -72,10 +71,10 @@ class ReconstructionEvaluator:
         checkpoint_path: Path,
         index_path: Path,
         output_csv_path: Path,
-        model_config: Dict,
-        metrics: Optional[List[str]] = None,
-        device: Optional[str] = None,
-        split: Optional[str] = "val",
+        model_config: dict,
+        metrics: list[str] | None = None,
+        device: str | None = None,
+        split: str | None = "val",
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
@@ -102,7 +101,7 @@ class ReconstructionEvaluator:
             map_location=self.device,
             weights_only=True,
         )
-        self.patch_size: Tuple[int, int, int] = tuple(model_config["patch_size"])
+        self.patch_size: tuple[int, int, int] = tuple(model_config["patch_size"])
 
         self.model: nn.Module = self._build_model()
 
@@ -131,7 +130,7 @@ class ReconstructionEvaluator:
 
     def _load_and_normalise(
         self, row: pd.Series
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Load a NIfTI volume and apply clip + z-score normalisation.
 
         Returns None (and logs a warning) if the file cannot be read.
@@ -155,7 +154,7 @@ class ReconstructionEvaluator:
 
     def _run_inference(
         self, patch: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Run one forward pass on a single patch and return (reconstruction, mask).
 
         Args:
@@ -177,7 +176,7 @@ class ReconstructionEvaluator:
 
     def _run_tiled_inference(
         self, volume: np.ndarray
-    ) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """Tile *volume* into non-overlapping patches and run inference on each.
 
         Pads the volume to the nearest multiple of ``patch_size`` in each
@@ -209,7 +208,7 @@ class ReconstructionEvaluator:
         reconstruction: np.ndarray,
         target: np.ndarray,
         mask: np.ndarray,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Compute all requested metrics for one patch."""
         results = {}
         for metric_name in self.metrics:

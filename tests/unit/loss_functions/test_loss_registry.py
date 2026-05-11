@@ -2,13 +2,13 @@
 import pytest
 
 import misfit.loss_functions  # noqa — trigger registrations
+from misfit.loss_functions.base import ReconstructionLoss
 from misfit.loss_functions.loss_registry import (
     LOSS_REGISTRY,
     get_loss,
     list_registered_losses,
     register_loss,
 )
-from misfit.loss_functions.base import ReconstructionLoss
 
 
 def test_list_registered_losses_sorted():
