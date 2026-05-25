@@ -105,7 +105,7 @@ class MAETrainer:
         model = model.to(self.device)
         if self.is_distributed:
             model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[self.local_rank])
+            model = DDP(model, device_ids=[self.local_rank], bucket_cap_mb=self.args.bucket_cap_mb)
         return model
 
     def _build_loss(self) -> nn.Module:
@@ -148,47 +148,63 @@ class MAETrainer:
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
         scaler: torch.amp.GradScaler | None,
+        accum_steps: int = 1,
+        is_last_accum: bool = True,
     ) -> float:
-        """Forward + backward + optimizer step for one batch.
+        """Forward + backward for one micro-batch; optimizer step on last accumulation.
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model.
-            batch: Image tensor of shape (B, 1, D, H, W).
+            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
             scaler: GradScaler for AMP, or None for full precision.
+            accum_steps: Total accumulation steps; loss is divided by this to
+                normalise gradient magnitude across the window.
+            is_last_accum: When True, performs the optimizer step and gradient
+                clipping. When False, only accumulates gradients. The caller
+                must call optimizer.zero_grad() before the first micro-step of
+                each accumulation window.
 
         Returns:
-            Scalar loss value for this batch.
+            Un-scaled scalar loss for this micro-batch (before 1/accum_steps
+            normalisation), for logging purposes.
         """
         images = batch["image"].to(self.device, non_blocking=True)
         spacing = batch["spacing"].to(self.device, non_blocking=True)
-        optimizer.zero_grad()
 
         _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
         amp_ctx = (
             torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
         )
-        with amp_ctx:
+        # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
+        sync_ctx = (
+            model.no_sync()
+            if (self.is_distributed and not is_last_accum)
+            else nullcontext()
+        )
+        with sync_ctx, amp_ctx:
             output = model(images, spacing=spacing)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
                 mask=output["mask"],
-            )
+            ) / accum_steps
 
         if scaler is not None:
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-            scaler.step(optimizer)
-            scaler.update()
+            if is_last_accum:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+                scaler.step(optimizer)
+                scaler.update()
         else:
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-            optimizer.step()
+            if is_last_accum:
+                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+                optimizer.step()
 
-        return loss.item()
+        return loss.item() * accum_steps  # un-scaled for logging
 
     def _validation_step(
         self,
@@ -334,9 +350,11 @@ class MAETrainer:
                 "lr_scheduler":  self.args.lr_scheduler,
                 "warmup_epochs": self.args.warmup_epochs,
                 "loss":          self.args.loss,
-                "amp":           self.amp,
-                "amp_dtype":     self.amp_dtype,
-                "seed":          self.args.seed,
+                "amp":                        self.amp,
+                "amp_dtype":                  self.amp_dtype,
+                "seed":                       self.args.seed,
+                "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
+                "bucket_cap_mb":              self.args.bucket_cap_mb,
             },
             "evaluation": {
                 metric: {} for metric in list_registered_metrics()
@@ -375,8 +393,10 @@ class MAETrainer:
             ("training", "weight_decay",  self.args.weight_decay),
             ("training", "lr_scheduler",  self.args.lr_scheduler),
             ("training", "warmup_epochs", self.args.warmup_epochs),
-            ("training", "loss",          self.args.loss),
-            ("training", "amp_dtype",     self.amp_dtype),
+            ("training", "loss",                         self.args.loss),
+            ("training", "amp_dtype",                    self.amp_dtype),
+            ("training", "gradient_accumulation_steps",  self.args.gradient_accumulation_steps),
+            ("training", "bucket_cap_mb",                self.args.bucket_cap_mb),
         ]
         for section, key, current in soft:
             saved = saved_config.get(section, {}).get(key)
@@ -513,6 +533,7 @@ class MAETrainer:
             model.train()
             train_meter = RunningMean()
 
+            accum_steps = self.args.gradient_accumulation_steps
             progress_ctx = self._make_progress() if self.is_main else nullcontext()
             with progress_ctx as progress:
                 task = (
@@ -522,15 +543,41 @@ class MAETrainer:
                     )
                     if self.is_main else None
                 )
+                optimizer.zero_grad()
+                accum_loss = 0.0
+                micro_count = 0
                 for batch in train_loader:
+                    micro_count += 1
+                    is_last = (micro_count % accum_steps == 0)
                     step_loss = self._training_step(
-                        model, batch, criterion, optimizer, scaler
+                        model, batch, criterion, optimizer, scaler,
+                        accum_steps=accum_steps, is_last_accum=is_last,
                     )
-                    step_loss = self._aggregate_loss(step_loss)
-                    train_meter.update(step_loss)
-                    global_step += 1
+                    accum_loss += step_loss
                     if self.is_main and progress is not None:
                         progress.advance(task)
+                    if is_last:
+                        agg_loss = self._aggregate_loss(accum_loss / accum_steps)
+                        train_meter.update(agg_loss)
+                        global_step += 1
+                        accum_loss = 0.0
+                        optimizer.zero_grad()
+
+            # Flush trailing micro-steps when len(train_loader) % accum_steps != 0.
+            if micro_count % accum_steps != 0:
+                remainder = micro_count % accum_steps
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+                    optimizer.step()
+                agg_loss = self._aggregate_loss(accum_loss / remainder)
+                train_meter.update(agg_loss)
+                global_step += 1
+                optimizer.zero_grad()
 
             scheduler.step()
 

@@ -207,6 +207,22 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         "--warmup-epochs", type=non_negative_int, default=20, metavar="N",
         help="Linear warmup epochs (recommended ≥10 for SwinUNETR-V2).",
     )
+    opt.add_argument(
+        "--gradient-accumulation-steps", type=positive_int, default=1, metavar="N",
+        dest="gradient_accumulation_steps",
+        help=(
+            "Accumulate gradients over N batches before each optimizer step. "
+            "Effective batch size = batch_size × world_size × N. Defaults to 1 (no accumulation)."
+        ),
+    )
+    opt.add_argument(
+        "--bucket-cap-mb", type=positive_int, default=200, metavar="MB",
+        dest="bucket_cap_mb",
+        help=(
+            "DDP all-reduce bucket size in MB. Larger values reduce the number of "
+            "all-reduce calls at multi-node scale. Defaults to 200 (vs PyTorch default 25)."
+        ),
+    )
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
@@ -370,8 +386,8 @@ def add_embed_args(parser: ArgParser) -> None:
         "--output-dir", required=True, metavar="DIR",
         help=(
             "Directory where per-volume .npz files are saved.  "
-            "Each file contains 'features (N_crops, C)' and "
-            "'positions (N_crops, 3)'."
+            "Each file contains 'embedding (C,)' — the single global "
+            "embedding vector for the volume."
         ),
     )
 
@@ -435,7 +451,7 @@ def add_embed_train_args(parser: ArgParser) -> None:
             "Unified CSV with columns: volume_id, split, features_path, label.  "
             "Only rows where split='train' are used for training.  "
             "features_path must be the absolute path to each volume's .npz file "
-            "produced by misfit_embed."
+            "produced by misfit_encode."
         ),
     )
 

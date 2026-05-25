@@ -33,6 +33,10 @@ class DummyDDP(nn.Module):
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
 
+    def no_sync(self):
+        from contextlib import nullcontext
+        return nullcontext()
+
 
 class FakeScaler:
     """Mock GradScaler that runs real backward but tracks AMP method calls."""
@@ -163,6 +167,8 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         results=str(tmp_path / "results"),
         index=str(idx),
         amp_dtype="fp16",
+        gradient_accumulation_steps=1,
+        bucket_cap_mb=200,
     )
 
 
@@ -809,3 +815,139 @@ def test_train_resume_reads_and_validates_config(tmp_path):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()  # must not raise; config is compatible
+
+
+# ---------------------------------------------------------------------------
+# Gradient accumulation and DDP bucket tuning
+# ---------------------------------------------------------------------------
+
+def test_build_model_passes_bucket_cap_mb(tmp_path, monkeypatch):
+    """_build_model forwards bucket_cap_mb to DDP when distributed."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    captured = {}
+
+    class CapturingDDP(DummyDDP):
+        def __init__(self, module, device_ids=None, bucket_cap_mb=None, **kwargs):
+            super().__init__(module, device_ids=device_ids)
+            captured["bucket_cap_mb"] = bucket_cap_mb
+
+    monkeypatch.setattr(mt, "DDP", CapturingDDP)
+
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    args = _make_args(tmp_path)
+    args.bucket_cap_mb = 512
+    trainer = MAETrainer(args)
+    trainer.device = torch.device("cpu")
+    trainer._build_model()
+
+    assert captured["bucket_cap_mb"] == 512
+
+
+def test_training_step_skips_optimizer_on_non_last_accum(tmp_path):
+    """_training_step does not call optimizer.step() when is_last_accum=False."""
+    from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    trainer = MAETrainer(args)
+    trainer.device = torch.device("cpu")
+
+    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                    mask_patch_size=16, mask_ratio=0.75)
+    criterion = MaskedMSELoss()
+    optimizer = MagicMock(wraps=torch.optim.Adam(model.parameters(), lr=1e-4))
+
+    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    optimizer.zero_grad()  # caller's responsibility
+    trainer._training_step(model, batch, criterion, optimizer, scaler=None,
+                           accum_steps=2, is_last_accum=False)
+
+    optimizer.step.assert_not_called()
+
+
+def test_training_step_scales_loss_by_accum_steps(tmp_path):
+    """Gradient norm halves when accum_steps doubles (loss is divided by accum_steps)."""
+    from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    trainer = MAETrainer(args)
+    trainer.device = torch.device("cpu")
+
+    def _grad_norm_after_step(accum_steps):
+        torch.manual_seed(0)
+        model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                        mask_patch_size=16, mask_ratio=0.75)
+        criterion = MaskedMSELoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+        optimizer.zero_grad()
+        trainer._training_step(model, batch, criterion, optimizer, scaler=None,
+                               accum_steps=accum_steps, is_last_accum=False)
+        return sum(
+            p.grad.norm().item() ** 2
+            for p in model.parameters()
+            if p.grad is not None
+        ) ** 0.5
+
+    norm_1 = _grad_norm_after_step(1)
+    norm_2 = _grad_norm_after_step(2)
+    assert abs(norm_1 / norm_2 - 2.0) < 0.01
+
+
+def test_build_config_includes_accumulation_fields(tmp_path):
+    """_build_config records gradient_accumulation_steps and bucket_cap_mb."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.gradient_accumulation_steps = 4
+    args.bucket_cap_mb = 400
+    trainer = MAETrainer(args)
+    config = trainer._build_config()
+
+    assert config["training"]["gradient_accumulation_steps"] == 4
+    assert config["training"]["bucket_cap_mb"] == 400
+
+
+def test_train_gradient_accumulation_two_steps(tmp_path):
+    """With accum_steps=2 and a 2-batch loader, exactly 1 optimizer step fires."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.gradient_accumulation_steps = 2
+    args.epochs = 1
+
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch, dummy_batch]  # exactly 2 micro-batches
+
+    step_count = {"n": 0}
+    original_step = torch.optim.Adam.step
+
+    def counting_step(self_opt, *a, **kw):
+        step_count["n"] += 1
+        return original_step(self_opt, *a, **kw)
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               autospec=True, return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch.object(torch.optim.Adam, "step", counting_step):
+        trainer = MAETrainer(args)
+        trainer.device = torch.device("cpu")
+        trainer.train()
+
+    # 2 micro-batches / accum_steps=2 → exactly 1 optimizer step during training
+    assert step_count["n"] == 1

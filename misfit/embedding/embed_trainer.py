@@ -16,8 +16,7 @@ class EmbedTrainer:
     """Train an aggregator module on cached per-crop ``.npz`` feature files.
 
     The encoder is **not** touched — it is assumed that per-volume feature
-    files (produced by ``misfit_embed``) already exist in
-    *features_dir*.
+    files (produced by ``misfit_encode``) already exist on disk.
 
     The training loop is intentionally simple:
 
