@@ -18,6 +18,7 @@ from misfit.embedding.objectives.objective_registry import register_objective
 # GroupedBatchSampler
 # ---------------------------------------------------------------------------
 
+
 class GroupedBatchSampler(Sampler[list[int]]):
     """Yield batches with exactly K=2 samples per group.
 

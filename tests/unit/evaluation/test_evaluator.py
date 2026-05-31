@@ -380,6 +380,107 @@ def test_split_none_keeps_all_rows(tmp_path):
     assert len(ev.index_df) == 2
 
 
+# ---------------------------------------------------------------------------
+# training_config / normalized_masked_mse target-patch normalisation
+# ---------------------------------------------------------------------------
+
+def test_normalized_mse_evaluator_normalizes_target_patches(evaluator_setup):
+    """With training_config={"loss": "normalized_masked_mse"}, the target patches
+    returned by _run_tiled_inference should be approximately zero-mean, unit-std."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt,
+            index_path=idx,
+            output_csv_path=res,
+            model_config=MODEL_CONFIG,
+            metrics=["masked_mae"],
+            device="cpu",
+            training_config={"loss": "normalized_masked_mse"},
+        )
+
+    assert ev.normalize_target_patches is True
+
+    # Feed a volume with a known, non-trivial distribution.
+    rng = np.random.default_rng(0)
+    vol = rng.normal(loc=5.0, scale=3.0, size=(32, 32, 32)).astype(np.float32)
+    patch_results = ev._run_tiled_inference(vol)
+
+    # There is only one patch (32^3 volume, 32^3 patch_size).
+    assert len(patch_results) == 1
+    _, target_patch, _ = patch_results[0]
+
+    # The normalised target should be ~zero-mean, ~unit-std.
+    assert abs(target_patch.mean()) < 0.1
+    assert abs(target_patch.std() - 1.0) < 0.1
+
+
+def test_non_normalized_mse_evaluator_keeps_target_unchanged(evaluator_setup):
+    """Without normalized_masked_mse, target patches must not be altered."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt,
+            index_path=idx,
+            output_csv_path=res,
+            model_config=MODEL_CONFIG,
+            metrics=["masked_mae"],
+            device="cpu",
+            training_config={"loss": "masked_mse"},
+        )
+
+    assert ev.normalize_target_patches is False
+
+    rng = np.random.default_rng(1)
+    vol = rng.normal(loc=5.0, scale=3.0, size=(32, 32, 32)).astype(np.float32)
+    padded_vol = vol.copy()  # pad_to_multiple is a no-op here (already 32^3)
+
+    patch_results = ev._run_tiled_inference(vol)
+    assert len(patch_results) == 1
+    _, target_patch, _ = patch_results[0]
+
+    # Target should be the raw padded slice, not normalised.
+    np.testing.assert_allclose(target_patch, padded_vol, rtol=1e-5)
+
+
+def test_no_training_config_defaults_normalize_target_false(evaluator_setup):
+    """training_config=None should default normalize_target_patches to False."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt,
+            index_path=idx,
+            output_csv_path=res,
+            model_config=MODEL_CONFIG,
+            metrics=["masked_mae"],
+            device="cpu",
+            training_config=None,
+        )
+
+    assert ev.normalize_target_patches is False
+
+
 def test_run_partial_errors_prints_warning(evaluator_setup, tmp_path):
     """When some volumes fail n_errors > 0 → print_warning path."""
     from misfit.evaluation.evaluator import ReconstructionEvaluator

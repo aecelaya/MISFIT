@@ -92,8 +92,10 @@ def test_embed_trainer_no_feature_files_raises(tmp_path):
 
     # CSV points to non-existent .npz files
     rows = [
-        {"volume_id": "vol1", "split": "train", "features_path": str(tmp_path / "vol1.npz"), "label": "a"},
-        {"volume_id": "vol2", "split": "train", "features_path": str(tmp_path / "vol2.npz"), "label": "b"},
+        {"volume_id": "vol1", "split": "train",
+         "features_path": str(tmp_path / "vol1.npz"), "label": "a"},
+        {"volume_id": "vol2", "split": "train",
+         "features_path": str(tmp_path / "vol2.npz"), "label": "b"},
     ]
     input_csv = tmp_path / "input.csv"
     pd.DataFrame(rows).to_csv(input_csv, index=False)
@@ -145,7 +147,7 @@ def test_embed_trainer_only_train_split_used(tmp_path):
     features_dir.mkdir()
     rows = []
     for i, (split, label) in enumerate([("train", "a"), ("train", "b"),
-                                         ("val", "a"), ("test", "b")]):
+                                        ("val", "a"), ("test", "b")]):
         npz = features_dir / f"vol{i}.npz"
         _write_npz(npz, n_crops=3, C=16)
         rows.append({"volume_id": f"vol{i}", "split": split,

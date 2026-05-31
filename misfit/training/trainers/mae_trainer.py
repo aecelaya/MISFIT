@@ -64,7 +64,7 @@ class MAETrainer:
         self.args = args
 
         # Read distributed context set by torchrun (default to single-GPU).
-        self.rank       = int(os.environ.get("RANK", 0))
+        self.rank = int(os.environ.get("RANK", 0))
         self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self.is_distributed = self.world_size > 1
@@ -450,7 +450,7 @@ class MAETrainer:
         set_seed(self.args.seed, self.rank)
 
         # --- Build components ---
-        model     = self._build_model()
+        model = self._build_model()
         criterion = self._build_loss().to(self.device)
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
@@ -482,8 +482,8 @@ class MAETrainer:
 
         # --- Output directories (rank 0 creates, then barrier) ---
         checkpoint_dir = results_dir / "checkpoints"
-        models_dir     = results_dir / "models"
-        logs_dir       = results_dir / "logs"
+        models_dir = results_dir / "models"
+        logs_dir = results_dir / "logs"
         if self.is_main:
             for d in (checkpoint_dir, models_dir, logs_dir):
                 d.mkdir(parents=True, exist_ok=True)
@@ -492,12 +492,12 @@ class MAETrainer:
         if self.is_distributed:
             dist.barrier()
 
-        checkpoint_path  = checkpoint_dir / "checkpoint.pt"
-        best_model_path  = models_dir / "best_model.pt"
+        checkpoint_path = checkpoint_dir / "checkpoint.pt"
+        best_model_path = models_dir / "best_model.pt"
 
         # --- Optionally resume ---
-        start_epoch  = 0
-        global_step  = 0
+        start_epoch = 0
+        global_step = 0
         best_val_loss = float("inf")
         if self.args.resume:
             start_epoch, global_step, best_val_loss = self._load_checkpoint(
@@ -577,7 +577,6 @@ class MAETrainer:
                 agg_loss = self._aggregate_loss(accum_loss / remainder)
                 train_meter.update(agg_loss)
                 global_step += 1
-                optimizer.zero_grad()
 
             scheduler.step()
 

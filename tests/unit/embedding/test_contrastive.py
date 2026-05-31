@@ -17,6 +17,7 @@ from misfit.embedding.objectives.contrastive import (
 # GroupedBatchSampler
 # ---------------------------------------------------------------------------
 
+
 def test_grouped_batch_sampler_batch_size():
     groups = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]]
     sampler = GroupedBatchSampler(groups, batch_size=4, drop_last=True)

@@ -16,6 +16,7 @@ from misfit.preprocessing.index_utils import (
 # get_volume_id
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("filename,expected", [
     ("patient_001.nii.gz", "patient_001"),
     ("patient_001.nii", "patient_001"),

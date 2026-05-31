@@ -21,6 +21,7 @@ from misfit.cli.args import (
 # Validator types
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("fn,value,expected", [
     pytest.param(positive_int,     "5",   5,                   id="positive_int"),
     pytest.param(positive_float,   "0.5", pytest.approx(0.5),  id="positive_float"),

@@ -11,6 +11,7 @@ from misfit.training.training_utils import RunningMean, set_seed
 # RunningMean
 # ---------------------------------------------------------------------------
 
+
 def test_running_mean_initial_value():
     m = RunningMean()
     assert m.value == 0.0

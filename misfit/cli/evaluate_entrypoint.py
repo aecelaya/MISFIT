@@ -69,6 +69,7 @@ def evaluate_entry(args=None) -> None:
 
     metrics = list(eval_section.keys())
     model_config = config.get("model", {})
+    training_config = config.get("training", {})
 
     evaluator = ReconstructionEvaluator(
         checkpoint_path=Path(ns.checkpoint),
@@ -78,5 +79,6 @@ def evaluate_entry(args=None) -> None:
         metrics=metrics,
         device=ns.device,
         split=ns.split or None,
+        training_config=training_config,
     )
     evaluator.run()

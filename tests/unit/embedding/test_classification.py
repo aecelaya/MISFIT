@@ -48,7 +48,9 @@ def test_build_head_is_linear(obj):
 
 
 def test_build_batch_sampler_returns_none(obj, tmp_path):
-    df = pd.DataFrame({"volume_id": ["v1"], "features_path": [str(tmp_path / "v1.npz")], "label": ["a"]})
+    df = pd.DataFrame({"volume_id": ["v1"],
+                       "features_path": [str(tmp_path / "v1.npz")],
+                       "label": ["a"]})
     obj.validate_labels(df, "label")
     from misfit.embedding.objectives.base import CropFeaturesDataset
     ds = CropFeaturesDataset(df, "label", label_to_idx=obj.label_to_idx)

@@ -255,7 +255,11 @@ class SwinMAE(MISFITModel):
             out_channels=_bottleneck_channels,
         )
 
-    def generate_mask(self, x: torch.Tensor) -> torch.Tensor:
+    def generate_mask(
+        self,
+        x: torch.Tensor,
+        mask_ratio: float | None = None,
+    ) -> torch.Tensor:
         """Generate a random patch-level binary mask.
 
         Divides the volume into a grid of non-overlapping cubes of size
@@ -265,16 +269,20 @@ class SwinMAE(MISFITModel):
         Args:
             x: Input tensor of shape (B, C, D, H, W). Only batch size,
                 spatial shape, and device are used.
+            mask_ratio: Fraction of patches to mask. If None, uses the value
+                set at construction (``self.mask_ratio``). Defaults to None.
 
         Returns:
             Float mask tensor of shape (B, 1, D, H, W), where 1.0 = masked
             and 0.0 = visible.
         """
+        if mask_ratio is None:
+            mask_ratio = self.mask_ratio
         B, _, D, H, W = x.shape
         p = self.mask_patch_size
         gd, gh, gw = D // p, H // p, W // p
         num_patches = gd * gh * gw
-        num_masked = int(self.mask_ratio * num_patches)
+        num_masked = int(mask_ratio * num_patches)
 
         # Rank patches by random noise; take the top num_masked as masked.
         noise = torch.rand(B, num_patches, device=x.device)
@@ -316,11 +324,8 @@ class SwinMAE(MISFITModel):
                     Use this to compute the loss over masked regions only:
                     ``loss = F.mse_loss(recon[mask], x[mask])``.
         """
-        if mask_ratio is None:
-            mask_ratio = self.mask_ratio
-
         # 1. Generate mask and replace masked voxels with the mask token.
-        mask = self.generate_mask(x)
+        mask = self.generate_mask(x, mask_ratio=mask_ratio)
         masked_x = x * (1.0 - mask) + self.mask_token * mask
 
         # 2. Encode. swinViT returns a list of 5 hidden states at spatial

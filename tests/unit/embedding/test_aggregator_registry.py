@@ -36,7 +36,6 @@ def test_register_aggregator_duplicate_raises():
     name = "_test_dup_agg_xyz"
     AGGREGATOR_REGISTRY.pop(name, None)
 
-
     @register_aggregator(name)
     class MyAgg(AbstractAggregator):
         def forward(self, crop_features, positions=None, padding_mask=None):

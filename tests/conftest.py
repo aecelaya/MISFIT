@@ -11,6 +11,7 @@ import torch
 # NIfTI / volume fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def nifti_image():
     """A small in-memory NIfTI1Image (32, 32, 32) float32."""

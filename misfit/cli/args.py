@@ -19,6 +19,7 @@ from misfit.training.optimizers.optimizer_registry import list_optimizers
 # Validator types
 # ---------------------------------------------------------------------------
 
+
 def positive_int(value: str | int) -> int:
     """Argparse type: integer > 0."""
     v = int(value)

@@ -23,6 +23,7 @@ import misfit.models  # noqa — trigger registrations
 # Shared mock helpers (ported from MIST's test_base_trainer.py patterns)
 # ---------------------------------------------------------------------------
 
+
 class DummyDDP(nn.Module):
     """Passes through to the wrapped module; no NCCL needed."""
 
@@ -477,7 +478,7 @@ def test_build_model_distributed_wraps_with_ddp(tmp_path, monkeypatch, fake_dist
 
 
 def test_training_step_with_scaler_calls_amp_methods(tmp_path):
-    """_training_step uses scaler.scale/unscale_/step/update when scaler is provided (lines 166-170)."""
+    """_training_step uses scaler.scale/unscale_/step/update when scaler is provided."""
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.training.trainers.mae_trainer import MAETrainer
@@ -914,6 +915,56 @@ def test_build_config_includes_accumulation_fields(tmp_path):
 
     assert config["training"]["gradient_accumulation_steps"] == 4
     assert config["training"]["bucket_cap_mb"] == 400
+
+
+def test_train_trailing_flush_no_orphan_zero_grad(tmp_path):
+    """With accum_steps=2 and a single-batch loader, the trailing flush fires
+    an optimizer step without calling zero_grad() after the epoch ends."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.gradient_accumulation_steps = 2
+    args.epochs = 1
+
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    # One micro-batch: remainder == 1, so the trailing flush path runs.
+    mock_loader = [dummy_batch]
+
+    zero_grad_calls = {"n": 0}
+    original_zero_grad = torch.optim.Adam.zero_grad
+
+    def counting_zero_grad(self_opt, *a, **kw):
+        zero_grad_calls["n"] += 1
+        return original_zero_grad(self_opt, *a, **kw)
+
+    step_calls = {"n": 0}
+    original_step = torch.optim.Adam.step
+
+    def counting_step(self_opt, *a, **kw):
+        step_calls["n"] += 1
+        return original_step(self_opt, *a, **kw)
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               autospec=True, return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch.object(torch.optim.Adam, "zero_grad", counting_zero_grad), \
+         patch.object(torch.optim.Adam, "step", counting_step):
+        trainer = MAETrainer(args)
+        trainer.device = torch.device("cpu")
+        trainer.train()
+
+    # Trailing flush fires 1 optimizer step.
+    assert step_calls["n"] == 1
+    # zero_grad is called once (before the epoch loop), NOT a second time after
+    # the trailing flush — the dead call has been removed.
+    assert zero_grad_calls["n"] == 1
 
 
 def test_train_gradient_accumulation_two_steps(tmp_path):

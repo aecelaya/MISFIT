@@ -133,7 +133,7 @@ def index_entry(args=None) -> None:
     output_path = Path(ns.output)
     split_cfg = _read_or_create_split_config(output_path)
     split_ratios = {k: split_cfg[k] for k in ("train", "val", "test")}
-    split_seed   = int(split_cfg.get("seed", 42))
+    split_seed = int(split_cfg.get("seed", 42))
 
     # --- Build index ---
     _, errors = build_index(

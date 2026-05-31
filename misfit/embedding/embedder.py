@@ -160,7 +160,7 @@ class Embedder(nn.Module):
 
         Returns:
             features:  ``(N_crops, C)`` on ``self.device``.
-            positions: ``(N_crops, 3)`` on CPU.
+            positions: ``(N_crops, 3)`` on ``self.device``.
         """
         volume = volume.to(self.device)
         padded = self._pad_volume(volume)
@@ -169,7 +169,7 @@ class Embedder(nn.Module):
         features_list = []
         for crop in crops:
             # crop after iteration: (1, P, P, P) → unsqueeze → (1, 1, P, P, P)
-            feat_map = self.encoder_fn(crop.unsqueeze(0).to(self.device))
+            feat_map = self.encoder_fn(crop.unsqueeze(0))
             # Global average pool over spatial dims: (1, C)
             feat = feat_map.mean(dim=(2, 3, 4))
             features_list.append(feat)

@@ -60,3 +60,46 @@ def test_embedder_positions_in_unit_cube(embedder):
     _, positions = embedder.extract_crop_features(volume)
     assert (positions >= 0).all()
     assert (positions <= 1).all()
+
+
+def test_extract_crop_features_crops_already_on_device():
+    """Crops passed to encoder_fn must already be on self.device.
+
+    The fix removed a redundant .to(self.device) inside the loop; this test
+    confirms that crops are on the correct device before encoder_fn is called.
+    """
+    received_devices = []
+
+    def tracking_encoder(x):
+        received_devices.append(str(x.device))
+        B = x.shape[0]
+        return torch.ones(B, 16, 2, 2, 2, device=x.device)
+
+    aggregator = MeanPoolAggregator(embed_dim=16)
+    emb = Embedder(
+        encoder_fn=tracking_encoder,
+        aggregator=aggregator,
+        patch_size=16,
+        device=torch.device("cpu"),
+    )
+    volume = torch.randn(1, 32, 32, 32)
+    emb._extract_crop_features(volume)
+
+    # Every crop should have been on "cpu" when encoder_fn saw it.
+    assert all(d == "cpu" for d in received_devices), (
+        f"Some crops were not on cpu before encoder_fn: {received_devices}"
+    )
+
+
+def test_extract_crop_features_positions_on_device():
+    """positions returned by _extract_crop_features must be on self.device."""
+    aggregator = MeanPoolAggregator(embed_dim=16)
+    emb = Embedder(
+        encoder_fn=_dummy_encoder,
+        aggregator=aggregator,
+        patch_size=16,
+        device=torch.device("cpu"),
+    )
+    volume = torch.randn(1, 32, 32, 32)
+    _, positions = emb._extract_crop_features(volume)
+    assert positions.device == torch.device("cpu")

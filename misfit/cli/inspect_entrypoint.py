@@ -52,12 +52,14 @@ def inspect_entry(args=None) -> None:
 
     config = read_json_file(config_path)
     model_config = config.get("model", {})
+    training_config = config.get("training", {})
 
     reconstruct(
         index_path=Path(ns.index),
         checkpoint_path=Path(ns.checkpoint),
         output_dir=Path(ns.output_dir),
         model_config=model_config,
+        training_config=training_config,
         device=ns.device,
         split=ns.split or None,
     )

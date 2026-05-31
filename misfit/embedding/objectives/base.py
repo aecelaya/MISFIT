@@ -77,15 +77,15 @@ def crop_collate_fn(
     C = features_list[0].shape[1]
 
     B = len(features_list)
-    padded_features  = torch.zeros(B, max_n, C)
+    padded_features = torch.zeros(B, max_n, C)
     padded_positions = torch.zeros(B, max_n, 3)
-    padding_mask     = torch.ones(B, max_n, dtype=torch.bool)  # True = padded
+    padding_mask = torch.ones(B, max_n, dtype=torch.bool)  # True = padded
 
     for i, (feats, pos) in enumerate(zip(features_list, positions_list, strict=True)):
         n = feats.shape[0]
-        padded_features[i, :n]  = feats
+        padded_features[i, :n] = feats
         padded_positions[i, :n] = pos
-        padding_mask[i, :n]     = False
+        padding_mask[i, :n] = False
 
     return padded_features, padded_positions, padding_mask, torch.tensor(labels)
 

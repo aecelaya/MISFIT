@@ -123,6 +123,44 @@ def test_generate_mask_ratio(tiny_model):
     assert 0.6 <= ratio <= 0.9
 
 
+def test_generate_mask_explicit_ratio_override(tiny_model):
+    """generate_mask(x, mask_ratio=0.125) should mask ~12.5% of patches."""
+    x = torch.randn(1, 1, *IMG_SIZE)
+    # IMG_SIZE=32, MASK_PATCH_SIZE=16 → 2^3=8 patches.  0.125*8 = 1 patch masked.
+    mask = tiny_model.generate_mask(x, mask_ratio=0.125)
+    ratio = mask.mean().item()
+    # Expect ~12.5%, allow generous tolerance for discrete patch rounding.
+    assert 0.05 <= ratio <= 0.25
+
+
+def test_forward_mask_ratio_override_takes_effect():
+    """forward(mask_ratio=0.125) should produce a much sparser mask than mask_ratio=0.75."""
+    model = SwinMAE(
+        in_channels=1,
+        feature_size=12,
+        img_size=IMG_SIZE,
+        mask_patch_size=MASK_PATCH_SIZE,
+        mask_ratio=0.75,
+    )
+    x = torch.randn(1, 1, *IMG_SIZE)
+    out_dense = model(x, mask_ratio=0.75)
+    out_sparse = model(x, mask_ratio=0.125)
+    ratio_dense = out_dense["mask"].mean().item()
+    ratio_sparse = out_sparse["mask"].mean().item()
+    # The override should clearly differ from the instance default.
+    assert ratio_sparse < ratio_dense - 0.2, (
+        f"mask_ratio override not applied: sparse={ratio_sparse:.3f} dense={ratio_dense:.3f}"
+    )
+
+
+def test_forward_mask_ratio_none_uses_instance_default(tiny_model):
+    """forward(mask_ratio=None) must use self.mask_ratio (0.75)."""
+    x = torch.randn(1, 1, *IMG_SIZE)
+    out = tiny_model(x, mask_ratio=None)
+    ratio = out["mask"].mean().item()
+    assert 0.6 <= ratio <= 0.9
+
+
 # ---------------------------------------------------------------------------
 # get_encoder_state_dict
 # ---------------------------------------------------------------------------

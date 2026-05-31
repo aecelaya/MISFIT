@@ -135,7 +135,8 @@ class TestTiledReconstruct:
         from misfit.inference.inference_runners import _tiled_reconstruct
 
         vol = np.zeros((64, 64, 64))
-        recon, mask = _tiled_reconstruct(vol, (32, 32, 32), _fake_model_fn(recon_val=1.0, mask_val=1.0), "cpu")
+        fn = _fake_model_fn(recon_val=1.0, mask_val=1.0)
+        recon, mask = _tiled_reconstruct(vol, (32, 32, 32), fn, "cpu")
         np.testing.assert_array_equal(recon, np.ones((64, 64, 64)))
         np.testing.assert_array_equal(mask, np.ones((64, 64, 64)))
 
@@ -257,7 +258,8 @@ class TestReconstruct:
         custom_affine = np.diag([2.0, 2.0, 2.0, 1.0])
 
         nifti_path = tmp_path / "affvol.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)), str(nifti_path))
+        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)),
+                 str(nifti_path))
         rows = [{
             "volume_id": "affvol", "path": str(nifti_path),
             "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
@@ -296,7 +298,8 @@ class TestReconstruct:
         fg_std = 200.0
 
         nifti_path = tmp_path / "normvol.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)), str(nifti_path))
+        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)),
+                 str(nifti_path))
         rows = [{
             "volume_id": "normvol", "path": str(nifti_path),
             "p1": -2.0, "p99": 2.0, "fg_mean": fg_mean, "fg_std": fg_std,
@@ -339,7 +342,8 @@ class TestReconstruct:
 
         # Build index with two volumes in different splits.
         nifti_path = tmp_path / "v.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)), str(nifti_path))
+        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)),
+                 str(nifti_path))
         base = {
             "path": str(nifti_path), "p1": -2.0, "p99": 2.0,
             "fg_mean": 0.0, "fg_std": 1.0,
@@ -381,7 +385,8 @@ class TestReconstruct:
         output_dir = tmp_path / "recons_all"
 
         nifti_path = tmp_path / "v.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)), str(nifti_path))
+        nib.save(nib.Nifti1Image(np.zeros(PATCH_SIZE, dtype=np.float32), np.eye(4)),
+                 str(nifti_path))
         base = {
             "path": str(nifti_path), "p1": -2.0, "p99": 2.0,
             "fg_mean": 0.0, "fg_std": 1.0,
@@ -443,3 +448,178 @@ class TestReconstruct:
         mask_data = np.asarray(mask_img.dataobj, dtype=np.float32)
         # model mask=1 (masked/reconstructed) is saved as-is
         np.testing.assert_array_equal(mask_data, np.ones(PATCH_SIZE))
+
+
+# ---------------------------------------------------------------------------
+# _tiled_reconstruct — denorm_patches
+# ---------------------------------------------------------------------------
+
+class TestTiledReconstructDenormPatches:
+    """Verify that denorm_patches correctly undoes per-patch normalization."""
+
+    def test_denorm_patches_false_returns_raw_model_output(self):
+        """With denorm_patches=False the reconstruction equals the raw model output."""
+        from misfit.inference.inference_runners import _tiled_reconstruct
+
+        raw_value = 3.0
+
+        def model_fn(tensor):
+            return {
+                "reconstruction": torch.full_like(tensor, raw_value),
+                "mask": torch.zeros_like(tensor),
+            }
+
+        vol = np.zeros((32, 32, 32), dtype=np.float32)
+        recon, _ = _tiled_reconstruct(vol, (32, 32, 32), model_fn, "cpu",
+                                      denorm_patches=False)
+        np.testing.assert_allclose(recon, raw_value)
+
+    def test_denorm_patches_true_scales_by_patch_stats(self):
+        """With denorm_patches=True each patch is scaled by the input patch mean/std.
+
+        The model output is treated as patch-normalised (unit variance, zero mean).
+        A reconstruction of all-zeros should be restored to the patch mean.
+        """
+        from misfit.inference.inference_runners import _tiled_reconstruct
+
+        # Patch with known mean=10 and std≈0 → after inverse norm, recon=0
+        # should map to mean=10 (recon*std + mean ≈ 0*eps + 10 = 10).
+        vol = np.full((32, 32, 32), fill_value=10.0, dtype=np.float32)
+
+        def model_fn(tensor):
+            return {
+                "reconstruction": torch.zeros_like(tensor),
+                "mask": torch.zeros_like(tensor),
+            }
+
+        recon, _ = _tiled_reconstruct(vol, (32, 32, 32), model_fn, "cpu",
+                                      denorm_patches=True)
+        # std is ~0 so clamped to 1e-6; reconstruction ≈ 0 * 1e-6 + 10 = 10
+        np.testing.assert_allclose(recon, 10.0, atol=1e-4)
+
+    def test_denorm_patches_true_with_varied_patch(self):
+        """Reconstruction=1 on a patch with mean=0, std=2 should yield ~2."""
+        from misfit.inference.inference_runners import _tiled_reconstruct
+
+        rng = np.random.default_rng(42)
+        vol = rng.normal(loc=0.0, scale=2.0, size=(32, 32, 32)).astype(np.float32)
+        patch_std = float(vol.std()) + 1e-6
+        patch_mean = float(vol.mean())
+
+        def model_fn(tensor):
+            return {
+                "reconstruction": torch.ones_like(tensor),
+                "mask": torch.zeros_like(tensor),
+            }
+
+        recon, _ = _tiled_reconstruct(vol, (32, 32, 32), model_fn, "cpu",
+                                      denorm_patches=True)
+        expected = 1.0 * patch_std + patch_mean
+        np.testing.assert_allclose(recon.mean(), expected, rtol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# reconstruct — normalized_mse training_config
+# ---------------------------------------------------------------------------
+
+class TestReconstructNormalizedMse:
+    """reconstruct() with training_config={"loss": "normalized_masked_mse"}."""
+
+    def test_normalized_mse_calls_tiled_reconstruct_with_denorm_true(self, tmp_path):
+        """When loss is normalized_masked_mse, _tiled_reconstruct receives denorm_patches=True."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",))
+        output_dir = tmp_path / "recons_nmse"
+
+        captured = {}
+
+        def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
+                                        denorm_patches=False):
+            captured["denorm_patches"] = denorm_patches
+            return np.zeros(padded.shape), np.zeros(padded.shape)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=capturing_tiled_reconstruct,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                training_config={"loss": "normalized_masked_mse"},
+                device=torch.device("cpu"),
+            )
+
+        assert captured.get("denorm_patches") is True
+
+    def test_non_normalized_loss_calls_tiled_reconstruct_with_denorm_false(self, tmp_path):
+        """When loss is masked_mse, _tiled_reconstruct receives denorm_patches=False."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",))
+        output_dir = tmp_path / "recons_mse"
+
+        captured = {}
+
+        def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
+                                        denorm_patches=False):
+            captured["denorm_patches"] = denorm_patches
+            return np.zeros(padded.shape), np.zeros(padded.shape)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=capturing_tiled_reconstruct,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                training_config={"loss": "masked_mse"},
+                device=torch.device("cpu"),
+            )
+
+        assert captured.get("denorm_patches") is False
+
+    def test_no_training_config_defaults_to_denorm_false(self, tmp_path):
+        """training_config=None should default to denorm_patches=False."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",))
+        output_dir = tmp_path / "recons_none"
+
+        captured = {}
+
+        def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
+                                        denorm_patches=False):
+            captured["denorm_patches"] = denorm_patches
+            return np.zeros(padded.shape), np.zeros(padded.shape)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=capturing_tiled_reconstruct,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                training_config=None,
+                device=torch.device("cpu"),
+            )
+
+        assert captured.get("denorm_patches") is False

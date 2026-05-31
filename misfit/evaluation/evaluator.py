@@ -29,6 +29,7 @@ import torch.nn as nn
 
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.evaluation import evaluation_utils
+from misfit.inference.inference_runners import _NORMALIZED_MSE_LOSS
 from misfit.inference.inference_utils import pad_to_multiple
 from misfit.metrics.metrics_registry import get_metric, list_registered_metrics
 from misfit.models.model_registry import get_model_from_registry
@@ -75,6 +76,7 @@ class ReconstructionEvaluator:
         metrics: list[str] | None = None,
         device: str | None = None,
         split: str | None = "val",
+        training_config: dict | None = None,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
@@ -82,6 +84,8 @@ class ReconstructionEvaluator:
         self.model_config = model_config
         self.metrics = metrics or list_registered_metrics()
         self.amp = True
+        loss_name = (training_config or {}).get("loss", "")
+        self.normalize_target_patches = loss_name == _NORMALIZED_MSE_LOSS
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -170,8 +174,8 @@ class ReconstructionEvaluator:
         with torch.no_grad(), amp_ctx:
             output = self.model(tensor)
 
-        recon = output["reconstruction"].squeeze().cpu().numpy()   # (D,H,W)
-        mask  = output["mask"].squeeze().cpu().numpy()             # (D,H,W)
+        recon = output["reconstruction"].squeeze().cpu().numpy()  # (D,H,W)
+        mask = output["mask"].squeeze().cpu().numpy()              # (D,H,W)
         return recon, mask
 
     def _run_tiled_inference(
@@ -183,6 +187,11 @@ class ReconstructionEvaluator:
         dimension, then iterates over the resulting grid of non-overlapping
         patches.  Each patch is passed through the full MAE forward pass to
         obtain its reconstruction and mask.
+
+        When the model was trained with ``normalized_masked_mse``, the target
+        patch is normalised to zero mean and unit variance before being stored
+        so that metrics are computed in the same space as the training
+        objective.
 
         Args:
             volume: Normalised volume of shape (D, H, W).
@@ -200,6 +209,10 @@ class ReconstructionEvaluator:
                 for wi in range(0, W, pw_):
                     patch = padded[di:di + pd_, hi:hi + ph_, wi:wi + pw_]
                     recon, mask = self._run_inference(patch)
+                    if self.normalize_target_patches:
+                        patch_std = float(patch.std()) + 1e-6
+                        patch_mean = float(patch.mean())
+                        patch = (patch - patch_mean) / patch_std
                     results.append((recon, patch, mask))
         return results
 

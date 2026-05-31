@@ -101,7 +101,7 @@ def test_load_and_normalise_4d(tmp_path):
 @pytest.mark.parametrize("vol_shape,target", [
     ((16, 16, 16), (8, 8, 8)),   # crop
     ((8, 8, 8), (16, 16, 16)),   # pad
-    ((16, 16, 16), (16, 16, 16)), # exact
+    ((16, 16, 16), (16, 16, 16)),  # exact
 ])
 def test_centre_crop_or_pad_output_shape(vol_shape, target):
     vol = np.random.randn(*vol_shape).astype(np.float32)

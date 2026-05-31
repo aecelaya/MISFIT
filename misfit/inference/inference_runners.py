@@ -26,11 +26,15 @@ from misfit.utils.console import print_section_header, print_success, print_warn
 from misfit.utils.progress_bar import get_progress_bar
 
 
+_NORMALIZED_MSE_LOSS = "normalized_masked_mse"
+
+
 def _tiled_reconstruct(
     padded: np.ndarray,
     patch_size: tuple[int, int, int],
     model_fn: Callable[[torch.Tensor], dict[str, torch.Tensor]],
     device: str | torch.device,
+    denorm_patches: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reconstruct *padded* volume patch-by-patch and stitch results.
 
@@ -41,6 +45,12 @@ def _tiled_reconstruct(
         model_fn: Callable that maps a ``(1, 1, pd, ph, pw)`` tensor to a
             dict with keys ``"reconstruction"`` and ``"mask"``.
         device: Torch device used for inference tensors.
+        denorm_patches: When ``True``, undo the per-patch normalization from
+            the model output before stitching. Set this when the model was
+            trained with ``normalized_masked_mse`` so that the stitched
+            reconstruction is in the same z-score space as the input (and can
+            be correctly denormalised to original intensities afterwards).
+            Defaults to ``False``.
 
     Returns:
         Tuple of ``(reconstruction, mask)`` numpy arrays, each of shape
@@ -66,9 +76,16 @@ def _tiled_reconstruct(
                 )
                 with torch.no_grad(), amp_ctx:
                     output = model_fn(tensor)
-                recon_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
-                    output["reconstruction"].squeeze().cpu().numpy()
-                )
+                recon = output["reconstruction"].squeeze().cpu().numpy()
+                if denorm_patches:
+                    # The model was trained to predict per-patch-normalised values
+                    # (zero mean, unit variance per patch cube). Undo that using the
+                    # target patch's own statistics so the stitched reconstruction is
+                    # back in the volume-level z-score space.
+                    patch_std = float(patch.std()) + 1e-6
+                    patch_mean = float(patch.mean())
+                    recon = recon * patch_std + patch_mean
+                recon_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = recon
                 mask_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
                     output["mask"].squeeze().cpu().numpy()
                 )
@@ -81,6 +98,7 @@ def reconstruct(
     checkpoint_path: str | Path,
     output_dir: str | Path,
     model_config: dict,
+    training_config: dict | None = None,
     device: str | torch.device | None = None,
     split: str | None = None,
 ) -> None:
@@ -95,7 +113,11 @@ def reconstruct(
     4. Stitches the reconstructed patches and masks back into the full padded
        volume.
     5. Trims padding to restore the original voxel dimensions.
-    6. Denormalises reconstruction intensities (``recon x fg_std + fg_mean``).
+    6. Denormalises reconstruction intensities (``recon × fg_std + fg_mean``).
+       When ``training_config["loss"]`` is ``"normalized_masked_mse"``, the
+       per-patch normalisation applied by the loss is first undone (step 4a)
+       before the volume-level denormalisation so that saved intensities are
+       in the original physical range.
     7. Saves outputs under two subdirectories of *output_dir*:
        - ``reconstructions/<volume_id>.nii.gz``
        - ``masks/<volume_id>.nii.gz`` — 1 = masked (reconstructed by model),
@@ -109,11 +131,19 @@ def reconstruct(
             ``masks/`` subdirectories are created automatically.
         model_config: Model configuration dict (``config["model"]`` from
             ``config.json``).
+        training_config: Training configuration dict (``config["training"]``
+            from ``config.json``). Used to read the ``loss`` name so that the
+            correct denormalisation is applied to the reconstruction. When
+            ``None``, volume-level-only denormalisation is applied (correct
+            for ``masked_mse`` and ``masked_l1``).
         device: Torch device. Defaults to CUDA if available, else CPU.
         split: If the index contains a ``split`` column, only rows whose
             split matches this value are processed.  ``None`` processes all
             rows.
     """
+    loss_name = (training_config or {}).get("loss", "")
+    denorm_patches = loss_name == _NORMALIZED_MSE_LOSS
+
     device = device or inference_utils.get_default_device()
     output_dir = Path(output_dir)
     recon_dir = output_dir / "reconstructions"
@@ -162,7 +192,8 @@ def reconstruct(
                     volume, patch_size
                 )
                 recon_padded, mask_padded = _tiled_reconstruct(
-                    padded, patch_size, model_fn, device
+                    padded, patch_size, model_fn, device,
+                    denorm_patches=denorm_patches,
                 )
 
                 d, h, w = original_shape
@@ -170,7 +201,7 @@ def reconstruct(
                 mask_np = mask_padded[:d, :h, :w]
 
                 # Denormalise reconstruction to original intensity space.
-                fg_std  = float(row["fg_std"])
+                fg_std = float(row["fg_std"])
                 fg_mean = float(row["fg_mean"])
                 recon_np = recon_np * fg_std + fg_mean
 

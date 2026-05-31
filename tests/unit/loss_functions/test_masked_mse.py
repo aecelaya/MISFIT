@@ -43,5 +43,3 @@ def test_masked_mse_empty_mask(loss_fn):
 def test_masked_mse_validates_inputs(loss_fn):
     with pytest.raises(ValueError):
         loss_fn(torch.randn(2, 1, 8, 8), torch.randn(2, 1, 8, 8, 8), torch.zeros(2, 1, 8, 8, 8))
-
-

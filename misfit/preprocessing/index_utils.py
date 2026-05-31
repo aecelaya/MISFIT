@@ -16,7 +16,7 @@ import skimage.filters
 # Percentile range used to clip the volume before Otsu thresholding. The 33rd
 # percentile lower bound anchors the clip near the air/tissue boundary in CT
 # and near background in MRI/PET, giving Otsu a clean bimodal histogram.
-_FG_PERCENTILE_LOW  = 33.0
+_FG_PERCENTILE_LOW = 33.0
 _FG_PERCENTILE_HIGH = 99.5
 
 
@@ -151,11 +151,11 @@ def compute_volume_stats(nifti_path: str | Path) -> dict[str, Any]:
         # --- Foreground bounding box ---
         nz = np.argwhere(fg_mask)
         x_start = int(nz[:, 0].min())
-        x_end   = int(nz[:, 0].max())
+        x_end = int(nz[:, 0].max())
         y_start = int(nz[:, 1].min())
-        y_end   = int(nz[:, 1].max())
+        y_end = int(nz[:, 1].max())
         z_start = int(nz[:, 2].min())
-        z_end   = int(nz[:, 2].max())
+        z_end = int(nz[:, 2].max())
 
         # --- Intensity statistics over bbox voxels ---
         bbox_voxels = volume[
@@ -163,34 +163,34 @@ def compute_volume_stats(nifti_path: str | Path) -> dict[str, Any]:
             y_start:y_end + 1,
             z_start:z_end + 1,
         ].ravel()
-        p1  = float(np.percentile(bbox_voxels, 1))
+        p1 = float(np.percentile(bbox_voxels, 1))
         p99 = float(np.percentile(bbox_voxels, 99))
 
         # Clip to [p1, p99] before computing mean/std to suppress outliers.
         bbox_clipped = np.clip(bbox_voxels, p1, p99)
         fg_mean = float(bbox_clipped.mean())
-        fg_std  = float(bbox_clipped.std())
+        fg_std = float(bbox_clipped.std())
 
         return {
             "volume_id": get_volume_id(path),
-            "path":      str(path.resolve()),
-            "shape_d":   d,
-            "shape_h":   h,
-            "shape_w":   w,
+            "path": str(path.resolve()),
+            "shape_d": d,
+            "shape_h": h,
+            "shape_w": w,
             "spacing_d": spacing_d,
             "spacing_h": spacing_h,
             "spacing_w": spacing_w,
-            "affine":    json.dumps(affine),
+            "affine": json.dumps(affine),
             "fg_x_start": x_start,
-            "fg_x_end":   x_end,
+            "fg_x_end": x_end,
             "fg_y_start": y_start,
-            "fg_y_end":   y_end,
+            "fg_y_end": y_end,
             "fg_z_start": z_start,
-            "fg_z_end":   z_end,
-            "p1":      p1,
-            "p99":     p99,
+            "fg_z_end": z_end,
+            "p1": p1,
+            "p99": p99,
             "fg_mean": fg_mean,
-            "fg_std":  fg_std,
+            "fg_std": fg_std,
         }
 
     except Exception as exc:  # noqa: BLE001

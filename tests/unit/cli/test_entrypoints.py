@@ -13,6 +13,7 @@ import misfit.models  # noqa
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_nifti_dir(tmp_path):
     data = np.random.randn(8, 8, 8).astype(np.float32)
     img = nib.Nifti1Image(data, np.eye(4))
@@ -173,10 +174,12 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
     from misfit.cli.evaluate_entrypoint import evaluate_entry
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}, '
-        '"evaluation": {"masked_mae": {}, "ssim": {}}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75},'
+        ' "evaluation": {"masked_mae": {}, "ssim": {}}}'
     )
-    with patch("misfit.cli.evaluate_entrypoint.ReconstructionEvaluator", autospec=True) as MockEval:
+    mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
+    with patch(mock_path, autospec=True) as MockEval:
         instance = MockEval.return_value
         instance.run.return_value = None
         evaluate_entry([
@@ -224,7 +227,8 @@ def test_inspect_entry_calls_reconstruct(tmp_path):
     from misfit.cli.inspect_entrypoint import inspect_entry
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     with patch("misfit.cli.inspect_entrypoint.reconstruct", autospec=True) as mock_fn:
         inspect_entry([
@@ -315,7 +319,8 @@ def test_embed_entry_calls_extract_features(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     output_dir = tmp_path / "embeddings"
@@ -325,11 +330,11 @@ def test_embed_entry_calls_extract_features(tmp_path):
     import misfit.embedding.embedder as _emb_mod
     import misfit.inference.inference_utils as _iutils
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
-    patch.object(_iutils, "build_model_from_checkpoint") as mock_model, \
-    patch.object(_areg, "get_aggregator") as mock_agg_cls, \
-    patch.object(_emb_mod, "Embedder") as mock_embedder_cls, \
-    patch.object(_iutils, "load_and_normalise",
-                 return_value=np.zeros((8, 8, 8), dtype=np.float32)):
+            patch.object(_iutils, "build_model_from_checkpoint") as mock_model, \
+            patch.object(_areg, "get_aggregator") as mock_agg_cls, \
+            patch.object(_emb_mod, "Embedder") as mock_embedder_cls, \
+            patch.object(_iutils, "load_and_normalise",
+                         return_value=np.zeros((8, 8, 8), dtype=np.float32)):
 
         mock_model.return_value = MagicMock()
         mock_agg_instance = MagicMock()
@@ -361,7 +366,8 @@ def test_embed_entry_skips_existing_output(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     output_dir = tmp_path / "out"
@@ -373,10 +379,11 @@ def test_embed_entry_skips_existing_output(tmp_path):
     import misfit.embedding.embedder as _emb_mod2
     import misfit.inference.inference_utils as _iutils2
     with patch.object(_iutils2, "load_checkpoint", return_value={"model": {}}), \
-    patch.object(_iutils2, "build_model_from_checkpoint", return_value=MagicMock()), \
-    patch.object(_areg2, "get_aggregator",
-                 return_value=MagicMock(return_value=MagicMock())), \
-    patch.object(_emb_mod2, "Embedder") as mock_embedder_cls:
+            patch.object(_iutils2, "build_model_from_checkpoint",
+                         return_value=MagicMock()), \
+            patch.object(_areg2, "get_aggregator",
+                         return_value=MagicMock(return_value=MagicMock())), \
+            patch.object(_emb_mod2, "Embedder") as mock_embedder_cls:
         mock_embedder_cls.return_value = MagicMock()
         embed_entry([
             "--encoder-checkpoint", "best.pt",
@@ -404,17 +411,19 @@ def test_embed_entry_with_aggregator_checkpoint(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
 
     import misfit.embedding.aggregators.aggregator_registry as _areg3
     import misfit.embedding.embedder as _emb_mod3
     import misfit.inference.inference_utils as _iutils3
     with patch.object(_iutils3, "load_checkpoint", return_value={"model": {}}), \
-    patch.object(_iutils3, "build_model_from_checkpoint", return_value=MagicMock()), \
-    patch.object(_areg3, "get_aggregator",
-                 return_value=MagicMock(return_value=MagicMock())), \
-    patch.object(_emb_mod3, "Embedder", return_value=MagicMock()):
+            patch.object(_iutils3, "build_model_from_checkpoint",
+                         return_value=MagicMock()), \
+            patch.object(_areg3, "get_aggregator",
+                         return_value=MagicMock(return_value=MagicMock())), \
+            patch.object(_emb_mod3, "Embedder", return_value=MagicMock()):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
             "--config", str(config_path),
@@ -468,7 +477,8 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_encoder_fn"
 
@@ -504,7 +514,8 @@ def test_embed_entry_exception_during_processing(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_exc"
 
@@ -547,7 +558,8 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
     }).to_parquet(manifest, index=False)
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     output_dir = tmp_path / "out_none"
 
@@ -558,7 +570,8 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
     mock_embedder = MagicMock()
     with patch.object(_iutils_n, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils_n, "build_model_from_checkpoint", return_value=MagicMock()), \
-         patch.object(_areg_n, "get_aggregator", return_value=MagicMock(return_value=MagicMock())), \
+         patch.object(_areg_n, "get_aggregator",
+                      return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod_n, "Embedder", return_value=mock_embedder), \
          patch.object(_iutils_n, "load_and_normalise", return_value=None):
         embed_entry([
@@ -579,7 +592,8 @@ def test_embed_entry_split_filters_index(tmp_path):
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
+        '{"model": {"architecture": "swinunetr-small",'
+        ' "patch_size": [32, 32, 32], "mask_patch_size": 16, "mask_ratio": 0.75}}'
     )
     manifest = tmp_path / "index.parquet"
     pd.DataFrame({
