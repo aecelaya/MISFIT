@@ -31,11 +31,17 @@ class MISFITDataset(Dataset):
         2. Z-score using foreground mean and std — centers and scales each
            volume independently, making CT and MRI comparable in the same
            training batch.
+        3. (Optional) Crop to the precomputed foreground bounding box so
+           that random patch sampling only draws from regions that contain
+           tissue. Volumes smaller than patch_size after cropping are
+           zero-padded back to patch_size by the transform pipeline.
+           Especially useful for skull-stripped MRI and CT where a large
+           fraction of the volume is air or scanner background.
 
     Args:
         index_path: Path to the Parquet metadata index produced by
             misfit_index. Must contain columns: path, p1, p99, fg_mean,
-            fg_std, shape_d, shape_h, shape_w.
+            fg_std, spacing_d, spacing_h, spacing_w.
         patch_size: Spatial dimensions of the output patch (D, H, W).
             Must be divisible by 32 (SwinUNETR-V2 requirement) and must
             match SwinMAE.img_size. Defaults to (96, 96, 96).
@@ -46,6 +52,9 @@ class MISFITDataset(Dataset):
             rows whose ``split`` value matches this string are used.
             Typical values: ``"train"``, ``"val"``, ``"test"``.
             Defaults to None (all rows).
+        crop_to_fg: If True, crop each volume to its precomputed foreground
+            bounding box (fg_x/y/z_start/end columns) before patch sampling.
+            Requires those columns in the index. Defaults to True.
     """
 
     def __init__(
@@ -54,12 +63,14 @@ class MISFITDataset(Dataset):
         patch_size: tuple[int, int, int] = (96, 96, 96),
         augment: bool = True,
         split: str | None = None,
+        crop_to_fg: bool = True,
     ):
         self.index_df = pd.read_parquet(index_path)
         if split is not None and "split" in self.index_df.columns:
             self.index_df = self.index_df[self.index_df["split"] == split]
         self.index_df = self.index_df.reset_index(drop=True)
         self.patch_size = patch_size
+        self.crop_to_fg = crop_to_fg
         self.transforms = (
             build_train_transforms(patch_size)
             if augment
@@ -68,6 +79,26 @@ class MISFITDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.index_df)
+
+    def _crop_to_fg_bbox(self, volume: np.ndarray, row: pd.Series) -> np.ndarray:
+        """Crop volume to the precomputed foreground bounding box.
+
+        Coordinates stored in the index are inclusive on both ends, so the
+        slice is [start : end + 1].  If the cropped region is smaller than
+        patch_size in any axis, the SpatialPad transform that runs first in
+        both train and val pipelines will pad it back out with zeros.
+
+        Args:
+            volume: Normalized voxel array of shape (D, H, W).
+            row: Row from the metadata index for this volume.
+
+        Returns:
+            Sub-array containing only the foreground region.
+        """
+        x0, x1 = int(row["fg_x_start"]), int(row["fg_x_end"]) + 1
+        y0, y1 = int(row["fg_y_start"]), int(row["fg_y_end"]) + 1
+        z0, z1 = int(row["fg_z_start"]), int(row["fg_z_end"]) + 1
+        return volume[x0:x1, y0:y1, z0:z1]
 
     def _normalize(self, volume: np.ndarray, row: pd.Series) -> np.ndarray:
         """Apply clip + z-score normalization using precomputed index stats.
@@ -121,6 +152,11 @@ class MISFITDataset(Dataset):
 
         # Clip + z-score using precomputed index statistics.
         volume = self._normalize(volume, row)
+
+        # Restrict patch sampling to the foreground region so that random
+        # crops always land on tissue rather than air or scanner background.
+        if self.crop_to_fg:
+            volume = self._crop_to_fg_bbox(volume, row)
 
         # Add channel dim (1, D, H, W) for MONAI transforms.
         volume_t = torch.from_numpy(volume.copy()).unsqueeze(0)
