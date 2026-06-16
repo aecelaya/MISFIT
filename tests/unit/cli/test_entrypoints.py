@@ -433,6 +433,48 @@ def test_embed_entry_with_aggregator_checkpoint(tmp_path):
         ])
 
 
+def test_embed_entry_attention_pool_respects_position_encoding_flag(tmp_path):
+    """An attention_pool checkpoint trained with use_position_encoding=False is
+    rebuilt with the matching flag so load_state_dict succeeds."""
+    from misfit.cli.embed_entrypoint import embed_entry
+    from misfit.embedding.aggregators.attention_pool import AttentionPoolAggregator
+
+    embed_dim = 16
+    # Aggregator trained WITHOUT position encoding → no pos_proj parameter.
+    trained = AttentionPoolAggregator(embed_dim=embed_dim, use_position_encoding=False)
+    agg_ckpt = tmp_path / "agg.pt"
+    torch.save(
+        {"aggregator_state": trained.state_dict(), "use_position_encoding": False},
+        agg_ckpt,
+    )
+
+    manifest = tmp_path / "index.parquet"
+    pd.DataFrame({
+        "volume_id": [], "path": [],
+        "p1": [], "p99": [], "fg_mean": [], "fg_std": [],
+    }).to_parquet(manifest, index=False)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75}}'
+    )
+
+    import misfit.inference.inference_utils as _iutils
+    with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
+            patch.object(_iutils, "build_model_from_checkpoint", return_value=MagicMock()), \
+            patch("misfit.cli.embed_entrypoint._infer_embed_dim", return_value=embed_dim):
+        # Must not raise — without the flag, load_state_dict would fail on the
+        # missing pos_proj key.
+        embed_entry([
+            "--encoder-checkpoint", "best.pt",
+            "--config", str(config_path),
+            "--index", str(manifest),
+            "--output-dir", str(tmp_path / "out_attn"),
+            "--aggregator", "attention_pool",
+            "--aggregator-checkpoint", str(agg_ckpt),
+        ])
+
+
 def test_embed_entry_missing_config_exits(tmp_path):
     """embed_entry exits 1 when --config file does not exist."""
     from misfit.cli.embed_entrypoint import embed_entry

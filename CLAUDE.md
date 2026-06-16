@@ -40,7 +40,7 @@ misfit_index  →  misfit_train  →  misfit_evaluate / misfit_inspect
 | `misfit_embed` | `cli/embed_entrypoint.py` | Global embedding vector (C,) per volume |
 | `misfit_embed_train` | `cli/embed_train_entrypoint.py` | Train crop aggregator (classification / contrastive) |
 
-All argument parsing lives in `cli/args.py`. The `ArgParser` subclass adds `.arg()` and `.flag()` shorthands. `add_*_args` functions are shared between individual entrypoints and `misfit_run`.
+All argument parsing lives in `cli/args.py`. The `ArgParser` subclass adds `.arg()` and `.flag()` shorthands. `add_*_args` functions are shared across the individual entrypoints.
 
 ## Module map
 

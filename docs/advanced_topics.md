@@ -38,7 +38,9 @@ Below is an example `config.json` produced by `misfit_train`.
     "warmup_epochs": 20,
     "loss": "normalized_masked_mse",
     "amp": true,
-    "seed": 42
+    "seed": 42,
+    "gradient_accumulation_steps": 1,
+    "bucket_cap_mb": 200
   },
 
   "evaluation": {
@@ -172,8 +174,7 @@ datasets with complex, fine-grained anatomy where local context is important.
 |---|---|---|
 | Normalized Masked MSE | `normalized_masked_mse` | MSE computed on masked patches, normalized by patch variance. Recommended for mixed-modality datasets (CT + MRI). |
 | Masked MSE | `masked_mse` | Standard MSE on masked patches without variance normalization. |
-| Masked MAE | `masked_mae` | Mean absolute error on masked patches. More robust to intensity outliers than MSE. |
-| Masked L1 | `masked_l1` | Alias for masked MAE. |
+| Masked L1 | `masked_l1` | Mean absolute error on masked patches. More robust to intensity outliers than MSE. |
 
 The `normalized_masked_mse` loss is recommended as the default because it
 normalizes each patch's contribution by its local variance, preventing

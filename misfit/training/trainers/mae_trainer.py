@@ -198,7 +198,7 @@ class MAETrainer:
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model in eval mode.
-            batch: Image tensor of shape (B, 1, D, H, W).
+            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
             criterion: Reconstruction loss function.
 
         Returns:

@@ -37,7 +37,12 @@ dependencies = [
     "scikit-learn",
     "einops",
     "scikit-image",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest",
+    "pytest-cov",
 ]
 
 [project.urls]

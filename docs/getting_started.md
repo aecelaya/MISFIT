@@ -11,14 +11,9 @@ high-core-count CPU is recommended for the indexing step.
 
 ### Install
 
-To install the latest release of MISFIT, use
-
-```console
-pip install misfit-medical
-```
-
-To install from source and customize the underlying code (e.g., to add a new
-model or loss function), clone the repository and install in editable mode:
+MISFIT is not yet published on PyPI. Clone the repository and install in
+editable mode — this is also the right setup if you want to customize the
+underlying code (e.g., to add a new model or loss function):
 
 ```console
 git clone https://github.com/mist-medical/MISFIT.git
