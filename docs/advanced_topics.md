@@ -38,7 +38,6 @@ Below is an example `config.json` produced by `misfit_train`.
     "warmup_epochs": 20,
     "loss": "normalized_masked_mse",
     "amp": true,
-    "amp_dtype": "fp16",
     "seed": 42
   },
 
@@ -70,7 +69,10 @@ misfit_train --index   /data/index.parquet \
 ### Starting fresh
 
 If you want to discard a previous run and start from scratch, pass `--overwrite`.
-This deletes the existing `config.json` and checkpoints before training begins.
+Training proceeds without error even if `config.json` already exists — a new
+`config.json` is written at the start and checkpoints are overwritten epoch by
+epoch. Prior checkpoint files are not deleted upfront; they are replaced as
+training progresses.
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -90,7 +92,7 @@ a hard error:
 
 | Parameter | Reason |
 |---|---|
-| `model.name` | Checkpoint weights are architecture-specific. |
+| `model.architecture` | Checkpoint weights are architecture-specific. |
 | `model.patch_size` | Determines the spatial dimension of all model tensors. |
 | `model.mask_patch_size` | Determines the masking grid structure inside the encoder. |
 
@@ -129,22 +131,19 @@ A few practical guidelines:
 - **GPU memory** is the primary constraint. A 32 GB GPU with batch size 2 can
   comfortably fit `96 96 96`. Reduce to `64 64 64` if you run out of memory.
 
-- **AMP dtype** affects both memory and stability. Pass `--amp-dtype fp16`
-  (default, all CUDA GPUs) or `--amp-dtype bf16` (Ampere+: A100, H100,
-  RTX 30xx+). BF16 uses the same dynamic range as float32, so no GradScaler
-  is needed and training tends to be more numerically stable for long runs.
-  FP16 uses a larger optimizer epsilon (1e-4 vs 1e-8) and GradScaler to
-  compensate for its narrower dynamic range.
+- **AMP** — MISFIT uses `bfloat16` automatic mixed precision throughout
+  training (Ampere+ GPUs: A100, H100, RTX 30xx+). BF16 has the same dynamic
+  range as float32, so no GradScaler is needed and training is numerically
+  stable for long runs. To disable AMP entirely, let training run for at least
+  one epoch (so `config.json` is written), then set `"amp": false` in the
+  `training` section of `config.json` and restart with `--resume`.
 
-  Mixed-precision is always enabled on new runs. To disable it entirely, let
-  training run for at least one epoch (so `config.json` is written), then set
-  `"amp": false` in the `training` section of `config.json` and restart with
-  `--resume`.
-
-- **Voxel spacing matters.** If your data has 5 mm slice thickness (thick-slice
-  CT or MRI), a `96 96 96` crop at 1 mm isotropic covers much more anatomy than
-  the raw voxel count suggests. Consider resampling to isotropic spacing as a
-  preprocessing step.
+- **Anisotropic data is handled natively.** MISFIT records each volume's voxel
+  spacing (mm) in the index and injects it into the model via sinusoidal
+  `SpacingEmbedding` conditioning on the decoder bottleneck. The model learns
+  the physical size of each crop regardless of acquisition protocol — no
+  resampling to isotropic spacing is required. Volumes from thick-slice CT (e.g.
+  5 mm slices) and thin-slice MRI can coexist in the same training run.
 
 - **The patch size is fixed at inference time.** `misfit_inspect`, `misfit_evaluate`,
   and `misfit_embed` all read `patch_size` from `config.json` via `--config`.
@@ -305,7 +304,7 @@ classification training, at the cost of requiring balanced sampling.
 |---|---|
 | `volume_id` | Volume identifier — used for logging only. |
 | `split` | Dataset split. Only `split='train'` rows are used for training. |
-| `features_path` | Absolute path to the `.npz` file produced by `misfit_embed`. |
+| `features_path` | Absolute path to the `.npz` file produced by `misfit_encode`. |
 | `label` | String label for the training objective. |
 
 A minimal example:

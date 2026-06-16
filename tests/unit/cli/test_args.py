@@ -105,7 +105,6 @@ def test_add_train_args_defaults():
     assert ns.model == "swinunetr-base"
     assert ns.epochs == 200
     assert ns.batch_size == 2
-    assert ns.amp_dtype == "fp16"
 
 
 def test_add_train_args_custom():

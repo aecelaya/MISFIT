@@ -62,7 +62,7 @@ def _tiled_reconstruct(
     recon_out = np.zeros_like(padded)
     mask_out = np.zeros_like(padded)
     amp_ctx = (
-        torch.amp.autocast("cuda")
+        torch.amp.autocast("cuda", dtype=torch.bfloat16)
         if torch.device(device).type == "cuda"
         else nullcontext()
     )

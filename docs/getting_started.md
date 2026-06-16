@@ -3,9 +3,11 @@ Getting Started
 
 ### System Requirements
 
-MISFIT requires at least one NVIDIA GPU. Multi-GPU and multi-node training are
-supported via `torchrun`. For large datasets a high-core-count CPU is recommended
-for the indexing step.
+MISFIT requires at least one NVIDIA **Ampere or newer GPU** (A100, H100, RTX
+30xx+) for training. BF16 automatic mixed precision is always enabled during
+training and is not supported on older architectures (Volta, Turing). Multi-GPU
+and multi-node training are supported via `torchrun`. For large datasets a
+high-core-count CPU is recommended for the indexing step.
 
 ### Install
 

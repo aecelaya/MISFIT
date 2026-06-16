@@ -72,9 +72,6 @@ class MAETrainer:
 
         self.device = torch.device(f"cuda:{self.local_rank}")
         self.amp = True  # Always on by default; can be changed in config.json.
-        # amp_dtype controls which low-precision type autocast uses.
-        # "fp16" requires GradScaler; "bf16" (Ampere+) does not.
-        self.amp_dtype: str = getattr(args, "amp_dtype", "fp16")
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -115,16 +112,12 @@ class MAETrainer:
         return loss_cls()
 
     def _build_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        # FP16 AMP requires inflated epsilon to avoid NaN in gradient updates.
-        # BF16 and full-precision share the same dynamic range as float32.
-        is_fp16 = self.amp and self.amp_dtype == "fp16"
-        eps = tc.AMP_FP16_EPS if is_fp16 else tc.NO_AMP_EPS
         return get_optimizer(
             name=self.args.optimizer,
             params=model.parameters(),
             learning_rate=self.args.learning_rate,
             weight_decay=self.args.weight_decay,
-            eps=eps,
+            eps=tc.NO_AMP_EPS,
         )
 
     def _build_scheduler(
@@ -147,7 +140,6 @@ class MAETrainer:
         batch: torch.Tensor,
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
-        scaler: torch.amp.GradScaler | None,
         accum_steps: int = 1,
         is_last_accum: bool = True,
     ) -> float:
@@ -158,7 +150,6 @@ class MAETrainer:
             batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
-            scaler: GradScaler for AMP, or None for full precision.
             accum_steps: Total accumulation steps; loss is divided by this to
                 normalise gradient magnitude across the window.
             is_last_accum: When True, performs the optimizer step and gradient
@@ -173,9 +164,8 @@ class MAETrainer:
         images = batch["image"].to(self.device, non_blocking=True)
         spacing = batch["spacing"].to(self.device, non_blocking=True)
 
-        _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
         amp_ctx = (
-            torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+            torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
         )
         # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
         sync_ctx = (
@@ -191,18 +181,10 @@ class MAETrainer:
                 mask=output["mask"],
             ) / accum_steps
 
-        if scaler is not None:
-            scaler.scale(loss).backward()
-            if is_last_accum:
-                scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-                scaler.step(optimizer)
-                scaler.update()
-        else:
-            loss.backward()
-            if is_last_accum:
-                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-                optimizer.step()
+        loss.backward()
+        if is_last_accum:
+            nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+            optimizer.step()
 
         return loss.item() * accum_steps  # un-scaled for logging
 
@@ -224,9 +206,8 @@ class MAETrainer:
         """
         images = batch["image"].to(self.device, non_blocking=True)
         spacing = batch["spacing"].to(self.device, non_blocking=True)
-        _dtype = torch.float16 if self.amp_dtype == "fp16" else torch.bfloat16
         amp_ctx = (
-            torch.amp.autocast("cuda", dtype=_dtype) if self.amp else nullcontext()
+            torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
         )
         with torch.no_grad(), amp_ctx:
             output = model(images, spacing=spacing)
@@ -261,7 +242,6 @@ class MAETrainer:
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
-        scaler: torch.amp.GradScaler | None,
         epoch: int,
         global_step: int,
         best_val_loss: float,
@@ -280,7 +260,6 @@ class MAETrainer:
             "model":         raw_model.state_dict(),
             "optimizer":     optimizer.state_dict(),
             "scheduler":     scheduler.state_dict(),
-            "scaler":        scaler.state_dict() if scaler is not None else None,
         }
         tmp = path.with_suffix(".tmp")
         torch.save(checkpoint, tmp)
@@ -291,7 +270,6 @@ class MAETrainer:
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
-        scaler: torch.amp.GradScaler | None,
         path: Path,
     ) -> tuple[int, int, float]:
         """Load a checkpoint and restore all training state.
@@ -313,8 +291,6 @@ class MAETrainer:
         raw_model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
-        if scaler is not None and checkpoint.get("scaler") is not None:
-            scaler.load_state_dict(checkpoint["scaler"])
 
         return (
             checkpoint["epoch"],
@@ -351,7 +327,6 @@ class MAETrainer:
                 "warmup_epochs": self.args.warmup_epochs,
                 "loss":          self.args.loss,
                 "amp":                        self.amp,
-                "amp_dtype":                  self.amp_dtype,
                 "seed":                       self.args.seed,
                 "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
                 "bucket_cap_mb":              self.args.bucket_cap_mb,
@@ -394,7 +369,6 @@ class MAETrainer:
             ("training", "lr_scheduler",  self.args.lr_scheduler),
             ("training", "warmup_epochs", self.args.warmup_epochs),
             ("training", "loss",                         self.args.loss),
-            ("training", "amp_dtype",                    self.amp_dtype),
             ("training", "gradient_accumulation_steps",  self.args.gradient_accumulation_steps),
             ("training", "bucket_cap_mb",                self.args.bucket_cap_mb),
         ]
@@ -439,11 +413,10 @@ class MAETrainer:
             if self.args.resume and config_path.exists():
                 self._validate_resume(read_json_file(config_path))
 
-        # Read amp settings from saved config on resume (all ranks).
+        # Read amp setting from saved config on resume (all ranks).
         if self.args.resume and config_path.exists():
             saved_training = read_json_file(config_path).get("training", {})
             self.amp = saved_training.get("amp", True)
-            self.amp_dtype = saved_training.get("amp_dtype", "fp16")
 
         self._setup_distributed()
         self._enable_cudnn_optimisations()
@@ -454,13 +427,6 @@ class MAETrainer:
         criterion = self._build_loss().to(self.device)
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
-        # GradScaler is only needed for FP16 — BF16 has float32's dynamic
-        # range so gradient underflow is not a concern.
-        scaler = (
-            torch.amp.GradScaler("cuda")
-            if (self.amp and self.amp_dtype == "fp16")
-            else None
-        )
 
         # --- Data loaders ---
         train_loader = get_training_dataloader(
@@ -501,7 +467,7 @@ class MAETrainer:
         best_val_loss = float("inf")
         if self.args.resume:
             start_epoch, global_step, best_val_loss = self._load_checkpoint(
-                model, optimizer, scheduler, scaler, checkpoint_path
+                model, optimizer, scheduler, checkpoint_path
             )
             if self.is_main:
                 console.print(
@@ -521,7 +487,7 @@ class MAETrainer:
                 f"model={self.args.model}  "
                 f"world_size={self.world_size}  "
                 f"epochs={self.args.epochs}  "
-                f"amp={self.amp}  amp_dtype={self.amp_dtype if self.amp else 'n/a'}\n"
+                f"amp={self.amp}\n"
             )
 
         for epoch in range(start_epoch, self.args.epochs):
@@ -550,7 +516,7 @@ class MAETrainer:
                     micro_count += 1
                     is_last = (micro_count % accum_steps == 0)
                     step_loss = self._training_step(
-                        model, batch, criterion, optimizer, scaler,
+                        model, batch, criterion, optimizer,
                         accum_steps=accum_steps, is_last_accum=is_last,
                     )
                     accum_loss += step_loss
@@ -566,14 +532,8 @@ class MAETrainer:
             # Flush trailing micro-steps when len(train_loader) % accum_steps != 0.
             if micro_count % accum_steps != 0:
                 remainder = micro_count % accum_steps
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-                    optimizer.step()
+                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+                optimizer.step()
                 agg_loss = self._aggregate_loss(accum_loss / remainder)
                 train_meter.update(agg_loss)
                 global_step += 1
@@ -621,14 +581,14 @@ class MAETrainer:
 
                 # Save rolling checkpoint every epoch.
                 self._save_checkpoint(
-                    model, optimizer, scheduler, scaler,
+                    model, optimizer, scheduler,
                     epoch + 1, global_step, best_val_loss, checkpoint_path,
                 )
 
                 # Save best model when validation loss improves.
                 if improved:
                     self._save_checkpoint(
-                        model, optimizer, scheduler, scaler,
+                        model, optimizer, scheduler,
                         epoch + 1, global_step, best_val_loss, best_model_path,
                     )
                     # Export encoder weights in MIST-compatible format so the

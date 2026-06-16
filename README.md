@@ -31,7 +31,7 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 - **3D-native** — operates on full volumetric data, not 2D slices
 - **Mixed modality** — the `normalized_masked_mse` loss normalizes per-patch variance, handling CT and MRI in the same training run
 - **Scalable** — single-GPU to multi-node training via `torchrun`; the same command runs everywhere
-- **BF16 / FP16 AMP** — `--amp-dtype bf16` for Ampere+ GPUs (A100, H100, RTX 30xx+); `fp16` for all CUDA GPUs
+- **BF16 AMP** — automatic mixed precision with `bfloat16` throughout; works on Ampere+ GPUs (A100, H100, RTX 30xx+)
 - **Reproducible** — `config.json` captures every architecture and training hyperparameter; downstream commands require it rather than re-accepting flags
 - **100% test coverage**
 
@@ -51,28 +51,7 @@ cd MISFIT
 pip install -e .
 ```
 
-**Requirements:** Python ≥ 3.10, at least one NVIDIA GPU.
-
-**Docker:**
-
-```console
-# CUDA 12.8 — recommended for most clusters (driver ≥ 525.x)
-docker pull mistmedical/misfit:latest
-
-# CUDA 13.2 — for newer Hopper / Ada / Blackwell GPUs (driver ≥ 570.x)
-docker pull mistmedical/misfit:latest-cuda13.2
-```
-
-To build locally:
-
-```console
-# Default (CUDA 12.8 / PyTorch 2.11.0)
-docker build -t misfit-medical .
-
-# CUDA 13.2 / PyTorch 2.12.0
-docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime \
-             -t misfit-medical:cuda13.2 .
-```
+**Requirements:** Python ≥ 3.10, NVIDIA Ampere or newer GPU (A100, H100, RTX 30xx+) — BF16 AMP is always on during training.
 
 ---
 
@@ -143,7 +122,6 @@ Key options:
 | `--patch-size D H W` | `96 96 96` | Spatial crop size (must be divisible by 32) |
 | `--epochs` | `200` | Total training epochs |
 | `--batch-size` | `2` | Per-GPU batch size |
-| `--amp-dtype` | `fp16` | `fp16` (all GPUs) or `bf16` (Ampere+, more stable) |
 | `--loss` | `normalized_masked_mse` | Loss function |
 
 Training writes a `config.json` to `--results` that captures every architecture and hyperparameter decision. All downstream commands read this file — you never have to re-specify model flags.

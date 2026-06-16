@@ -6,10 +6,6 @@ from dataclasses import dataclass
 class TrainerConstants:
     """Frozen container for training hyperparameter constants."""
 
-    # Optimizer epsilon — float16 needs a larger eps to avoid NaN in AMP.
-    # bfloat16 and full-precision runs use standard 1e-8 (same dynamic range
-    # as float32, so gradient underflow is not a concern).
-    AMP_FP16_EPS: float = 1e-4
     NO_AMP_EPS: float = 1e-8
 
     # Gradient clipping max norm. Prevents exploding gradients, especially

@@ -39,40 +39,6 @@ class DummyDDP(nn.Module):
         return nullcontext()
 
 
-class FakeScaler:
-    """Mock GradScaler that runs real backward but tracks AMP method calls."""
-
-    def __init__(self):
-        self._scaled = 0
-        self._unscaled = 0
-        self._stepped = 0
-        self._updated = 0
-        self._loss = None
-
-    def scale(self, loss):
-        self._scaled += 1
-        self._loss = loss
-        return self          # caller chains .backward()
-
-    def backward(self):
-        self._loss.backward()
-
-    def unscale_(self, optimizer):
-        self._unscaled += 1
-
-    def step(self, optimizer):
-        optimizer.step()
-        self._stepped += 1
-
-    def update(self):
-        self._updated += 1
-
-    def state_dict(self):
-        return {"scale": 65536.0}
-
-    def load_state_dict(self, sd):
-        pass
-
 
 @pytest.fixture()
 def fake_dist(monkeypatch):
@@ -115,6 +81,8 @@ def patch_cuda(monkeypatch):
     """Make CUDA calls no-ops so the test suite runs CPU-only."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True, raising=False)
     monkeypatch.setattr(torch.cuda, "set_device", lambda _: None, raising=False)
+    # BF16 autocast checks is_bf16_supported() on __init__; return True so no CUDA init.
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True, raising=False)
     # .to(device) returns self — model stays on CPU
     monkeypatch.setattr(nn.Module, "to", lambda self, *a, **k: self, raising=False)
 
@@ -167,7 +135,6 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         overwrite=False,
         results=str(tmp_path / "results"),
         index=str(idx),
-        amp_dtype="fp16",
         gradient_accumulation_steps=1,
         bucket_cap_mb=200,
     )
@@ -255,11 +222,11 @@ def test_trainer_save_and_load_checkpoint(tmp_path):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
     ckpt_path = tmp_path / "test_ckpt.pt"
 
-    trainer._save_checkpoint(model, opt, sched, None, 1, 10, 0.5, ckpt_path)
+    trainer._save_checkpoint(model, opt, sched, 1, 10, 0.5, ckpt_path)
     assert ckpt_path.exists()
 
     start_epoch, global_step, best_val_loss = trainer._load_checkpoint(
-        model, opt, sched, None, ckpt_path
+        model, opt, sched, ckpt_path
     )
     assert start_epoch == 1
     assert global_step == 10
@@ -279,7 +246,7 @@ def test_trainer_load_checkpoint_nonexistent(tmp_path):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
 
     start, step, best = trainer._load_checkpoint(
-        model, opt, sched, None, tmp_path / "nonexistent.pt"
+        model, opt, sched, tmp_path / "nonexistent.pt"
     )
     assert start == 0
     assert step == 0
@@ -311,7 +278,7 @@ def test_trainer_training_step(tmp_path):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    loss_val = trainer._training_step(model, batch, criterion, optimizer, scaler=None)
+    loss_val = trainer._training_step(model, batch, criterion, optimizer)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
 
@@ -351,28 +318,6 @@ def test_trainer_make_progress(tmp_path):
     progress = trainer._make_progress()
     assert progress is not None
 
-
-def test_trainer_load_checkpoint_with_scaler(tmp_path):
-    """_load_checkpoint loads scaler state when scaler is provided and key exists."""
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-    from misfit.training.trainers.mae_trainer import MAETrainer
-
-    args = _make_args(tmp_path)
-    trainer = MAETrainer(args)
-    trainer.device = torch.device("cpu")
-
-    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
-                    mask_patch_size=16, mask_ratio=0.75)
-    opt = torch.optim.Adam(model.parameters())
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
-    # Use a real GradScaler (even on CPU it serialises)
-    scaler = torch.amp.GradScaler("cpu")
-    ckpt_path = tmp_path / "scaler_ckpt.pt"
-
-    trainer._save_checkpoint(model, opt, sched, scaler, 2, 20, 0.3, ckpt_path)
-    start, step, best = trainer._load_checkpoint(model, opt, sched, scaler, ckpt_path)
-    assert start == 2
-    assert step == 20
 
 
 def test_trainer_train_runs_single_epoch(tmp_path):
@@ -476,31 +421,6 @@ def test_build_model_distributed_wraps_with_ddp(tmp_path, monkeypatch, fake_dist
     # Model should now be wrapped in DummyDDP
     assert isinstance(model, DummyDDP)
 
-
-def test_training_step_with_scaler_calls_amp_methods(tmp_path):
-    """_training_step uses scaler.scale/unscale_/step/update when scaler is provided."""
-    from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-    from misfit.training.trainers.mae_trainer import MAETrainer
-
-    args = _make_args(tmp_path)
-    trainer = MAETrainer(args)
-    trainer.device = torch.device("cpu")
-
-    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
-                    mask_patch_size=16, mask_ratio=0.75)
-    criterion = MaskedMSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    scaler = FakeScaler()
-
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    loss_val = trainer._training_step(model, batch, criterion, optimizer, scaler=scaler)
-
-    assert isinstance(loss_val, float)
-    assert scaler._scaled == 1
-    assert scaler._unscaled == 1
-    assert scaler._stepped == 1
-    assert scaler._updated == 1
 
 
 def test_aggregate_loss_distributed_all_reduces(tmp_path, monkeypatch, fake_dist):
@@ -736,48 +656,24 @@ def test_build_config_structure(tmp_path):
     assert config["model"]["patch_size"] == [32, 32, 32]
     assert config["training"]["seed"] == 42
     assert config["training"]["amp"] is True
-    assert config["training"]["amp_dtype"] == "fp16"
+    assert "amp_dtype" not in config["training"]
     assert isinstance(config["evaluation"], dict)
     assert all(isinstance(v, dict) for v in config["evaluation"].values())
 
 
-def test_bf16_no_grad_scaler(tmp_path):
-    """BF16 dtype sets amp_dtype correctly and skips GradScaler."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
-
-    args = _make_args(tmp_path)
-    args.amp_dtype = "bf16"
-    trainer = MAETrainer(args)
-    assert trainer.amp_dtype == "bf16"
-
-    # BF16 config should record the dtype.
-    config = trainer._build_config()
-    assert config["training"]["amp_dtype"] == "bf16"
-
-    # _build_optimizer should use standard epsilon for BF16.
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
-    from misfit.training.trainer_constants import tc
-    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
-                    mask_patch_size=16, mask_ratio=0.75)
-    opt = trainer._build_optimizer(model)
-    for pg in opt.param_groups:
-        assert pg["eps"] == tc.NO_AMP_EPS, "BF16 should use standard epsilon"
-
-
-def test_fp16_uses_amp_epsilon(tmp_path):
-    """FP16 dtype uses inflated optimizer epsilon."""
+def test_bf16_optimizer_uses_standard_epsilon(tmp_path):
+    """_build_optimizer always uses standard epsilon (BF16 has float32's dynamic range)."""
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.training.trainer_constants import tc
     from misfit.training.trainers.mae_trainer import MAETrainer
 
     args = _make_args(tmp_path)
-    args.amp_dtype = "fp16"
     trainer = MAETrainer(args)
     model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                     mask_patch_size=16, mask_ratio=0.75)
     opt = trainer._build_optimizer(model)
     for pg in opt.param_groups:
-        assert pg["eps"] == tc.AMP_FP16_EPS, "FP16 should use inflated epsilon"
+        assert pg["eps"] == tc.NO_AMP_EPS
 
 
 def test_train_resume_reads_and_validates_config(tmp_path):
@@ -866,7 +762,7 @@ def test_training_step_skips_optimizer_on_non_last_accum(tmp_path):
 
     batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     optimizer.zero_grad()  # caller's responsibility
-    trainer._training_step(model, batch, criterion, optimizer, scaler=None,
+    trainer._training_step(model, batch, criterion, optimizer,
                            accum_steps=2, is_last_accum=False)
 
     optimizer.step.assert_not_called()
@@ -890,7 +786,7 @@ def test_training_step_scales_loss_by_accum_steps(tmp_path):
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
         batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
         optimizer.zero_grad()
-        trainer._training_step(model, batch, criterion, optimizer, scaler=None,
+        trainer._training_step(model, batch, criterion, optimizer,
                                accum_steps=accum_steps, is_last_accum=False)
         return sum(
             p.grad.norm().item() ** 2

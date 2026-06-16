@@ -170,7 +170,7 @@ class ReconstructionEvaluator:
         tensor = torch.from_numpy(patch).unsqueeze(0).unsqueeze(0)  # (1,1,D,H,W)
         tensor = tensor.to(self.device)
 
-        amp_ctx = torch.amp.autocast("cuda") if self.amp else nullcontext()
+        amp_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
         with torch.no_grad(), amp_ctx:
             output = self.model(tensor)
 
