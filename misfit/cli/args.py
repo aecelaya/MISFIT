@@ -2,8 +2,7 @@
 
 Defines validator types, the ``ArgParser`` convenience subclass, and
 ``add_*_args`` functions so that argument definitions are written once and
-shared between the individual entrypoints and the ``misfit_run`` chained
-command.
+reused across the individual entrypoints.
 """
 import argparse
 from argparse import ArgumentParser
@@ -86,7 +85,7 @@ def add_index_args(parser: ArgParser, input_required: bool = True) -> None:
     Args:
         parser: The :class:`ArgParser` to populate.
         input_required: Whether ``--input`` is required. Set to ``False``
-            when composing inside ``misfit_run``. Defaults to ``True``.
+            when composing this group into a larger parser. Defaults to ``True``.
     """
     g = parser.add_argument_group("Index")
     g.add_argument(
@@ -125,8 +124,8 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     Args:
         parser: The :class:`ArgParser` to populate.
         index_required: Whether ``--index`` is a required argument. Set to
-            ``False`` when composing inside ``misfit_run``, where the index
-            path is derived from ``--output`` at runtime. Defaults to True.
+            ``False`` when composing this group into a larger parser where the
+            index path is derived from another argument. Defaults to True.
     """
     # --- Data ---
     data = parser.add_argument_group("Data")
@@ -471,7 +470,7 @@ def add_embed_train_args(parser: ArgParser) -> None:
         "--embed-dim", type=positive_int, required=True, metavar="C",
         help=(
             "Dimensionality of the encoder bottleneck features (C).  "
-            "Must match the feature files produced by misfit_embed."
+            "Must match the feature files produced by misfit_encode."
         ),
     )
     mdl.add_argument(

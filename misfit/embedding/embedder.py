@@ -28,7 +28,8 @@ class Embedder(nn.Module):
             maps a single-crop batch to a bottleneck feature map.  Typically
             ``lambda x: model.encoder(x)[-1]``.
         aggregator: Trained (or zero-shot) aggregator module.
-        patch_size: Edge length of each cubic crop in voxels (default ``96``).
+        patch_size: Crop size in voxels. Either a single int (cubic crop) or a
+            ``(D, H, W)`` sequence for anisotropic crops (default ``96``).
         device: Device on which to run forward passes.
     """
 
@@ -36,13 +37,17 @@ class Embedder(nn.Module):
         self,
         encoder_fn: Callable[[torch.Tensor], torch.Tensor],
         aggregator: AbstractAggregator,
-        patch_size: int = 96,
+        patch_size: int | tuple[int, int, int] = 96,
         device: torch.device | None = None,
     ) -> None:
         super().__init__()
         self.encoder_fn = encoder_fn
         self.aggregator = aggregator
-        self.patch_size = patch_size
+        self.patch_size = (
+            (patch_size, patch_size, patch_size)
+            if isinstance(patch_size, int)
+            else tuple(patch_size)
+        )
         self.device = device or torch.device("cpu")
 
     # ------------------------------------------------------------------
@@ -101,11 +106,11 @@ class Embedder(nn.Module):
             ``patch_size``.
         """
         _, D, H, W = volume.shape
-        p = self.patch_size
+        pd_, ph_, pw_ = self.patch_size
 
-        pad_d = (p - D % p) % p
-        pad_h = (p - H % p) % p
-        pad_w = (p - W % p) % p
+        pad_d = (pd_ - D % pd_) % pd_
+        pad_h = (ph_ - H % ph_) % ph_
+        pad_w = (pw_ - W % pw_) % pw_
 
         if pad_d or pad_h or pad_w:
             # torch.nn.functional.pad expects (left, right, top, bottom, front, back)
@@ -123,27 +128,27 @@ class Embedder(nn.Module):
             volume: ``(1, D', H', W')`` — already padded.
 
         Returns:
-            crops:    ``(N_crops, 1, P, P, P)``
+            crops:    ``(N_crops, 1, Pd, Ph, Pw)``
             centres:  ``(N_crops, 3)`` normalised 3-D crop centre coordinates.
         """
         _, D, H, W = volume.shape
-        p = self.patch_size
+        pd_, ph_, pw_ = self.patch_size
 
-        nd, nh, nw = D // p, H // p, W // p
+        nd, nh, nw = D // pd_, H // ph_, W // pw_
         crops_list = []
         centres_list = []
 
         for id_ in range(nd):
             for ih in range(nh):
                 for iw in range(nw):
-                    d0, h0, w0 = id_ * p, ih * p, iw * p
-                    crop = volume[:, d0:d0 + p, h0:h0 + p, w0:w0 + p]
-                    crops_list.append(crop.unsqueeze(0))  # (1, 1, P, P, P)
+                    d0, h0, w0 = id_ * pd_, ih * ph_, iw * pw_
+                    crop = volume[:, d0:d0 + pd_, h0:h0 + ph_, w0:w0 + pw_]
+                    crops_list.append(crop.unsqueeze(0))  # (1, 1, Pd, Ph, Pw)
 
-                    # Normalised centre coordinate in [0, 1].
-                    cd = (d0 + p / 2) / D
-                    ch = (h0 + p / 2) / H
-                    cw = (w0 + p / 2) / W
+                    # Normalized centre coordinate in [0, 1].
+                    cd = (d0 + pd_ / 2) / D
+                    ch = (h0 + ph_ / 2) / H
+                    cw = (w0 + pw_ / 2) / W
                     centres_list.append([cd, ch, cw])
 
         crops = torch.cat(crops_list, dim=0)  # (N, 1, P, P, P)

@@ -6,8 +6,9 @@
     denormalises the intensities, and saves outputs under two subdirectories:
 
     - ``reconstructions/`` — full-volume reconstruction NIfTIs.
-    - ``masks/`` — binary visibility masks (1 = visible to encoder,
-      0 = masked out), aggregated across all patches.
+    - ``masks/`` — binary masks using the model convention (1 = masked /
+      reconstructed by the model, 0 = visible to the encoder), aggregated
+      across all patches.
 
     Used by ``misfit_inspect`` to visually assess pretraining quality.
 """
@@ -35,6 +36,7 @@ def _tiled_reconstruct(
     model_fn: Callable[[torch.Tensor], dict[str, torch.Tensor]],
     device: str | torch.device,
     denorm_patches: bool = False,
+    amp: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reconstruct *padded* volume patch-by-patch and stitch results.
 
@@ -51,6 +53,8 @@ def _tiled_reconstruct(
             reconstruction is in the same z-score space as the input (and can
             be correctly denormalised to original intensities afterwards).
             Defaults to ``False``.
+        amp: When ``True`` (default), run the forward pass under bfloat16
+            autocast on CUDA devices. Has no effect on CPU.
 
     Returns:
         Tuple of ``(reconstruction, mask)`` numpy arrays, each of shape
@@ -63,7 +67,7 @@ def _tiled_reconstruct(
     mask_out = np.zeros_like(padded)
     amp_ctx = (
         torch.amp.autocast("cuda", dtype=torch.bfloat16)
-        if torch.device(device).type == "cuda"
+        if amp and torch.device(device).type == "cuda"
         else nullcontext()
     )
 
@@ -132,17 +136,20 @@ def reconstruct(
         model_config: Model configuration dict (``config["model"]`` from
             ``config.json``).
         training_config: Training configuration dict (``config["training"]``
-            from ``config.json``). Used to read the ``loss`` name so that the
-            correct denormalisation is applied to the reconstruction. When
-            ``None``, volume-level-only denormalisation is applied (correct
-            for ``masked_mse`` and ``masked_l1``).
+            from ``config.json``). The ``loss`` name selects the correct
+            denormalisation, and the ``amp`` flag toggles bfloat16 autocast
+            (defaults to enabled when absent). When ``None``,
+            volume-level-only denormalisation is applied (correct for
+            ``masked_mse`` and ``masked_l1``) with autocast enabled.
         device: Torch device. Defaults to CUDA if available, else CPU.
         split: If the index contains a ``split`` column, only rows whose
             split matches this value are processed.  ``None`` processes all
             rows.
     """
-    loss_name = (training_config or {}).get("loss", "")
+    tcfg = training_config or {}
+    loss_name = tcfg.get("loss", "")
     denorm_patches = loss_name == _NORMALIZED_MSE_LOSS
+    use_amp = tcfg.get("amp", True)
 
     device = device or inference_utils.get_default_device()
     output_dir = Path(output_dir)
@@ -193,14 +200,14 @@ def reconstruct(
                 )
                 recon_padded, mask_padded = _tiled_reconstruct(
                     padded, patch_size, model_fn, device,
-                    denorm_patches=denorm_patches,
+                    denorm_patches=denorm_patches, amp=use_amp,
                 )
 
                 d, h, w = original_shape
                 recon_np = recon_padded[:d, :h, :w]
                 mask_np = mask_padded[:d, :h, :w]
 
-                # Denormalise reconstruction to original intensity space.
+                # Denormalize reconstruction to original intensity space.
                 fg_std = float(row["fg_std"])
                 fg_mean = float(row["fg_mean"])
                 recon_np = recon_np * fg_std + fg_mean

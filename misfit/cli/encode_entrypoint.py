@@ -6,6 +6,12 @@ Unlike ``misfit_embed``, which GAP-pools each crop to a single ``(C,)`` vector,
 a 96-voxel crop).  These richer spatial features are useful for training
 aggregators that need to reason about spatial structure within each crop.
 
+The cache deliberately retains this within-crop spatial structure for
+downstream flexibility, even though the current embedding path
+(``misfit_embed_train`` via ``CropFeaturesDataset``) GAP-pools it away to a
+single ``(C,)`` vector per crop. Keeping the full map means future
+spatial-aware consumers can be added without re-running encoding.
+
 Each volume is saved as a compressed ``.npz`` file with two arrays:
 
 - ``feature_map``: ``(N_crops, C, D', H', W')`` float32
@@ -52,7 +58,7 @@ def encode_entry(args=None) -> None:
 
     config = read_json_file(config_path)
     model_config = config.get("model", {})
-    patch_size = int(model_config["patch_size"][0])
+    patch_size = tuple(model_config["patch_size"])
 
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
@@ -117,7 +123,7 @@ def encode_entry(args=None) -> None:
 def _encode_volume(
     volume: np.ndarray,
     model: torch.nn.Module,
-    patch_size: int,
+    patch_size: int | tuple[int, int, int],
     device: torch.device,
 ) -> tuple:
     """Tile *volume* into crops and return raw bottleneck feature maps.
@@ -125,26 +131,31 @@ def _encode_volume(
     Args:
         volume: Normalised float32 array of shape ``(D, H, W)``.
         model: Pretrained MISFIT model with a ``.encoder`` attribute.
-        patch_size: Edge length of each cubic crop in voxels.
+        patch_size: Crop size in voxels. Either a single int (cubic crop) or a
+            ``(D, H, W)`` sequence for anisotropic crops.
         device: Torch device for inference.
 
     Returns:
         feature_map: ``(N_crops, C, D', H', W')`` float32 ndarray.
         positions:   ``(N_crops, 3)`` float32 ndarray of normalised crop centres.
     """
-    p = patch_size
+    pd_, ph_, pw_ = (
+        (patch_size, patch_size, patch_size)
+        if isinstance(patch_size, int)
+        else tuple(patch_size)
+    )
     volume_t = torch.from_numpy(volume).float().unsqueeze(0).to(device)  # (1, D, H, W)
 
-    # Pad so every dimension is divisible by patch_size.
+    # Pad so every dimension is divisible by its patch_size.
     _, D, H, W = volume_t.shape
-    pad_d = (p - D % p) % p
-    pad_h = (p - H % p) % p
-    pad_w = (p - W % p) % p
+    pad_d = (pd_ - D % pd_) % pd_
+    pad_h = (ph_ - H % ph_) % ph_
+    pad_w = (pw_ - W % pw_) % pw_
     if pad_d or pad_h or pad_w:
         volume_t = torch.nn.functional.pad(volume_t, (0, pad_w, 0, pad_h, 0, pad_d))
 
     _, D_pad, H_pad, W_pad = volume_t.shape
-    nd, nh, nw = D_pad // p, H_pad // p, W_pad // p
+    nd, nh, nw = D_pad // pd_, H_pad // ph_, W_pad // pw_
 
     feature_maps = []
     positions = []
@@ -153,16 +164,16 @@ def _encode_volume(
         for id_ in range(nd):
             for ih in range(nh):
                 for iw in range(nw):
-                    d0, h0, w0 = id_ * p, ih * p, iw * p
-                    crop = volume_t[:, d0:d0 + p, h0:h0 + p, w0:w0 + p]
-                    crop = crop.unsqueeze(0)  # (1, 1, P, P, P)
+                    d0, h0, w0 = id_ * pd_, ih * ph_, iw * pw_
+                    crop = volume_t[:, d0:d0 + pd_, h0:h0 + ph_, w0:w0 + pw_]
+                    crop = crop.unsqueeze(0)  # (1, 1, Pd, Ph, Pw)
                     feat = model.encoder(crop)[-1]  # (1, C, D', H', W')
                     # (C, D', H', W')
                     feature_maps.append(feat.squeeze(0).cpu().numpy())
 
-                    cd = (d0 + p / 2) / D_pad
-                    ch = (h0 + p / 2) / H_pad
-                    cw = (w0 + p / 2) / W_pad
+                    cd = (d0 + pd_ / 2) / D_pad
+                    ch = (h0 + ph_ / 2) / H_pad
+                    cw = (w0 + pw_ / 2) / W_pad
                     positions.append([cd, ch, cw])
 
     return (

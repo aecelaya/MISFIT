@@ -103,3 +103,49 @@ def test_extract_crop_features_positions_on_device():
     volume = torch.randn(1, 32, 32, 32)
     _, positions = emb._extract_crop_features(volume)
     assert positions.device == torch.device("cpu")
+
+
+def test_embedder_int_patch_size_normalised_to_triple():
+    """An int patch_size is stored internally as a (D, H, W) triple."""
+    aggregator = MeanPoolAggregator(embed_dim=16)
+    emb = Embedder(
+        encoder_fn=_dummy_encoder,
+        aggregator=aggregator,
+        patch_size=16,
+        device=torch.device("cpu"),
+    )
+    assert emb.patch_size == (16, 16, 16)
+
+
+def test_embedder_non_cubic_patch_size_tiles_per_axis():
+    """Anisotropic patch_size tiles each axis independently."""
+    aggregator = MeanPoolAggregator(embed_dim=16)
+    emb = Embedder(
+        encoder_fn=_dummy_encoder,
+        aggregator=aggregator,
+        patch_size=(16, 32, 16),
+        device=torch.device("cpu"),
+    )
+    assert emb.patch_size == (16, 32, 16)
+
+    # Volume 32×64×16 with patch 16×32×16 → 2 × 2 × 1 = 4 crops.
+    volume = torch.randn(1, 32, 64, 16)
+    features, positions = emb.extract_crop_features(volume)
+    assert features.shape == (4, 16)
+    assert positions.shape == (4, 3)
+
+
+def test_embedder_non_cubic_pads_per_axis():
+    """Anisotropic patch_size pads each axis to its own multiple."""
+    aggregator = MeanPoolAggregator(embed_dim=16)
+    emb = Embedder(
+        encoder_fn=_dummy_encoder,
+        aggregator=aggregator,
+        patch_size=(16, 32, 16),
+        device=torch.device("cpu"),
+    )
+    # 17×33×15 → padded to 32×64×16 → 2 × 2 × 1 = 4 crops.
+    volume = torch.randn(1, 17, 33, 15)
+    features, positions = emb.extract_crop_features(volume)
+    assert features.shape[0] == 4
+    assert positions.shape == (4, 3)
