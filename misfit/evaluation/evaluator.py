@@ -53,18 +53,23 @@ class ReconstructionEvaluator:
 
     Args:
         checkpoint_path: Path to a checkpoint produced by ``MAETrainer``
-            (contains ``model`` and optional ``scaler`` keys).
+            (contains a ``model`` key).
         index_path: Path to the Parquet index built by ``misfit_index``.
         output_csv_path: Path where the evaluation results CSV will be written.
             Parent directory is created automatically if it does not exist.
         model_config: Model configuration dict (``config["model"]`` from
-            ``config.json``).  Must contain ``name``, ``patch_size``,
+            ``config.json``).  Must contain ``architecture``, ``patch_size``,
             ``mask_patch_size``, and ``mask_ratio``.
         metrics: List of metric names to compute. Defaults to all registered
             metrics.
         device: Torch device string (e.g. ``"cuda:0"``). Defaults to
             ``"cuda"`` if available, else ``"cpu"``.
-        amp: Use automatic mixed precision for inference. Always True.
+        split: If the index has a ``split`` column, only rows matching this
+            value are evaluated. Defaults to ``"val"``.
+        training_config: Training configuration dict (``config["training"]``
+            from ``config.json``). The ``loss`` name selects target-patch
+            normalisation and the ``amp`` flag toggles autocast (defaults to
+            enabled when absent).
     """
 
     def __init__(
@@ -83,8 +88,9 @@ class ReconstructionEvaluator:
         self.output_csv_path = Path(output_csv_path)
         self.model_config = model_config
         self.metrics = metrics or list_registered_metrics()
-        self.amp = True
-        loss_name = (training_config or {}).get("loss", "")
+        tcfg = training_config or {}
+        self.amp = tcfg.get("amp", True)
+        loss_name = tcfg.get("loss", "")
         self.normalize_target_patches = loss_name == _NORMALIZED_MSE_LOSS
 
         if device is None:

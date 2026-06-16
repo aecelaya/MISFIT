@@ -479,6 +479,46 @@ def test_no_training_config_defaults_normalize_target_false(evaluator_setup):
         )
 
     assert ev.normalize_target_patches is False
+    # No training_config → AMP defaults to enabled.
+    assert ev.amp is True
+
+
+def test_amp_flag_read_from_training_config(evaluator_setup):
+    """training_config={"amp": False} disables AMP; absence defaults to True."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev_off = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            training_config={"amp": False},
+        )
+        ev_on = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            training_config={"loss": "masked_mse"},
+        )
+
+    assert ev_off.amp is False
+    assert ev_on.amp is True
+
+
+def test_run_inference_amp_disabled_uses_nullcontext(evaluator_setup):
+    """With amp disabled, _run_inference still returns a recon/mask pair on CPU."""
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res)
+    ev.amp = False
+
+    patch_arr = np.zeros((32, 32, 32), dtype=np.float32)
+    recon, mask = ev._run_inference(patch_arr)
+    assert recon.shape == (32, 32, 32)
+    assert mask.shape == (32, 32, 32)
 
 
 def test_run_partial_errors_prints_warning(evaluator_setup, tmp_path):

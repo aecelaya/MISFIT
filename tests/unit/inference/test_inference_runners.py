@@ -536,8 +536,9 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False):
+                                        denorm_patches=False, amp=True):
             captured["denorm_patches"] = denorm_patches
+            captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 
         with patch(
@@ -569,8 +570,9 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False):
+                                        denorm_patches=False, amp=True):
             captured["denorm_patches"] = denorm_patches
+            captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 
         with patch(
@@ -602,8 +604,9 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False):
+                                        denorm_patches=False, amp=True):
             captured["denorm_patches"] = denorm_patches
+            captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 
         with patch(
@@ -623,3 +626,86 @@ class TestReconstructNormalizedMse:
             )
 
         assert captured.get("denorm_patches") is False
+        # No training_config → AMP defaults to enabled.
+        assert captured.get("amp") is True
+
+
+class TestReconstructAmp:
+    """reconstruct() threads the ``amp`` flag from training_config."""
+
+    def test_amp_defaults_true_when_flag_absent(self, tmp_path):
+        """training_config without an 'amp' key → amp=True is passed through."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",))
+        output_dir = tmp_path / "recons_amp_default"
+
+        captured = {}
+
+        def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
+                                        denorm_patches=False, amp=True):
+            captured["amp"] = amp
+            return np.zeros(padded.shape), np.zeros(padded.shape)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=capturing_tiled_reconstruct,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                training_config={"loss": "masked_mse"},
+                device=torch.device("cpu"),
+            )
+
+        assert captured.get("amp") is True
+
+    def test_amp_false_is_threaded_through(self, tmp_path):
+        """training_config={"amp": False} → amp=False is passed to _tiled_reconstruct."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",))
+        output_dir = tmp_path / "recons_amp_off"
+
+        captured = {}
+
+        def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
+                                        denorm_patches=False, amp=True):
+            captured["amp"] = amp
+            return np.zeros(padded.shape), np.zeros(padded.shape)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=capturing_tiled_reconstruct,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                training_config={"amp": False},
+                device=torch.device("cpu"),
+            )
+
+        assert captured.get("amp") is False
+
+    def test_tiled_reconstruct_amp_false_uses_nullcontext_on_cpu(self):
+        """_tiled_reconstruct with amp=False still runs (nullcontext) on CPU."""
+        from misfit.inference.inference_runners import _tiled_reconstruct
+
+        vol = np.zeros((32, 32, 32), dtype=np.float32)
+        recon, mask = _tiled_reconstruct(
+            vol, (32, 32, 32), _fake_model_fn(), "cpu", amp=False
+        )
+        assert recon.shape == (32, 32, 32)
+        assert mask.shape == (32, 32, 32)

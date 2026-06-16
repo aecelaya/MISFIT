@@ -56,6 +56,11 @@ class CropFeaturesDataset(Dataset):
         data = np.load(npz_path)
         # (N, C, D', H', W')
         feature_map = torch.from_numpy(data["feature_map"]).float()
+        # GAP-pooling here is the current aggregators' choice — mean_pool and
+        # attention_pool operate on one (C,) vector per crop. The full
+        # (C, D', H', W') spatial map is still preserved in the .npz on disk,
+        # so a future spatial-aware consumer can read it directly without
+        # re-running misfit_encode.
         features = feature_map.mean(dim=(2, 3, 4))                   # GAP → (N, C)
         positions = torch.from_numpy(data["positions"]).float()       # (N, 3)
         return features, positions, label

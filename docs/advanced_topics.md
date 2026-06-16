@@ -136,7 +136,10 @@ A few practical guidelines:
   range as float32, so no GradScaler is needed and training is numerically
   stable for long runs. To disable AMP entirely, let training run for at least
   one epoch (so `config.json` is written), then set `"amp": false` in the
-  `training` section of `config.json` and restart with `--resume`.
+  `training` section of `config.json` and restart with `--resume`. The same
+  flag is read from `config.json` by `misfit_evaluate` and `misfit_inspect`,
+  so the setting applies consistently across training, evaluation, and
+  inference.
 
 - **Anisotropic data is handled natively.** MISFIT records each volume's voxel
   spacing (mm) in the index and injects it into the model via sinusoidal

@@ -36,7 +36,7 @@ def embed_entry(args=None) -> None:
 
     config = read_json_file(config_path)
     model_config = config.get("model", {})
-    patch_size = int(model_config["patch_size"][0])
+    patch_size = tuple(model_config["patch_size"])
 
     # Lazy imports so CLI startup is fast.
     import misfit.embedding  # noqa: F401 — trigger registrations
@@ -120,10 +120,17 @@ def embed_entry(args=None) -> None:
     console.print(f"[green]Embeddings saved to {output_dir}[/green]")
 
 
-def _infer_embed_dim(model, patch_size: int, device: torch.device) -> int:
+def _infer_embed_dim(
+    model, patch_size: int | tuple[int, int, int], device: torch.device
+) -> int:
     """Run a dummy forward pass to discover the encoder output channels."""
+    ps = (
+        (patch_size, patch_size, patch_size)
+        if isinstance(patch_size, int)
+        else tuple(patch_size)
+    )
     with torch.no_grad():
-        dummy = torch.zeros(1, 1, patch_size, patch_size, patch_size, device=device)
+        dummy = torch.zeros(1, 1, *ps, device=device)
         out = model.encoder(dummy)[-1]
     return out.shape[1]
 

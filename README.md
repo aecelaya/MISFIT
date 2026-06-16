@@ -144,7 +144,7 @@ misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
                 --split      test
 ```
 
-`misfit_inspect` reconstructs volumes and saves outputs under two subdirectories — `reconstructions/` (denormalized NIfTIs) and `masks/` (binary visibility masks, 1=visible, 0=masked). Load both in ITK-SNAP or 3D Slicer and overlay the mask (1=reconstructed, 0=visible) to highlight exactly which regions the model had to fill in from context. Defaults to all rows; use `--split val` to restrict to the validation set.
+`misfit_inspect` reconstructs volumes and saves outputs under two subdirectories — `reconstructions/` (denormalized NIfTIs) and `masks/` (binary masks, 1=masked/reconstructed, 0=visible). Load both in ITK-SNAP or 3D Slicer and overlay the mask (1=reconstructed, 0=visible) to highlight exactly which regions the model had to fill in from context. Defaults to all rows; use `--split val` to restrict to the validation set.
 
 ```console
 misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \

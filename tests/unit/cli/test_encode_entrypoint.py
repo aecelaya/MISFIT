@@ -301,3 +301,34 @@ def test_encode_volume_pads_non_multiple(tmp_path):
     # After padding to 64³, we get 2³ = 8 crops
     assert feature_map.shape[0] == 8
     assert positions.shape == (8, 3)
+
+
+def test_encode_volume_accepts_tuple_patch_size(tmp_path):
+    """A tuple patch_size tiles each axis independently (per-axis crop counts)."""
+    from misfit.cli.encode_entrypoint import _encode_volume
+
+    model = _make_tiny_model()
+    # Volume 64×32×64 with cubic 32 patch → 2 × 1 × 2 = 4 crops.
+    volume = np.zeros((64, 32, 64), dtype=np.float32)
+    feature_map, positions = _encode_volume(
+        volume, model, (PATCH_SIZE, PATCH_SIZE, PATCH_SIZE), torch.device("cpu")
+    )
+    assert feature_map.shape[0] == 4
+    assert positions.shape == (4, 3)
+
+
+def test_encode_volume_non_cubic_patch_size(tmp_path):
+    """An anisotropic patch_size is honored end-to-end through the encoder."""
+    from misfit.cli.encode_entrypoint import _encode_volume
+
+    model = _make_tiny_model()
+    # Patch 32×64×32 on a 32×64×32 volume → exactly one anisotropic crop.
+    volume = np.zeros((32, 64, 32), dtype=np.float32)
+    feature_map, positions = _encode_volume(
+        volume, model, (32, 64, 32), torch.device("cpu")
+    )
+    assert feature_map.ndim == 5          # (N_crops, C, D', H', W')
+    assert feature_map.shape[0] == 1
+    # SwinUNETR downsamples by 32 → the 64-axis bottleneck is twice the 32-axis.
+    assert feature_map.shape[3] == 2 * feature_map.shape[2]
+    assert positions.shape == (1, 3)
