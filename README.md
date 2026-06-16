@@ -53,6 +53,27 @@ pip install -e .
 
 **Requirements:** Python ≥ 3.10, at least one NVIDIA GPU.
 
+**Docker:**
+
+```console
+# CUDA 12.8 — recommended for most clusters (driver ≥ 525.x)
+docker pull mistmedical/misfit:latest
+
+# CUDA 13.2 — for newer Hopper / Ada / Blackwell GPUs (driver ≥ 570.x)
+docker pull mistmedical/misfit:latest-cuda13.2
+```
+
+To build locally:
+
+```console
+# Default (CUDA 12.8 / PyTorch 2.11.0)
+docker build -t misfit-medical .
+
+# CUDA 13.2 / PyTorch 2.12.0
+docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime \
+             -t misfit-medical:cuda13.2 .
+```
+
 ---
 
 ## Quick Start
