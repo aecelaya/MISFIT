@@ -5,8 +5,7 @@ FROM ${PYTORCH_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install MISFIT.
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir misfit-medical
+RUN pip install --no-cache-dir misfit-medical
 
 # Create app directory.
 RUN mkdir /app
