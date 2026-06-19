@@ -541,6 +541,30 @@ def test_train_raises_if_config_exists_without_flags(tmp_path):
         trainer.train()
 
 
+def test_train_config_guard_raises_on_non_main_rank(tmp_path):
+    """The precondition guard runs on every rank, not just rank 0.
+
+    A non-main rank must also raise (before distributed init) so a stale output
+    dir fails the whole job fast instead of leaving rank 0 aborted while the
+    other ranks hang on NCCL rendezvous.
+    """
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    results_dir = Path(args.results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "config.json").write_text("{}")
+
+    trainer = MAETrainer(args)
+    # Simulate a worker rank in a multi-GPU job.
+    trainer.rank = 2
+    trainer.is_main = False
+    trainer.is_distributed = True
+
+    with pytest.raises(RuntimeError, match="config.json"):
+        trainer.train()
+
+
 def test_train_overwrite_ignores_existing_config(tmp_path):
     """--overwrite allows training to proceed even with an existing config.json."""
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE

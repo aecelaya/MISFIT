@@ -417,20 +417,23 @@ class MAETrainer:
         operations (logging, checkpointing, console output) are guarded by
         ``self.is_main``.
         """
-        # --- Config guard (before distributed setup so rank 0 fails fast) ---
+        # --- Config preconditions ---
+        # Run on EVERY rank before distributed init. If only rank 0 checked and
+        # raised, the other ranks would proceed into init_process_group and hang
+        # on NCCL rendezvous waiting for a rank that already aborted. Checking
+        # on all ranks makes a precondition failure exit the whole job cleanly.
         results_dir = Path(self.args.results)
         config_path = results_dir / "config.json"
-        if self.is_main:
-            if (config_path.exists()
-                    and not self.args.resume
-                    and not self.args.overwrite):
-                raise RuntimeError(
-                    f"Output directory '{results_dir}' already contains a "
-                    "config.json.  Use --resume to continue training or "
-                    "--overwrite to start fresh."
-                )
-            if self.args.resume and config_path.exists():
-                self._validate_resume(read_json_file(config_path))
+        if (config_path.exists()
+                and not self.args.resume
+                and not self.args.overwrite):
+            raise RuntimeError(
+                f"Output directory '{results_dir}' already contains a "
+                "config.json.  Use --resume to continue training or "
+                "--overwrite to start fresh."
+            )
+        if self.args.resume and config_path.exists():
+            self._validate_resume(read_json_file(config_path))
 
         # Read amp setting from saved config on resume (all ranks).
         if self.args.resume and config_path.exists():
