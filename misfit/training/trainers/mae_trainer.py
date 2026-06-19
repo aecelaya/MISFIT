@@ -40,7 +40,11 @@ from misfit.models.model_registry import get_model_from_registry
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
-from misfit.training.training_utils import RunningMean, set_seed
+from misfit.training.training_utils import (
+    RunningMean,
+    build_accumulation_plan,
+    set_seed,
+)
 from misfit.utils import (
     console,
     get_progress_bar,
@@ -159,7 +163,7 @@ class MAETrainer:
         batch: torch.Tensor,
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
-        accum_steps: int = 1,
+        window_size: int = 1,
         is_last_accum: bool = True,
     ) -> float:
         """Forward + backward for one micro-batch; optimizer step on last accumulation.
@@ -169,15 +173,18 @@ class MAETrainer:
             batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
-            accum_steps: Total accumulation steps; loss is divided by this to
-                normalise gradient magnitude across the window.
+            window_size: Number of micro-steps in the current accumulation
+                window; the loss is divided by this to normalise gradient
+                magnitude. Use the window's actual size (which may be smaller
+                than accum_steps for the trailing window of an epoch).
             is_last_accum: When True, performs the optimizer step and gradient
-                clipping. When False, only accumulates gradients. The caller
-                must call optimizer.zero_grad() before the first micro-step of
-                each accumulation window.
+                clipping (the micro-step also runs with DDP gradient sync).
+                When False, only accumulates gradients under no_sync(). The
+                caller must call optimizer.zero_grad() before the first
+                micro-step of each accumulation window.
 
         Returns:
-            Un-scaled scalar loss for this micro-batch (before 1/accum_steps
+            Un-scaled scalar loss for this micro-batch (before 1/window_size
             normalisation), for logging purposes.
         """
         images = batch["image"].to(self.device, non_blocking=True)
@@ -198,14 +205,14 @@ class MAETrainer:
                 reconstruction=output["reconstruction"],
                 target=images,
                 mask=output["mask"],
-            ) / accum_steps
+            ) / window_size
 
         loss.backward()
         if is_last_accum:
             nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
             optimizer.step()
 
-        return loss.item() * accum_steps  # un-scaled for logging
+        return loss.item() * window_size  # un-scaled for logging
 
     def _validation_step(
         self,
@@ -523,6 +530,12 @@ class MAETrainer:
             train_meter = RunningMean()
 
             accum_steps = self.args.gradient_accumulation_steps
+            # Per-batch (window_size, is_window_end). The plan forces the final
+            # batch of the epoch to close its window, so its gradients are
+            # synced and stepped instead of being left under no_sync() (which
+            # silently desynchronises ranks); it also scales the trailing
+            # partial window by its actual size.
+            plan = build_accumulation_plan(len(train_loader), accum_steps)
             progress_ctx = self._make_progress() if self.is_main else nullcontext()
             with progress_ctx as progress:
                 task = (
@@ -534,32 +547,20 @@ class MAETrainer:
                 )
                 optimizer.zero_grad()
                 accum_loss = 0.0
-                micro_count = 0
-                for batch in train_loader:
-                    micro_count += 1
-                    is_last = (micro_count % accum_steps == 0)
+                for (window_size, is_window_end), batch in zip(plan, train_loader):
                     step_loss = self._training_step(
                         model, batch, criterion, optimizer,
-                        accum_steps=accum_steps, is_last_accum=is_last,
+                        window_size=window_size, is_last_accum=is_window_end,
                     )
                     accum_loss += step_loss
                     if self.is_main and progress is not None:
                         progress.advance(task)
-                    if is_last:
-                        agg_loss = self._aggregate_loss(accum_loss / accum_steps)
+                    if is_window_end:
+                        agg_loss = self._aggregate_loss(accum_loss / window_size)
                         train_meter.update(agg_loss)
                         global_step += 1
                         accum_loss = 0.0
                         optimizer.zero_grad()
-
-            # Flush trailing micro-steps when len(train_loader) % accum_steps != 0.
-            if micro_count % accum_steps != 0:
-                remainder = micro_count % accum_steps
-                nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
-                optimizer.step()
-                agg_loss = self._aggregate_loss(accum_loss / remainder)
-                train_meter.update(agg_loss)
-                global_step += 1
 
             scheduler.step()
 

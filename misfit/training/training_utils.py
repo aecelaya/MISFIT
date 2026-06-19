@@ -45,6 +45,45 @@ class RunningMean:
         self._count = 0
 
 
+def build_accumulation_plan(
+    num_batches: int, accum_steps: int
+) -> list[tuple[int, bool]]:
+    """Per-batch ``(window_size, is_window_end)`` for gradient accumulation.
+
+    Guarantees two properties that a naive ``micro_count % accum_steps == 0``
+    schedule gets wrong on the trailing partial window:
+
+    1. The **final batch always closes its window** (``is_window_end=True``).
+       Under DDP the closing micro-step runs with gradient synchronisation, so
+       the optimizer never steps on un-all-reduced gradients (which would let
+       ranks silently diverge).
+    2. Each window's loss is normalised by its **actual** size, so the trailing
+       window of ``num_batches % accum_steps`` micro-steps is scaled correctly
+       rather than by the full ``accum_steps``.
+
+    Args:
+        num_batches: Number of batches the epoch will iterate.
+        accum_steps: Micro-batches accumulated per optimizer step (>= 1).
+
+    Returns:
+        A list of length ``num_batches``; entry ``i`` is the
+        ``(window_size, is_window_end)`` for the i-th batch.
+
+    Raises:
+        ValueError: If ``accum_steps < 1``.
+    """
+    if accum_steps < 1:
+        raise ValueError(f"accum_steps must be >= 1, got {accum_steps}.")
+
+    full = num_batches - (num_batches % accum_steps)
+    plan: list[tuple[int, bool]] = []
+    for i in range(num_batches):
+        window_size = accum_steps if i < full else num_batches - full
+        is_window_end = ((i + 1) % accum_steps == 0) or (i == num_batches - 1)
+        plan.append((window_size, is_window_end))
+    return plan
+
+
 def set_seed(seed: int, rank: int = 0) -> None:
     """Set all random seeds with a per-rank offset for DDP reproducibility.
 

@@ -787,13 +787,13 @@ def test_training_step_skips_optimizer_on_non_last_accum(tmp_path):
     batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
     optimizer.zero_grad()  # caller's responsibility
     trainer._training_step(model, batch, criterion, optimizer,
-                           accum_steps=2, is_last_accum=False)
+                           window_size=2, is_last_accum=False)
 
     optimizer.step.assert_not_called()
 
 
-def test_training_step_scales_loss_by_accum_steps(tmp_path):
-    """Gradient norm halves when accum_steps doubles (loss is divided by accum_steps)."""
+def test_training_step_scales_loss_by_window_size(tmp_path):
+    """Gradient norm halves when window_size doubles (loss is divided by it)."""
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.training.trainers.mae_trainer import MAETrainer
@@ -802,7 +802,7 @@ def test_training_step_scales_loss_by_accum_steps(tmp_path):
     trainer = MAETrainer(args)
     trainer.device = torch.device("cpu")
 
-    def _grad_norm_after_step(accum_steps):
+    def _grad_norm_after_step(window_size):
         torch.manual_seed(0)
         model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                         mask_patch_size=16, mask_ratio=0.75)
@@ -811,7 +811,7 @@ def test_training_step_scales_loss_by_accum_steps(tmp_path):
         batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
         optimizer.zero_grad()
         trainer._training_step(model, batch, criterion, optimizer,
-                               accum_steps=accum_steps, is_last_accum=False)
+                               window_size=window_size, is_last_accum=False)
         return sum(
             p.grad.norm().item() ** 2
             for p in model.parameters()
@@ -837,9 +837,9 @@ def test_build_config_includes_accumulation_fields(tmp_path):
     assert config["training"]["bucket_cap_mb"] == 400
 
 
-def test_train_trailing_flush_no_orphan_zero_grad(tmp_path):
-    """With accum_steps=2 and a single-batch loader, the trailing flush fires
-    an optimizer step without calling zero_grad() after the epoch ends."""
+def test_train_partial_trailing_window_steps_once(tmp_path):
+    """A trailing partial window (3 batches, accum=2) still produces a final
+    synced optimizer step — never left dangling under no_sync()."""
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.training.trainers.mae_trainer import MAETrainer
 
@@ -851,15 +851,9 @@ def test_train_trailing_flush_no_orphan_zero_grad(tmp_path):
                          mask_patch_size=16, mask_ratio=0.75)
 
     dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    # One micro-batch: remainder == 1, so the trailing flush path runs.
-    mock_loader = [dummy_batch]
-
-    zero_grad_calls = {"n": 0}
-    original_zero_grad = torch.optim.Adam.zero_grad
-
-    def counting_zero_grad(self_opt, *a, **kw):
-        zero_grad_calls["n"] += 1
-        return original_zero_grad(self_opt, *a, **kw)
+    # 3 micro-batches, accum=2 → one full window (batches 0-1) + a trailing
+    # partial window (batch 2). Both must produce an optimizer step.
+    mock_loader = [dummy_batch, dummy_batch, dummy_batch]
 
     step_calls = {"n": 0}
     original_step = torch.optim.Adam.step
@@ -874,17 +868,13 @@ def test_train_trailing_flush_no_orphan_zero_grad(tmp_path):
                autospec=True, return_value=mock_loader), \
          patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
                autospec=True, return_value=mock_loader), \
-         patch.object(torch.optim.Adam, "zero_grad", counting_zero_grad), \
          patch.object(torch.optim.Adam, "step", counting_step):
         trainer = MAETrainer(args)
         trainer.device = torch.device("cpu")
         trainer.train()
 
-    # Trailing flush fires 1 optimizer step.
-    assert step_calls["n"] == 1
-    # zero_grad is called once (before the epoch loop), NOT a second time after
-    # the trailing flush — the dead call has been removed.
-    assert zero_grad_calls["n"] == 1
+    # Full window (batches 0-1) + trailing window (batch 2) = 2 optimizer steps.
+    assert step_calls["n"] == 2
 
 
 def test_train_gradient_accumulation_two_steps(tmp_path):
