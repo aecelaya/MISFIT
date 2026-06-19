@@ -111,9 +111,9 @@ but differ in the width of the feature maps (`feature_size`).
 
 | Variant | `--model` | `feature_size` | Parameters (approx.) | Recommended for |
 |---|---|---|---|---|
-| Small | `swinunetr-small` | 24 | ~14M | Rapid prototyping, small datasets |
-| Base | `swinunetr-base` | 48 | ~55M | Standard pretraining (default) |
-| Large | `swinunetr-large` | 96 | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | 24 | ~7M (4.8M encoder) | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | 48 | ~28M (18.6M encoder) | Standard pretraining (default) |
+| Large | `swinunetr-large` | 96 | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
 !!!note
     The model variant is locked into `config.json` at the start of training and

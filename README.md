@@ -205,9 +205,9 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`. 
 
 | Variant | `--model` | Parameters | Recommended for |
 |---------|-----------|------------|-----------------|
-| Small | `swinunetr-small` | ~14M | Rapid prototyping, small datasets |
-| Base | `swinunetr-base` | ~55M | Standard pretraining (default) |
-| Large | `swinunetr-large` | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | ~7M (4.8M encoder) | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | ~28M (18.6M encoder) | Standard pretraining (default) |
+| Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
 ---
 
