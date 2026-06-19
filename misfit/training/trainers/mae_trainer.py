@@ -547,7 +547,9 @@ class MAETrainer:
                 )
                 optimizer.zero_grad()
                 accum_loss = 0.0
-                for (window_size, is_window_end), batch in zip(plan, train_loader):
+                for (window_size, is_window_end), batch in zip(
+                    plan, train_loader, strict=True
+                ):
                     step_loss = self._training_step(
                         model, batch, criterion, optimizer,
                         window_size=window_size, is_last_accum=is_window_end,

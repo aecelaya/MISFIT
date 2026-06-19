@@ -61,7 +61,12 @@ misfit_embed_train = "misfit.cli.embed_train_entrypoint:embed_train_entry"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=misfit --cov-report=term-missing"
+# Distributed (gloo multi-process) tests are opt-in; the default run stays
+# single-process and CPU-only. Run them with: pytest -m distributed
+addopts = "--cov=misfit --cov-report=term-missing -m 'not distributed'"
+markers = [
+    "distributed: multi-process DDP tests using the gloo backend (run with -m distributed)",
+]
 filterwarnings = [
     # MONAI uses deprecated non-tuple indexing internally — not our code
     "ignore:Using a non-tuple sequence for multidimensional indexing:UserWarning:monai",
