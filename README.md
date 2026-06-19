@@ -1,7 +1,6 @@
 # MISFIT: Medical Imaging Semantic Foundation Toolkit
 
-[![PyPI version](https://img.shields.io/pypi/v/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
-[![Python](https://img.shields.io/pypi/pyversions/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
+[![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue.svg)](https://www.python.org/)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)]()
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical imaging foundation models using masked autoencoders (MAE). Give it a directory of unlabeled NIfTI files and it produces a pretrained encoder — no labels required.
@@ -39,11 +38,7 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 
 ## Installation
 
-```console
-pip install misfit-medical
-```
-
-To install from source:
+MISFIT is not yet published on PyPI — install from source:
 
 ```console
 git clone https://github.com/mist-medical/MISFIT.git
@@ -210,9 +205,9 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`. 
 
 | Variant | `--model` | Parameters | Recommended for |
 |---------|-----------|------------|-----------------|
-| Small | `swinunetr-small` | ~14M | Rapid prototyping, small datasets |
-| Base | `swinunetr-base` | ~55M | Standard pretraining (default) |
-| Large | `swinunetr-large` | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | ~7M (4.8M encoder) | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | ~28M (18.6M encoder) | Standard pretraining (default) |
+| Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
 ---
 

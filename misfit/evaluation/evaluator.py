@@ -30,7 +30,7 @@ import torch.nn as nn
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.evaluation import evaluation_utils
 from misfit.inference.inference_runners import _NORMALIZED_MSE_LOSS
-from misfit.inference.inference_utils import pad_to_multiple
+from misfit.inference.inference_utils import get_row_spacing, pad_to_multiple
 from misfit.metrics.metrics_registry import get_metric, list_registered_metrics
 from misfit.models.model_registry import get_model_from_registry
 from misfit.utils.console import console, print_error, print_success, print_warning
@@ -113,6 +113,10 @@ class ReconstructionEvaluator:
         )
         self.patch_size: tuple[int, int, int] = tuple(model_config["patch_size"])
 
+        # Voxel spacing for the volume currently being evaluated. Set per-volume
+        # in run() so the decoder is conditioned exactly as it was in training.
+        self._current_spacing: torch.Tensor | None = None
+
         self.model: nn.Module = self._build_model()
 
     # ------------------------------------------------------------------
@@ -178,7 +182,7 @@ class ReconstructionEvaluator:
 
         amp_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
         with torch.no_grad(), amp_ctx:
-            output = self.model(tensor)
+            output = self.model(tensor, spacing=self._current_spacing)
 
         recon = output["reconstruction"].squeeze().cpu().numpy()  # (D,H,W)
         mask = output["mask"].squeeze().cpu().numpy()              # (D,H,W)
@@ -277,6 +281,10 @@ class ReconstructionEvaluator:
                     n_errors += 1
                     progress.advance(task)
                     continue
+
+                # Condition the decoder on this volume's voxel spacing, exactly
+                # as during training (no-op for indexes without spacing columns).
+                self._current_spacing = get_row_spacing(row, self.device)
 
                 # 2. Tile + inference (per-patch masked forward pass).
                 try:

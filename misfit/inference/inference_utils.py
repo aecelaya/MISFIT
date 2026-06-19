@@ -15,6 +15,37 @@ def get_default_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def get_row_spacing(
+    row,
+    device: str | torch.device | None = None,
+) -> torch.Tensor | None:
+    """Build a ``(1, 3)`` voxel-spacing tensor from an index row.
+
+    The model conditions its decoder on physical voxel spacing during
+    training (see ``SwinMAE.forward``), so inference and evaluation must pass
+    the same spacing to reproduce the reconstruction faithfully — otherwise
+    the decoder receives an out-of-distribution bottleneck.
+
+    Args:
+        row: A row from the metadata index (pandas Series / mapping) that may
+            contain ``spacing_d``, ``spacing_h``, and ``spacing_w`` columns.
+        device: Target device for the returned tensor.
+
+    Returns:
+        ``(1, 3)`` float32 tensor of ``(spacing_d, spacing_h, spacing_w)``, or
+        ``None`` if the row lacks any spacing column (older indexes).
+    """
+    cols = ("spacing_d", "spacing_h", "spacing_w")
+    if not all(c in row for c in cols):
+        return None
+    spacing = torch.tensor(
+        [[float(row[c]) for c in cols]], dtype=torch.float32
+    )
+    if device is not None:
+        spacing = spacing.to(device)
+    return spacing
+
+
 def load_checkpoint(
     checkpoint_path: str | Path,
     device: str | torch.device | None = None,

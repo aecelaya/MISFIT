@@ -66,11 +66,22 @@ def embed_entry(args=None) -> None:
     embed_dim: int = _infer_embed_dim(model, patch_size, device)
 
     agg_kwargs: dict = {"embed_dim": embed_dim}
+
+    # Load the trained aggregator checkpoint first (if any) so the aggregator
+    # can be rebuilt with the same architecture it was trained with. The
+    # attention_pool aggregator only creates its position-projection layer when
+    # position encoding is enabled, so constructing it with the wrong flag would
+    # make load_state_dict fail on a missing/unexpected key.
+    agg_ckpt: dict | None = None
+    if ns.aggregator_checkpoint:
+        agg_ckpt = torch.load(ns.aggregator_checkpoint, map_location=device)
+        if ns.aggregator == "attention_pool" and "use_position_encoding" in agg_ckpt:
+            agg_kwargs["use_position_encoding"] = agg_ckpt["use_position_encoding"]
+
     aggregator = aggregator_cls(**agg_kwargs).to(device)
     aggregator.eval()
 
-    if ns.aggregator_checkpoint:
-        agg_ckpt = torch.load(ns.aggregator_checkpoint, map_location=device)
+    if agg_ckpt is not None:
         aggregator.load_state_dict(agg_ckpt["aggregator_state"])
 
     embedder = Embedder(

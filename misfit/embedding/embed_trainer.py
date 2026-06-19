@@ -225,6 +225,10 @@ class EmbedTrainer:
                 "aggregator": self.aggregator.name
                 if hasattr(self.aggregator, "name")
                 else type(self.aggregator).__name__,
+                # Needed to rebuild attention_pool with the matching parameter
+                # set at inference time (the pos_proj layer only exists when
+                # position encoding is enabled).
+                "use_position_encoding": self.use_position_encoding,
                 "label_to_idx": getattr(self.objective, "label_to_idx", {}),
             },
             self.output_dir / "aggregator.pt",

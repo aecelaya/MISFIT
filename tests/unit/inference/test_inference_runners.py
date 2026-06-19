@@ -420,6 +420,41 @@ class TestReconstruct:
         assert (output_dir / "reconstructions" / "train_vol.nii.gz").exists()
         assert (output_dir / "reconstructions" / "val_vol.nii.gz").exists()
 
+    def test_runs_real_model_threads_spacing(self, tmp_path):
+        """reconstruct() with the real _tiled_reconstruct runs the model_fn closure,
+        which forwards the volume's voxel spacing to the model."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("realvol",))
+        output_dir = tmp_path / "recons_real"
+
+        captured = {}
+        real_forward = SwinMAE.forward
+
+        def spy_forward(self, x, spacing=None, mask_ratio=None):
+            captured["spacing"] = spacing
+            return real_forward(self, x, spacing=spacing, mask_ratio=mask_ratio)
+
+        # Only patch model construction — _tiled_reconstruct runs for real so the
+        # per-volume model_fn closure is exercised.
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ), patch.object(SwinMAE, "forward", spy_forward):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                device=torch.device("cpu"),
+            )
+
+        assert (output_dir / "reconstructions" / "realvol.nii.gz").exists()
+        # Spacing from the index (1.0, 1.0, 1.0) was threaded into the forward pass.
+        assert captured["spacing"] is not None
+        assert tuple(captured["spacing"].squeeze().tolist()) == (1.0, 1.0, 1.0)
+
     def test_mask_saved_and_inverted(self, tmp_path):
         """masks/ contains inverted mask: model 1=masked → saved 0; model 0=visible → saved 1."""
         from misfit.inference.inference_runners import reconstruct

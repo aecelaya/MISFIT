@@ -164,7 +164,6 @@ def reconstruct(
     model = inference_utils.build_model_from_checkpoint(
         checkpoint, model_config, device
     )
-    model_fn = model  # noqa: E731 — _tiled_reconstruct calls model_fn(tensor)
 
     index_df = pd.read_parquet(index_path)
     if split and "split" in index_df.columns:
@@ -194,6 +193,14 @@ def reconstruct(
 
             try:
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
+
+                # Condition the decoder on this volume's voxel spacing, exactly
+                # as during training — otherwise the reconstruction is produced
+                # from an out-of-distribution bottleneck.
+                spacing = inference_utils.get_row_spacing(row, device)
+
+                def model_fn(tensor, _spacing=spacing):
+                    return model(tensor, spacing=_spacing)
 
                 padded, original_shape = inference_utils.pad_to_multiple(
                     volume, patch_size

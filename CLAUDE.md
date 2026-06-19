@@ -40,7 +40,7 @@ misfit_index  →  misfit_train  →  misfit_evaluate / misfit_inspect
 | `misfit_embed` | `cli/embed_entrypoint.py` | Global embedding vector (C,) per volume |
 | `misfit_embed_train` | `cli/embed_train_entrypoint.py` | Train crop aggregator (classification / contrastive) |
 
-All argument parsing lives in `cli/args.py`. The `ArgParser` subclass adds `.arg()` and `.flag()` shorthands. `add_*_args` functions are shared between individual entrypoints and `misfit_run`.
+All argument parsing lives in `cli/args.py`. The `ArgParser` subclass adds `.arg()` and `.flag()` shorthands. `add_*_args` functions are shared across the individual entrypoints.
 
 ## Module map
 
@@ -85,10 +85,10 @@ Model sizes (`feature_size`): small=24, base=48 (default), large=96.
 `misfit_train` writes `config.json` to the results directory. All downstream commands (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) require `--config` and load architecture from it — no re-specifying model flags. Resume validation checks model name and patch size (hard error on mismatch).
 
 ### Distributed training
-`MAETrainer` reads `RANK`, `LOCAL_RANK`, `WORLD_SIZE` from torchrun environment variables. The same class runs on 1 GPU or N×M GPUs. AMP: `fp16` (all CUDA GPUs, uses GradScaler) or `bf16` (Ampere+, no scaler needed, more stable).
+`MAETrainer` reads `RANK`, `LOCAL_RANK`, `WORLD_SIZE` from torchrun environment variables. The same class runs on 1 GPU or N×M GPUs. AMP is BF16-only and on by default (`torch.amp.autocast("cuda", dtype=torch.bfloat16)`) — there is no fp16 path and no GradScaler, since BF16 has float32's dynamic range. Requires an Ampere+ GPU (A100, H100, RTX 30xx+). Disable by setting `"amp": false` in `config.json` and restarting with `--resume`.
 
 ### Transfer learning to MIST
-`get_encoder_state_dict()` remaps keys `encoder.<name>` → `model.swinViT.<name>` to match MIST's `MistSwinUNETR` checkpoint format. The output is passed directly to `mist_train --pretrained-weights`. Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled by MIST's `--input-channel-strategy` (default: average).
+`get_encoder_state_dict()` remaps keys `encoder.<name>` → `model.swinViT.<name>` to match MIST's `MistSwinUNETR` checkpoint format. Its output is saved to `models/encoder_weights.pt` whenever validation loss improves (alongside `best_model.pt`), so the MIST-ready encoder is always available after training. Pass it to `mist_train --pretrained-weights models/encoder_weights.pt` along with `--pretrained-config <misfit results>/config.json` (MIST uses the source config to validate encoder compatibility; omitting it only warns and skips that check). Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled by MIST's `--input-channel-strategy` (default: average).
 
 ## Adding new components
 
@@ -106,6 +106,7 @@ Model sizes (`feature_size`): small=24, base=48 (default), large=96.
 results/
     checkpoints/checkpoint.pt    Latest checkpoint (overwritten each epoch)
     models/best_model.pt         Lowest validation loss
+    models/encoder_weights.pt    Encoder-only weights remapped for MIST (model.swinViT.*); refreshed with best_model.pt
     logs/                        TensorBoard event files
     config.json                  Architecture + hyperparameters (required by downstream commands)
 ```

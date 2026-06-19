@@ -38,7 +38,9 @@ Below is an example `config.json` produced by `misfit_train`.
     "warmup_epochs": 20,
     "loss": "normalized_masked_mse",
     "amp": true,
-    "seed": 42
+    "seed": 42,
+    "gradient_accumulation_steps": 1,
+    "bucket_cap_mb": 200
   },
 
   "evaluation": {
@@ -109,9 +111,9 @@ but differ in the width of the feature maps (`feature_size`).
 
 | Variant | `--model` | `feature_size` | Parameters (approx.) | Recommended for |
 |---|---|---|---|---|
-| Small | `swinunetr-small` | 24 | ~14M | Rapid prototyping, small datasets |
-| Base | `swinunetr-base` | 48 | ~55M | Standard pretraining (default) |
-| Large | `swinunetr-large` | 96 | ~210M | Large-scale datasets, maximum capacity |
+| Small | `swinunetr-small` | 24 | ~7M (4.8M encoder) | Rapid prototyping, small datasets |
+| Base | `swinunetr-base` | 48 | ~28M (18.6M encoder) | Standard pretraining (default) |
+| Large | `swinunetr-large` | 96 | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
 !!!note
     The model variant is locked into `config.json` at the start of training and
@@ -172,8 +174,7 @@ datasets with complex, fine-grained anatomy where local context is important.
 |---|---|---|
 | Normalized Masked MSE | `normalized_masked_mse` | MSE computed on masked patches, normalized by patch variance. Recommended for mixed-modality datasets (CT + MRI). |
 | Masked MSE | `masked_mse` | Standard MSE on masked patches without variance normalization. |
-| Masked MAE | `masked_mae` | Mean absolute error on masked patches. More robust to intensity outliers than MSE. |
-| Masked L1 | `masked_l1` | Alias for masked MAE. |
+| Masked L1 | `masked_l1` | Mean absolute error on masked patches. More robust to intensity outliers than MSE. |
 
 The `normalized_masked_mse` loss is recommended as the default because it
 normalizes each patch's contribution by its local variance, preventing
