@@ -87,6 +87,25 @@ class MAETrainer:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
+    def _warn_if_underutilising_gpus(self) -> None:
+        """Warn when multiple GPUs are visible but we are not under torchrun.
+
+        MISFIT has no mp.spawn fallback: without torchrun, WORLD_SIZE is 1 and
+        training silently runs on a single GPU. Surface that rather than letting
+        it pass unnoticed (a sharp edge vs. frameworks that auto-spawn DDP).
+        """
+        if (
+            not self.is_distributed
+            and torch.cuda.is_available()
+            and torch.cuda.device_count() > 1
+        ):
+            n = torch.cuda.device_count()
+            print_warning(
+                f"{n} GPUs are visible but misfit_train was not launched with "
+                f"torchrun; only cuda:0 will be used. For multi-GPU training, "
+                f"run:\n  torchrun --nproc_per_node={n} $(which misfit_train) ..."
+            )
+
     # ------------------------------------------------------------------
     # Component builders
     # ------------------------------------------------------------------
@@ -418,6 +437,7 @@ class MAETrainer:
             saved_training = read_json_file(config_path).get("training", {})
             self.amp = saved_training.get("amp", True)
 
+        self._warn_if_underutilising_gpus()
         self._setup_distributed()
         self._enable_cudnn_optimisations()
         set_seed(self.args.seed, self.rank)

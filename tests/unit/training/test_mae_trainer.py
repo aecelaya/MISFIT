@@ -898,3 +898,43 @@ def test_train_gradient_accumulation_two_steps(tmp_path):
 
     # 2 micro-batches / accum_steps=2 → exactly 1 optimizer step during training
     assert step_count["n"] == 1
+
+
+def test_warn_if_underutilising_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, monkeypatch):
+    """Warns when >1 GPU is visible but WORLD_SIZE==1 (no torchrun)."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    trainer = mt.MAETrainer(_make_args(tmp_path))
+    trainer.is_distributed = False  # WORLD_SIZE == 1
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
+
+    warn = MagicMock()
+    monkeypatch.setattr(mt, "print_warning", warn)
+    trainer._warn_if_underutilising_gpus()
+
+    warn.assert_called_once()
+    msg = warn.call_args.args[0]
+    assert "torchrun" in msg and "--nproc_per_node=4" in msg
+
+
+def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypatch):
+    """No warning under torchrun (is_distributed) or with a single visible GPU."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    trainer = mt.MAETrainer(_make_args(tmp_path))
+    warn = MagicMock()
+    monkeypatch.setattr(mt, "print_warning", warn)
+
+    # Distributed run: never warn even with many GPUs.
+    trainer.is_distributed = True
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 8)
+    trainer._warn_if_underutilising_gpus()
+
+    # Single visible GPU: nothing to warn about.
+    trainer.is_distributed = False
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    trainer._warn_if_underutilising_gpus()
+
+    warn.assert_not_called()
