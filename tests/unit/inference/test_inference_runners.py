@@ -140,6 +140,27 @@ class TestTiledReconstruct:
         np.testing.assert_array_equal(recon, np.ones((64, 64, 64)))
         np.testing.assert_array_equal(mask, np.ones((64, 64, 64)))
 
+    def test_bfloat16_model_output_does_not_raise(self):
+        """model_fn returning BF16 tensors must not raise TypeError from .numpy().
+
+        Regression test: CUDA AMP produces BF16 outputs, which NumPy cannot
+        convert directly. _tiled_reconstruct must cast to float32 first.
+        """
+        from misfit.inference.inference_runners import _tiled_reconstruct
+
+        def bf16_model_fn(tensor):
+            return {
+                "reconstruction": torch.ones_like(tensor).to(torch.bfloat16),
+                "mask": torch.zeros_like(tensor).to(torch.bfloat16),
+            }
+
+        vol = np.zeros((32, 32, 32), dtype=np.float32)
+        recon, mask = _tiled_reconstruct(vol, (32, 32, 32), bf16_model_fn, "cpu")
+        assert recon.shape == (32, 32, 32)
+        assert mask.shape == (32, 32, 32)
+        assert recon.dtype in (np.float32, np.float64)
+        assert mask.dtype in (np.float32, np.float64)
+
 
 # ---------------------------------------------------------------------------
 # reconstruct

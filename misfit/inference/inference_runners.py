@@ -79,7 +79,7 @@ def _tiled_reconstruct(
                 )
                 with torch.no_grad(), amp_ctx:
                     output = model_fn(tensor)
-                recon = output["reconstruction"].squeeze().cpu().numpy()
+                recon = output["reconstruction"].squeeze().float().cpu().numpy()
                 if denorm_patches:
                     # The model was trained to predict per-patch-normalised values
                     # (zero mean, unit variance per patch cube). Undo that using the
@@ -90,7 +90,7 @@ def _tiled_reconstruct(
                     recon = recon * patch_std + patch_mean
                 recon_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = recon
                 mask_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
-                    output["mask"].squeeze().cpu().numpy()
+                    output["mask"].squeeze().float().cpu().numpy()
                 )
 
     return recon_out, mask_out
