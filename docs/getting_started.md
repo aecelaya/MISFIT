@@ -48,6 +48,7 @@ data/
     ...
 ```
 
+<!-- prettier-ignore -->
 !!!note
     MISFIT is a **single-channel** framework. Each NIfTI file must contain one
     3D volume. If your file has a fourth dimension (e.g., a time series), only
@@ -69,10 +70,10 @@ misfit_index --input  /path/to/paths.csv \
              --output /path/to/index.parquet
 ```
 
-On first run, a companion split-config file is written alongside the index
-(e.g. `index_config.json`). It records the train/val/test ratios and random
-seed used to assign the `split` column. Edit it and re-run `misfit_index` to
-change the proportions.
+On first run, a companion split-config file is written alongside the index (e.g.
+`index_config.json`). It records the train/val/test ratios and random seed used
+to assign the `split` column. Edit it and re-run `misfit_index` to change the
+proportions.
 
 Once your index is built, you are ready to start pretraining. See
 [Usage](usage.md) for details on all available commands.

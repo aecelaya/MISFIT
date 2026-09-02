@@ -5,8 +5,8 @@ Advanced Topics
 
 MISFIT writes a `config.json` file to the `--results` directory at the start of
 training. This file records the MISFIT version, model architecture, patch size,
-and all training hyperparameters. It is the **single source of truth** for
-model architecture — `misfit_evaluate`, `misfit_inspect`, and `misfit_embed` all
+and all training hyperparameters. It is the **single source of truth** for model
+architecture — `misfit_evaluate`, `misfit_inspect`, and `misfit_embed` all
 require it via `--config` rather than re-accepting architecture flags.
 
 ### config.json structure
@@ -44,10 +44,10 @@ Below is an example `config.json` produced by `misfit_train`.
   },
 
   "evaluation": {
-    "masked_mae":  {},
-    "masked_mse":  {},
+    "masked_mae": {},
+    "masked_mse": {},
     "masked_psnr": {},
-    "ssim":        {}
+    "ssim": {}
   }
 }
 ```
@@ -70,11 +70,11 @@ misfit_train --index   /data/index.parquet \
 
 ### Starting fresh
 
-If you want to discard a previous run and start from scratch, pass `--overwrite`.
-Training proceeds without error even if `config.json` already exists — a new
-`config.json` is written at the start and checkpoints are overwritten epoch by
-epoch. Prior checkpoint files are not deleted upfront; they are replaced as
-training progresses.
+If you want to discard a previous run and start from scratch, pass
+`--overwrite`. Training proceeds without error even if `config.json` already
+exists — a new `config.json` is written at the start and checkpoints are
+overwritten epoch by epoch. Prior checkpoint files are not deleted upfront; they
+are replaced as training progresses.
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -82,6 +82,7 @@ misfit_train --index   /data/index.parquet \
              --overwrite
 ```
 
+<!-- prettier-ignore -->
 !!!warning
     `--resume` and `--overwrite` are mutually exclusive. If neither is passed and
     `config.json` already exists in `--results`, `misfit_train` refuses to run.
@@ -92,10 +93,10 @@ misfit_train --index   /data/index.parquet \
 The following parameters are **immutable** — changing them while resuming raises
 a hard error:
 
-| Parameter | Reason |
-|---|---|
-| `model.architecture` | Checkpoint weights are architecture-specific. |
-| `model.patch_size` | Determines the spatial dimension of all model tensors. |
+| Parameter               | Reason                                                    |
+| ----------------------- | --------------------------------------------------------- |
+| `model.architecture`    | Checkpoint weights are architecture-specific.             |
+| `model.patch_size`      | Determines the spatial dimension of all model tensors.    |
 | `model.mask_patch_size` | Determines the masking grid structure inside the encoder. |
 
 All other parameters (learning rate, epochs, optimizer, loss, etc.) are
@@ -105,16 +106,17 @@ All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 
 ## Model Variants
 
-MISFIT provides three SwinMAE variants corresponding to different
-encoder capacities. All variants share the same SwinUNETR backbone architecture
-but differ in the width of the feature maps (`feature_size`).
+MISFIT provides three SwinMAE variants corresponding to different encoder
+capacities. All variants share the same SwinUNETR backbone architecture but
+differ in the width of the feature maps (`feature_size`).
 
-| Variant | `--model` | `feature_size` | Parameters (approx.) | Recommended for |
-|---|---|---|---|---|
-| Small | `swinunetr-small` | 24 | ~7M (4.8M encoder) | Rapid prototyping, small datasets |
-| Base | `swinunetr-base` | 48 | ~28M (18.6M encoder) | Standard pretraining (default) |
-| Large | `swinunetr-large` | 96 | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+| Variant | `--model`         | `feature_size` | Parameters (approx.)  | Recommended for                        |
+| ------- | ----------------- | -------------- | --------------------- | -------------------------------------- |
+| Small   | `swinunetr-small` | 24             | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
+| Base    | `swinunetr-base`  | 48             | ~28M (18.6M encoder)  | Standard pretraining (default)         |
+| Large   | `swinunetr-large` | 96             | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
+<!-- prettier-ignore -->
 !!!note
     The model variant is locked into `config.json` at the start of training and
     cannot be changed when resuming. To use a different variant, start a new run
@@ -135,9 +137,9 @@ A few practical guidelines:
 
 - **AMP** — MISFIT uses `bfloat16` automatic mixed precision during training.
   BF16 has the same dynamic range as float32, so no GradScaler is needed and
-  training is numerically stable for long runs. AMP is *requested* on by
-  default, then resolved against the actual hardware: BF16 acceleration needs
-  an Ampere+ GPU (A100, H100, RTX 30xx+), so pre-Ampere GPUs (V100, T4) and CPU
+  training is numerically stable for long runs. AMP is _requested_ on by
+  default, then resolved against the actual hardware: BF16 acceleration needs an
+  Ampere+ GPU (A100, H100, RTX 30xx+), so pre-Ampere GPUs (V100, T4) and CPU
   automatically fall back to FP32 with a warning. `misfit_train` resolves this
   once and writes the effective value into `config.json`; `misfit_evaluate` and
   `misfit_inspect` re-resolve it against their own hardware, so evaluating on a
@@ -153,9 +155,9 @@ A few practical guidelines:
   resampling to isotropic spacing is required. Volumes from thick-slice CT (e.g.
   5 mm slices) and thin-slice MRI can coexist in the same training run.
 
-- **The patch size is fixed at inference time.** `misfit_inspect`, `misfit_evaluate`,
-  and `misfit_embed` all read `patch_size` from `config.json` via `--config`.
-  You do not need to specify it again on the command line.
+- **The patch size is fixed at inference time.** `misfit_inspect`,
+  `misfit_evaluate`, and `misfit_embed` all read `patch_size` from `config.json`
+  via `--config`. You do not need to specify it again on the command line.
 
 ---
 
@@ -173,11 +175,11 @@ datasets with complex, fine-grained anatomy where local context is important.
 
 ## Loss Functions
 
-| Loss | `--loss` | Description |
-|---|---|---|
+| Loss                  | `--loss`                | Description                                                                                                       |
+| --------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Normalized Masked MSE | `normalized_masked_mse` | MSE computed on masked patches, normalized by patch variance. Recommended for mixed-modality datasets (CT + MRI). |
-| Masked MSE | `masked_mse` | Standard MSE on masked patches without variance normalization. |
-| Masked L1 | `masked_l1` | Mean absolute error on masked patches. More robust to intensity outliers than MSE. |
+| Masked MSE            | `masked_mse`            | Standard MSE on masked patches without variance normalization.                                                    |
+| Masked L1             | `masked_l1`             | Mean absolute error on masked patches. More robust to intensity outliers than MSE.                                |
 
 The `normalized_masked_mse` loss is recommended as the default because it
 normalizes each patch's contribution by its local variance, preventing
@@ -189,26 +191,26 @@ very different intensity distributions.
 
 ## Optimizers
 
-| Optimizer | `--optimizer` | Notes |
-|---|---|---|
-| AdamW | `adamw` | Default. Best general-purpose choice for ViT-based architectures. |
-| Adam | `adam` | No weight decay. Use `adamw` for better regularization. |
-| SGD | `sgd` | Requires careful learning rate tuning. Not recommended for MAE pretraining. |
+| Optimizer | `--optimizer` | Notes                                                                       |
+| --------- | ------------- | --------------------------------------------------------------------------- |
+| AdamW     | `adamw`       | Default. Best general-purpose choice for ViT-based architectures.           |
+| Adam      | `adam`        | No weight decay. Use `adamw` for better regularization.                     |
+| SGD       | `sgd`         | Requires careful learning rate tuning. Not recommended for MAE pretraining. |
 
 ---
 
 ## Learning Rate Schedulers
 
-| Scheduler | `--lr-scheduler` | Description |
-|---|---|---|
-| Cosine | `cosine` | Cosine annealing from `--learning-rate` to 0. Default. |
-| Polynomial | `polynomial` | Polynomial decay. |
-| Constant | `constant` | No decay; learning rate stays at `--learning-rate`. |
+| Scheduler  | `--lr-scheduler` | Description                                            |
+| ---------- | ---------------- | ------------------------------------------------------ |
+| Cosine     | `cosine`         | Cosine annealing from `--learning-rate` to 0. Default. |
+| Polynomial | `polynomial`     | Polynomial decay.                                      |
+| Constant   | `constant`       | No decay; learning rate stays at `--learning-rate`.    |
 
-All schedulers support a **linear warmup** phase controlled by `--warmup-epochs`.
-During warmup the learning rate increases linearly from 0 to `--learning-rate`.
-A warmup of 20 epochs is recommended for SwinMAE — skipping warmup can cause
-instability in the early stages of training.
+All schedulers support a **linear warmup** phase controlled by
+`--warmup-epochs`. During warmup the learning rate increases linearly from 0 to
+`--learning-rate`. A warmup of 20 epochs is recommended for SwinMAE — skipping
+warmup can cause instability in the early stages of training.
 
 ---
 
@@ -228,6 +230,7 @@ torchrun --nproc_per_node=4 \
         --batch-size 2
 ```
 
+<!-- prettier-ignore -->
 !!!note
     `--batch-size` is the **per-GPU** batch size. The effective global batch
     size is `--batch-size × number of GPUs`. Adjust `--learning-rate` accordingly
@@ -253,9 +256,9 @@ torchrun --nnodes=2 \
 
 ## Embedding Aggregators
 
-When running `misfit_embed`, the encoder produces a feature map for each
-cubic crop extracted from the volume. An **aggregator** pools these per-crop
-feature vectors into a single volume-level embedding.
+When running `misfit_embed`, the encoder produces a feature map for each cubic
+crop extracted from the volume. An **aggregator** pools these per-crop feature
+vectors into a single volume-level embedding.
 
 ### Mean Pool (`mean_pool`)
 
@@ -263,8 +266,8 @@ The simplest aggregator: computes the unweighted mean of all crop feature
 vectors. No training is required — it works zero-shot directly after
 pretraining.
 
-Use `mean_pool` when you want a quick, training-free embedding for retrieval
-or visualization (e.g., UMAP of a cohort).
+Use `mean_pool` when you want a quick, training-free embedding for retrieval or
+visualization (e.g., UMAP of a cohort).
 
 ### Attention Pool (`attention_pool`)
 
@@ -288,14 +291,14 @@ feature sets.
 Optimizes a cross-entropy loss for multi-class label prediction. The aggregator
 learns to produce discriminative embeddings for the `label` column in your
 `--input` CSV. Labels are treated as strings and mapped to integer indices
-lexicographically; the mapping is saved in `aggregator.pt` for
-inference-time decoding.
+lexicographically; the mapping is saved in `aggregator.pt` for inference-time
+decoding.
 
 ### Contrastive (`contrastive`)
 
-Optimizes a Supervised Contrastive loss (SupCon). Volumes sharing the same
-label are pulled together in embedding space; volumes with different labels
-are pushed apart. Uses K=2 pairs per group.
+Optimizes a Supervised Contrastive loss (SupCon). Volumes sharing the same label
+are pulled together in embedding space; volumes with different labels are pushed
+apart. Uses K=2 pairs per group.
 
 Contrastive training generally produces more generalizable embeddings than
 classification training, at the cost of requiring balanced sampling.
@@ -307,12 +310,12 @@ classification training, at the cost of requiring balanced sampling.
 
 `misfit_embed_train` accepts a single unified CSV with four required columns:
 
-| Column | Description |
-|---|---|
-| `volume_id` | Volume identifier — used for logging only. |
-| `split` | Dataset split. Only `split='train'` rows are used for training. |
-| `features_path` | Absolute path to the `.npz` file produced by `misfit_encode`. |
-| `label` | String label for the training objective. |
+| Column          | Description                                                     |
+| --------------- | --------------------------------------------------------------- |
+| `volume_id`     | Volume identifier — used for logging only.                      |
+| `split`         | Dataset split. Only `split='train'` rows are used for training. |
+| `features_path` | Absolute path to the `.npz` file produced by `misfit_encode`.   |
+| `label`         | String label for the training objective.                        |
 
 A minimal example:
 
@@ -358,10 +361,10 @@ Unlabeled NIfTI corpus
 
 ### Encoder export
 
-`misfit_train` automatically saves `encoder_weights.pt` to
-`results/models/` whenever the validation loss improves. This file contains
-encoder weights with keys remapped from `encoder.*` to `model.swinViT.*` —
-the format MIST's SwinUNETR expects — so no manual export step is required.
+`misfit_train` automatically saves `encoder_weights.pt` to `results/models/`
+whenever the validation loss improves. This file contains encoder weights with
+keys remapped from `encoder.*` to `model.swinViT.*` — the format MIST's
+SwinUNETR expects — so no manual export step is required.
 
 ```text
 results/
@@ -373,8 +376,8 @@ results/
 ### Fine-tuning in MIST
 
 Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
-architecture variant must match the one used during MISFIT pretraining —
-both tools use the same variant names (`swinunetr-small`, `swinunetr-base`,
+architecture variant must match the one used during MISFIT pretraining — both
+tools use the same variant names (`swinunetr-small`, `swinunetr-base`,
 `swinunetr-large`) with identical `feature_size` values:
 
 ```console
@@ -390,14 +393,14 @@ mist_train \
 
 MISFIT trains on single-channel images. MIST tasks are often multi-channel
 (e.g., four MRI contrasts for brain tumor segmentation). MIST's
-`--input-channel-strategy` flag controls how the single-channel patch
-embedding is adapted to the multi-channel model:
+`--input-channel-strategy` flag controls how the single-channel patch embedding
+is adapted to the multi-channel model:
 
-| Strategy  | Behaviour |
-|-----------|-----------|
-| `average` | Average source channels to one, then tile to match the target channel count. *(default)* |
-| `first`   | Use only the first source channel, then tile to match the target channel count. |
-| `skip`    | Keep the patch embedding at random initialization; do not transfer it. |
+| Strategy  | Behaviour                                                                                |
+| --------- | ---------------------------------------------------------------------------------------- |
+| `average` | Average source channels to one, then tile to match the target channel count. _(default)_ |
+| `first`   | Use only the first source channel, then tile to match the target channel count.          |
+| `skip`    | Keep the patch embedding at random initialization; do not transfer it.                   |
 
 `average` is the recommended default:
 
@@ -413,19 +416,20 @@ mist_train \
 
 ### When pretraining helps most
 
-Transfer is most beneficial in **low-label regimes** — tasks where the number
-of annotated cases is small relative to the model capacity.
+Transfer is most beneficial in **low-label regimes** — tasks where the number of
+annotated cases is small relative to the model capacity.
 
 - **Few labeled cases (< ~50)** — expect the largest gains. The pretrained
   encoder reduces the number of labeled cases needed to reach a given Dice
   score.
-- **Domain match matters** — pretraining on volumes from the same scanner,
-  field strength, and modality as the target task transfers better than
-  out-of-domain pretraining.
-- **Warmup is important** — always use `--warmup-epochs` (5–10 epochs) in
-  MIST when fine-tuning from MISFIT weights. A full-LR update at epoch 0 can
-  damage pretrained encoder features before the decoder has adapted.
+- **Domain match matters** — pretraining on volumes from the same scanner, field
+  strength, and modality as the target task transfers better than out-of-domain
+  pretraining.
+- **Warmup is important** — always use `--warmup-epochs` (5–10 epochs) in MIST
+  when fine-tuning from MISFIT weights. A full-LR update at epoch 0 can damage
+  pretrained encoder features before the decoder has adapted.
 
+<!-- prettier-ignore -->
 !!! note
     MISFIT encoder weights are only compatible with MIST's SwinUNETR
     architectures (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`).

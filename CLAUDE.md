@@ -22,11 +22,13 @@ Never use plain `pytest` or `python -m pytest`.
 
 ## Formatting
 
-Python: `ruff check` (lint + import order). Markdown outside `docs/`: Prettier
+Python: `ruff check` (lint + import order). All Markdown: Prettier
 (`proseWrap: always`, 80 cols) — run `npm run format` / `npm run format:check`
 after `npm install`. The Prettier tooling (`package.json`, `.prettierrc.json`,
-`node_modules/`) is git-ignored; it is not part of the Python package. `docs/`
-is excluded because Prettier does not understand mkdocs admonitions.
+`node_modules/`) is git-ignored; it is not part of the Python package. Each
+mkdocs admonition in `docs/` is preceded by a `<!-- prettier-ignore -->` comment
+so Prettier leaves the `!!! note` block and its indented body intact — keep that
+comment when adding a new admonition.
 
 ## Pipeline overview
 
