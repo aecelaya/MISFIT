@@ -479,13 +479,17 @@ def test_no_training_config_defaults_normalize_target_false(evaluator_setup):
         )
 
     assert ev.normalize_target_patches is False
-    # No training_config → AMP defaults to enabled.
-    assert ev.amp is True
+    # No training_config → AMP requested by default, then resolved against the
+    # current hardware (False on a CPU / pre-Ampere test machine).
+    from misfit.utils.hardware import bf16_supported
+    assert ev.amp is bf16_supported()
 
 
 def test_amp_flag_read_from_training_config(evaluator_setup):
-    """training_config={"amp": False} disables AMP; absence defaults to True."""
+    """training_config={"amp": False} always disables AMP; a request is resolved
+    against the current hardware."""
     from misfit.evaluation.evaluator import ReconstructionEvaluator
+    from misfit.utils.hardware import bf16_supported
 
     ckpt, idx, res = evaluator_setup
 
@@ -506,7 +510,27 @@ def test_amp_flag_read_from_training_config(evaluator_setup):
         )
 
     assert ev_off.amp is False
-    assert ev_on.amp is True
+    assert ev_on.amp is bf16_supported()
+
+
+def test_amp_request_honoured_on_bf16_capable_hardware(evaluator_setup, monkeypatch):
+    """When the hardware supports BF16, a config AMP request is honoured."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    monkeypatch.setattr("misfit.evaluation.evaluator.resolve_amp", lambda requested: requested)
+
+    ckpt, idx, res = evaluator_setup
+    with patch.object(
+        ReconstructionEvaluator,
+        "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            training_config={"loss": "masked_mse"},
+        )
+    assert ev.amp is True
 
 
 def test_run_inference_amp_disabled_uses_nullcontext(evaluator_setup):

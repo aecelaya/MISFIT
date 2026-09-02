@@ -18,7 +18,6 @@ Typical usage::
     )
     evaluator.run()
 """
-from contextlib import nullcontext
 from pathlib import Path
 
 import nibabel as nib
@@ -34,6 +33,7 @@ from misfit.inference.inference_utils import get_row_spacing, pad_to_multiple
 from misfit.metrics.metrics_registry import get_metric, list_registered_metrics
 from misfit.models.model_registry import get_model_from_registry
 from misfit.utils.console import console, print_error, print_success, print_warning
+from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.progress_bar import get_progress_bar
 
 
@@ -69,7 +69,8 @@ class ReconstructionEvaluator:
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects target-patch
             normalisation and the ``amp`` flag toggles autocast (defaults to
-            enabled when absent).
+            enabled when absent, then resolved against the current hardware —
+            BF16 needs an Ampere+ GPU, otherwise it falls back to FP32).
     """
 
     def __init__(
@@ -89,7 +90,9 @@ class ReconstructionEvaluator:
         self.model_config = model_config
         self.metrics = metrics or list_registered_metrics()
         tcfg = training_config or {}
-        self.amp = tcfg.get("amp", True)
+        # Resolve the config's AMP request against this machine's hardware —
+        # evaluation may run on a different GPU (or CPU) than training did.
+        self.amp = resolve_amp(tcfg.get("amp", True))
         loss_name = tcfg.get("loss", "")
         self.normalize_target_patches = loss_name == _NORMALIZED_MSE_LOSS
 
@@ -180,7 +183,7 @@ class ReconstructionEvaluator:
         tensor = torch.from_numpy(patch).unsqueeze(0).unsqueeze(0)  # (1,1,D,H,W)
         tensor = tensor.to(self.device)
 
-        amp_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
+        amp_ctx = autocast_context(self.amp)
         with torch.no_grad(), amp_ctx:
             output = self.model(tensor, spacing=self._current_spacing)
 

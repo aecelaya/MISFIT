@@ -14,7 +14,6 @@
 """
 import json
 from collections.abc import Callable
-from contextlib import nullcontext
 from pathlib import Path
 
 import nibabel as nib
@@ -24,6 +23,7 @@ import torch
 
 from misfit.inference import inference_utils
 from misfit.utils.console import print_section_header, print_success, print_warning
+from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.progress_bar import get_progress_bar
 
 _NORMALIZED_MSE_LOSS = "normalized_masked_mse"
@@ -64,11 +64,7 @@ def _tiled_reconstruct(
     D, H, W = padded.shape
     recon_out = np.zeros_like(padded)
     mask_out = np.zeros_like(padded)
-    amp_ctx = (
-        torch.amp.autocast("cuda", dtype=torch.bfloat16)
-        if amp and torch.device(device).type == "cuda"
-        else nullcontext()
-    )
+    amp_ctx = autocast_context(amp and torch.device(device).type == "cuda")
 
     for di in range(0, D, pd_):
         for hi in range(0, H, ph_):
@@ -137,9 +133,10 @@ def reconstruct(
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects the correct
             denormalisation, and the ``amp`` flag toggles bfloat16 autocast
-            (defaults to enabled when absent). When ``None``,
-            volume-level-only denormalisation is applied (correct for
-            ``masked_mse`` and ``masked_l1``) with autocast enabled.
+            (defaults to enabled when absent, then resolved against the current
+            hardware — BF16 needs an Ampere+ GPU, otherwise FP32 is used).
+            When ``None``, volume-level-only denormalisation is applied
+            (correct for ``masked_mse`` and ``masked_l1``).
         device: Torch device. Defaults to CUDA if available, else CPU.
         split: If the index contains a ``split`` column, only rows whose
             split matches this value are processed.  ``None`` processes all
@@ -148,7 +145,9 @@ def reconstruct(
     tcfg = training_config or {}
     loss_name = tcfg.get("loss", "")
     denorm_patches = loss_name == _NORMALIZED_MSE_LOSS
-    use_amp = tcfg.get("amp", True)
+    # Resolve the config's AMP request against this machine's hardware —
+    # inference may run on a different GPU (or CPU) than training did.
+    use_amp = resolve_amp(tcfg.get("amp", True))
 
     device = device or inference_utils.get_default_device()
     output_dir = Path(output_dir)

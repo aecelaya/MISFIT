@@ -57,7 +57,8 @@ misfit/
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
-  utils/                console (Rich), io (read/write JSON), progress_bar
+  utils/                console (Rich), io (read/write JSON), progress_bar,
+                        hardware (bf16_supported / resolve_amp / autocast_context)
 ```
 
 ## Key design decisions
@@ -85,7 +86,9 @@ Model sizes (`feature_size`): small=24, base=48 (default), large=96.
 `misfit_train` writes `config.json` to the results directory. All downstream commands (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) require `--config` and load architecture from it — no re-specifying model flags. Resume validation checks model name and patch size (hard error on mismatch).
 
 ### Distributed training
-`MAETrainer` reads `RANK`, `LOCAL_RANK`, `WORLD_SIZE` from torchrun environment variables. The same class runs on 1 GPU or N×M GPUs. AMP is BF16-only and on by default (`torch.amp.autocast("cuda", dtype=torch.bfloat16)`) — there is no fp16 path and no GradScaler, since BF16 has float32's dynamic range. Requires an Ampere+ GPU (A100, H100, RTX 30xx+). Disable by setting `"amp": false` in `config.json` and restarting with `--resume`.
+`MAETrainer` reads `RANK`, `LOCAL_RANK`, `WORLD_SIZE` from torchrun environment variables. The same class runs on 1 GPU or N×M GPUs (NCCL), and also on CPU / multi-process CPU (gloo) for testing — `self.use_cuda` gates device placement, backend, and cuDNN tuning; CPU pretraining is very slow and warns once.
+
+AMP is BF16-only — there is no fp16 path and no GradScaler, since BF16 has float32's dynamic range. It is *requested* on by default, then resolved against the actual hardware by `misfit.utils.hardware.resolve_amp`: BF16 needs an Ampere+ GPU (compute capability ≥ 8.0), so pre-Ampere GPUs (V100, T4) and CPU fall back to FP32 with a warning. `MAETrainer.train()` resolves once (from the CLI default, or from the saved config on `--resume`) and persists the effective value to `config.json`; `misfit_evaluate` and `misfit_inspect` re-resolve the config value against their own hardware. Disable AMP entirely by setting `"amp": false` in `config.json`. Shared helper: `hardware.autocast_context(enabled)`.
 
 ### Transfer learning to MIST
 `get_encoder_state_dict()` remaps keys `encoder.<name>` → `model.swinViT.<name>` to match MIST's `MistSwinUNETR` checkpoint format. Its output is saved to `models/encoder_weights.pt` whenever validation loss improves (alongside `best_model.pt`), so the MIST-ready encoder is always available after training. Pass it to `mist_train --pretrained-weights models/encoder_weights.pt` along with `--pretrained-config <misfit results>/config.json` (MIST uses the source config to validate encoder compatibility; omitting it only warns and skips that check). Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled by MIST's `--input-channel-strategy` (default: average).

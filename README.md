@@ -29,8 +29,8 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 - **End-to-end pipeline** — seven CLI commands take you from raw files to downstream-ready embeddings
 - **3D-native** — operates on full volumetric data, not 2D slices
 - **Mixed modality** — the `normalized_masked_mse` loss normalizes per-patch variance, handling CT and MRI in the same training run
-- **Scalable** — single-GPU to multi-node training via `torchrun`; the same command runs everywhere
-- **BF16 AMP** — automatic mixed precision with `bfloat16` throughout; works on Ampere+ GPUs (A100, H100, RTX 30xx+)
+- **Scalable** — single-GPU to multi-node training via `torchrun`; the same command runs everywhere (CPU too, for testing)
+- **BF16 AMP** — automatic `bfloat16` mixed precision on Ampere+ GPUs (A100, H100, RTX 30xx+), with an automatic FP32 fallback on older GPUs and CPU
 - **Reproducible** — `config.json` captures every architecture and training hyperparameter; downstream commands require it rather than re-accepting flags
 - **100% test coverage**
 
@@ -46,7 +46,7 @@ cd MISFIT
 pip install -e .
 ```
 
-**Requirements:** Python ≥ 3.10, NVIDIA Ampere or newer GPU (A100, H100, RTX 30xx+) — BF16 AMP is always on during training.
+**Requirements:** Python ≥ 3.10. An NVIDIA Ampere or newer GPU (A100, H100, RTX 30xx+) is recommended — it enables BF16 mixed precision. Pre-Ampere GPUs and CPU-only machines work too; MISFIT automatically falls back to FP32.
 
 ---
 

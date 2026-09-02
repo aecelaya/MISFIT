@@ -45,7 +45,7 @@ def fake_dist(monkeypatch):
     """Replace torch.distributed in the mae_trainer module with FakeDist."""
     import misfit.training.trainers.mae_trainer as mt
 
-    calls = {"init": 0, "destroy": 0, "barrier": 0, "all_reduce": 0}
+    calls = {"init": 0, "destroy": 0, "barrier": 0, "all_reduce": 0, "backend": None}
 
     class FakeDist:
         _initialized = False
@@ -53,6 +53,7 @@ def fake_dist(monkeypatch):
         @staticmethod
         def init_process_group(backend):
             calls["init"] += 1
+            calls["backend"] = backend
             FakeDist._initialized = True
 
         @staticmethod
@@ -78,10 +79,18 @@ def fake_dist(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def patch_cuda(monkeypatch):
-    """Make CUDA calls no-ops so the test suite runs CPU-only."""
+    """Make CUDA calls no-ops so the test suite runs CPU-only.
+
+    CUDA is faked as *available* and Ampere-class (SM 8.0) so the trainer takes
+    its GPU code path — device placement, NCCL, BF16 AMP — without a real GPU.
+    Tests that need the CPU fallback path override ``is_available`` themselves.
+    """
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True, raising=False)
     monkeypatch.setattr(torch.cuda, "set_device", lambda _: None, raising=False)
-    # BF16 autocast checks is_bf16_supported() on __init__; return True so no CUDA init.
+    # hardware.bf16_supported() checks compute capability; report Ampere (8.0).
+    monkeypatch.setattr(
+        torch.cuda, "get_device_capability", lambda *a, **k: (8, 0), raising=False
+    )
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True, raising=False)
     # .to(device) returns self — model stays on CPU
     monkeypatch.setattr(nn.Module, "to", lambda self, *a, **k: self, raising=False)
@@ -952,3 +961,200 @@ def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypat
     trainer._warn_if_underutilising_gpus()
 
     warn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# CPU path + hardware-resolved AMP
+# ---------------------------------------------------------------------------
+
+def test_trainer_selects_cuda_device_when_available(tmp_path):
+    """With CUDA available (faked Ampere), the trainer targets cuda:<local_rank>."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    assert trainer.use_cuda is True
+    assert trainer.device == torch.device("cuda:0")
+
+
+def test_trainer_falls_back_to_cpu_when_cuda_unavailable(tmp_path, monkeypatch):
+    """No CUDA device → trainer runs on CPU."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    assert trainer.use_cuda is False
+    assert trainer.device == torch.device("cpu")
+
+
+def test_enable_cudnn_optimisations_noop_on_cpu(tmp_path, monkeypatch):
+    """_enable_cudnn_optimisations returns early on CPU without flipping cudnn flags."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
+    trainer._enable_cudnn_optimisations()  # must not raise
+    assert torch.backends.cudnn.benchmark is False  # untouched on the CPU path
+
+
+def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_dist):
+    """Multi-process GPU run initialises the process group with NCCL."""
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    trainer._setup_distributed()
+    assert fake_dist["backend"] == "nccl"
+
+
+def test_setup_distributed_uses_gloo_backend_on_cpu(tmp_path, monkeypatch, fake_dist):
+    """Multi-process CPU run initialises the process group with gloo."""
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    trainer._setup_distributed()
+    assert fake_dist["backend"] == "gloo"
+
+
+def test_build_model_omits_device_ids_on_cpu(tmp_path, monkeypatch, fake_dist):
+    """CPU DDP must not pass device_ids (only valid for single-GPU DDP)."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    captured = {}
+
+    class CapturingDDP(DummyDDP):
+        def __init__(self, module, **kwargs):
+            super().__init__(module)
+            captured.update(kwargs)
+
+    monkeypatch.setattr(mt, "DDP", CapturingDDP)
+
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    trainer._build_model()
+
+    assert "device_ids" not in captured
+    assert captured["bucket_cap_mb"] == 200
+
+
+def test_train_resolves_amp_to_false_on_cpu(tmp_path, monkeypatch):
+    """train() downgrades the requested AMP setting to FP32 when there is no
+    BF16-capable GPU, and persists the resolved value to config.json."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    args = _make_args(tmp_path)
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = MAETrainer(args)
+        trainer.train()
+
+    assert trainer.amp is False
+    config = json.loads((Path(args.results) / "config.json").read_text())
+    assert config["training"]["amp"] is False
+
+
+def test_train_keeps_amp_true_on_ampere(tmp_path):
+    """train() keeps AMP enabled on a BF16-capable GPU (faked Ampere)."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = MAETrainer(args)
+        # use_cuda stays True (faked Ampere) so AMP resolves on; run the
+        # tensors on CPU since there is no real GPU in CI.
+        trainer.device = torch.device("cpu")
+        trainer.train()
+
+    assert trainer.amp is True
+    config = json.loads((Path(args.results) / "config.json").read_text())
+    assert config["training"]["amp"] is True
+
+
+def test_train_resume_reresolves_amp_from_saved_config(tmp_path, monkeypatch):
+    """On resume the requested AMP value comes from the saved config, then is
+    re-resolved against the current hardware."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.resume = True
+    results_dir = Path(args.results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    # Saved config requests AMP on; resuming on a CPU must downgrade it.
+    trainer_for_config = MAETrainer(args)
+    saved = trainer_for_config._build_config()
+    saved["training"]["amp"] = True
+    import misfit.utils as _utils
+    _utils.write_json_file(results_dir / "config.json", saved)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = MAETrainer(args)
+        trainer.train()
+
+    assert trainer.amp is False
+
+
+def test_train_warns_once_on_cpu(tmp_path, monkeypatch):
+    """A CPU training run surfaces a single user-facing warning."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    args = _make_args(tmp_path)
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    warn = MagicMock()
+    monkeypatch.setattr(mt, "print_warning", warn)
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = mt.MAETrainer(args)
+        trainer.train()
+
+    cpu_warnings = [c for c in warn.call_args_list if "CPU" in c.args[0]]
+    assert len(cpu_warnings) == 1

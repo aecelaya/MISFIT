@@ -46,10 +46,12 @@ from misfit.training.training_utils import (
     set_seed,
 )
 from misfit.utils import (
+    autocast_context,
     console,
     get_progress_bar,
     print_warning,
     read_json_file,
+    resolve_amp,
     write_json_file,
 )
 
@@ -74,20 +76,39 @@ class MAETrainer:
         self.is_distributed = self.world_size > 1
         self.is_main = self.rank == 0
 
-        self.device = torch.device(f"cuda:{self.local_rank}")
-        self.amp = True  # Always on by default; can be changed in config.json.
+        # Device selection: one GPU per rank when CUDA is available, else CPU.
+        # The CPU path is intended for testing and small debugging runs — MAE
+        # pretraining on CPU is very slow.
+        self.use_cuda = torch.cuda.is_available()
+        self.device = (
+            torch.device(f"cuda:{self.local_rank}")
+            if self.use_cuda
+            else torch.device("cpu")
+        )
+        # Requested AMP setting; resolved against the actual hardware in
+        # train() (BF16 autocast needs an Ampere+ GPU) and persisted to
+        # config.json. Can be turned off entirely via "amp": false in config.
+        self.amp = True
 
     # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
 
     def _setup_distributed(self) -> None:
-        """Initialise the NCCL process group (torchrun-native)."""
+        """Initialise the process group (torchrun-native).
+
+        Uses the NCCL backend on GPU and the gloo backend on CPU so that
+        multi-process runs work in both configurations.
+        """
         if self.is_distributed:
-            dist.init_process_group(backend="nccl")
-        torch.cuda.set_device(self.local_rank)
+            backend = "nccl" if self.use_cuda else "gloo"
+            dist.init_process_group(backend=backend)
+        if self.use_cuda:
+            torch.cuda.set_device(self.local_rank)
 
     def _enable_cudnn_optimisations(self) -> None:
+        if not self.use_cuda:
+            return
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
@@ -125,7 +146,12 @@ class MAETrainer:
         model = model.to(self.device)
         if self.is_distributed:
             model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = DDP(model, device_ids=[self.local_rank], bucket_cap_mb=self.args.bucket_cap_mb)
+            ddp_kwargs = {"bucket_cap_mb": self.args.bucket_cap_mb}
+            # device_ids is only valid for single-device (GPU) DDP; a CPU
+            # process group must omit it.
+            if self.use_cuda:
+                ddp_kwargs["device_ids"] = [self.local_rank]
+            model = DDP(model, **ddp_kwargs)
         return model
 
     def _build_loss(self) -> nn.Module:
@@ -190,9 +216,7 @@ class MAETrainer:
         images = batch["image"].to(self.device, non_blocking=True)
         spacing = batch["spacing"].to(self.device, non_blocking=True)
 
-        amp_ctx = (
-            torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
-        )
+        amp_ctx = autocast_context(self.amp)
         # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
         sync_ctx = (
             model.no_sync()
@@ -232,9 +256,7 @@ class MAETrainer:
         """
         images = batch["image"].to(self.device, non_blocking=True)
         spacing = batch["spacing"].to(self.device, non_blocking=True)
-        amp_ctx = (
-            torch.amp.autocast("cuda", dtype=torch.bfloat16) if self.amp else nullcontext()
-        )
+        amp_ctx = autocast_context(self.amp)
         with torch.no_grad(), amp_ctx:
             output = model(images, spacing=spacing)
             loss = criterion(
@@ -442,10 +464,25 @@ class MAETrainer:
         if self.args.resume and config_path.exists():
             self._validate_resume(read_json_file(config_path))
 
-        # Read amp setting from saved config on resume (all ranks).
+        # Resolve the requested AMP setting against the actual hardware. BF16
+        # autocast is only accelerated on Ampere+ GPUs; resolve_amp downgrades
+        # to FP32 (with a warning) on older GPUs or CPU. On resume the requested
+        # value comes from the saved config. The resolved value is written into
+        # config.json below, so every training step and downstream command
+        # (misfit_evaluate / misfit_inspect) reads a hardware-appropriate value.
         if self.args.resume and config_path.exists():
-            saved_training = read_json_file(config_path).get("training", {})
-            self.amp = saved_training.get("amp", True)
+            requested_amp = (
+                read_json_file(config_path).get("training", {}).get("amp", True)
+            )
+        else:
+            requested_amp = self.amp
+        self.amp = resolve_amp(requested_amp)
+
+        if self.is_main and not self.use_cuda:
+            print_warning(
+                "No CUDA device detected — training on CPU. This is intended "
+                "for testing and debugging; MAE pretraining on CPU is very slow."
+            )
 
         self._warn_if_underutilising_gpus()
         self._setup_distributed()

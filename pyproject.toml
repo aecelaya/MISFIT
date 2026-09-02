@@ -77,6 +77,8 @@ filterwarnings = [
     "ignore:.*foreground detection returned an empty mask.*:UserWarning",
     # CPU-only test machines don't have CUDA — autocast disables itself
     "ignore:User provided device_type of 'cuda', but CUDA is not available:UserWarning",
+    # CPU-only / pre-Ampere test machines: resolve_amp downgrades BF16 → FP32
+    "ignore:AMP was requested but .* has no hardware BF16 support:UserWarning",
 ]
 
 [tool.coverage.run]
