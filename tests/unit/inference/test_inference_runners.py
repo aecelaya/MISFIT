@@ -553,14 +553,16 @@ class TestTiledReconstructDenormPatches:
         # std is ~0 so clamped to 1e-6; reconstruction ≈ 0 * 1e-6 + 10 = 10
         np.testing.assert_allclose(recon, 10.0, atol=1e-4)
 
-    def test_denorm_patches_true_with_varied_patch(self):
-        """Reconstruction=1 on a patch with mean=0, std=2 should yield ~2."""
+    def test_denorm_patches_true_is_per_mask_cube_not_whole_patch(self):
+        """De-normalization uses each mask cube's own mean/std, not the whole
+        96³ (here 32³) tile's."""
         from misfit.inference.inference_runners import _tiled_reconstruct
 
+        # One 16³ cube shifted far from the rest so per-cube and whole-tile
+        # statistics disagree sharply.
         rng = np.random.default_rng(42)
-        vol = rng.normal(loc=0.0, scale=2.0, size=(32, 32, 32)).astype(np.float32)
-        patch_std = float(vol.std()) + 1e-6
-        patch_mean = float(vol.mean())
+        vol = rng.normal(loc=0.0, scale=1.0, size=(32, 32, 32)).astype(np.float32)
+        vol[:16, :16, :16] += 20.0  # cube (0,0,0)
 
         def model_fn(tensor):
             return {
@@ -569,9 +571,18 @@ class TestTiledReconstructDenormPatches:
             }
 
         recon, _ = _tiled_reconstruct(vol, (32, 32, 32), model_fn, "cpu",
-                                      denorm_patches=True)
-        expected = 1.0 * patch_std + patch_mean
-        np.testing.assert_allclose(recon.mean(), expected, rtol=1e-4)
+                                      denorm_patches=True, mask_patch_size=16)
+
+        # recon = 1 * (cube_std + eps) + cube_mean, per cube.
+        shifted = recon[:16, :16, :16].mean()
+        rest = recon[16:, :16, :16].mean()
+        assert shifted > 20.0          # picked up the +20 cube mean
+        assert abs(rest) < 3.0         # the other cubes stayed near 0
+
+        # A whole-tile de-norm would have used one (mean≈2.5, std≈7) for
+        # everything → every voxel ≈ 1*7 + 2.5 ≈ 9.5.
+        whole_tile = 1.0 * (float(vol.std()) + 1e-6) + float(vol.mean())
+        assert not np.allclose(recon, whole_tile, atol=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +603,8 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["denorm_patches"] = denorm_patches
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
@@ -626,7 +638,8 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["denorm_patches"] = denorm_patches
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
@@ -660,7 +673,8 @@ class TestReconstructNormalizedMse:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["denorm_patches"] = denorm_patches
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
@@ -703,7 +717,8 @@ class TestReconstructAmp:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 
@@ -740,7 +755,8 @@ class TestReconstructAmp:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 
@@ -773,7 +789,8 @@ class TestReconstructAmp:
         captured = {}
 
         def capturing_tiled_reconstruct(padded, patch_size, model_fn, device,
-                                        denorm_patches=False, amp=True):
+                                        denorm_patches=False, amp=True,
+                                        mask_patch_size=16):
             captured["amp"] = amp
             return np.zeros(padded.shape), np.zeros(padded.shape)
 

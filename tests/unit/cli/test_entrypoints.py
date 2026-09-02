@@ -206,17 +206,52 @@ def test_evaluate_entry_missing_config_exits(tmp_path):
         ])
 
 
-def test_evaluate_entry_empty_evaluation_section_exits(tmp_path):
+def test_evaluate_entry_empty_evaluation_section_falls_back_to_defaults(tmp_path):
+    """A config with no usable 'evaluation' section falls back to DEFAULT_METRICS
+    (with a warning) rather than exiting."""
     from misfit.cli.evaluate_entrypoint import evaluate_entry
     config_path = tmp_path / "config.json"
-    config_path.write_text('{"evaluation": {}}')
-    with pytest.raises(SystemExit):
+    config_path.write_text(
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75},'
+        ' "evaluation": {}}'
+    )
+    mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
+    with patch(mock_path, autospec=True) as MockEval:
+        MockEval.return_value.run.return_value = None
         evaluate_entry([
             "--checkpoint", "best.pt",
             "--config", str(config_path),
             "--index", "val.parquet",
             "--output-csv", str(tmp_path / "results.csv"),
         ])
+    _, kwargs = MockEval.call_args
+    assert kwargs["metrics"] == ["masked_mae", "masked_mse", "masked_psnr"]
+
+
+def test_evaluate_entry_metrics_flag_overrides_config(tmp_path):
+    """--metrics wins over the config's 'evaluation' section."""
+    from misfit.cli.evaluate_entrypoint import evaluate_entry
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75},'
+        ' "evaluation": {"masked_mae": {}}}'
+    )
+    mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
+    with patch(mock_path, autospec=True) as MockEval:
+        MockEval.return_value.run.return_value = None
+        evaluate_entry([
+            "--checkpoint", "best.pt",
+            "--config", str(config_path),
+            "--index", "val.parquet",
+            "--output-csv", str(tmp_path / "results.csv"),
+            "--metrics", "masked_mse", "ssim",
+            "--seed", "7",
+        ])
+    _, kwargs = MockEval.call_args
+    assert kwargs["metrics"] == ["masked_mse", "ssim"]
+    assert kwargs["seed"] == 7
 
 
 # ---------------------------------------------------------------------------

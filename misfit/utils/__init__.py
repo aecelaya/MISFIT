@@ -9,6 +9,7 @@ from misfit.utils.console import (
 )
 from misfit.utils.hardware import autocast_context, bf16_supported, resolve_amp
 from misfit.utils.io import read_json_file, write_json_file
+from misfit.utils.normalization import denormalize_patchwise, normalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
 
 __all__ = [
@@ -21,6 +22,8 @@ __all__ = [
     "autocast_context",
     "bf16_supported",
     "resolve_amp",
+    "denormalize_patchwise",
+    "normalize_patchwise",
     "read_json_file",
     "write_json_file",
     "get_progress_bar",

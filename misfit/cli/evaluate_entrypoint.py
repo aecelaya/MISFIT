@@ -31,7 +31,8 @@ from pathlib import Path
 
 from misfit.cli.args import ArgParser, add_evaluate_args
 from misfit.evaluation.evaluator import ReconstructionEvaluator
-from misfit.utils.console import print_error
+from misfit.metrics.metrics_registry import DEFAULT_METRICS
+from misfit.utils.console import print_error, print_warning
 from misfit.utils.io import read_json_file
 
 
@@ -59,17 +60,18 @@ def evaluate_entry(args=None) -> None:
         sys.exit(1)
 
     config = read_json_file(config_path)
-    eval_section = config.get("evaluation", {})
-    if not eval_section:
-        print_error(
-            f"'evaluation' section missing or empty in '{config_path}'. "
-            "Re-run misfit_train to regenerate a valid config.json."
-        )
-        sys.exit(1)
-
-    metrics = list(eval_section.keys())
     model_config = config.get("model", {})
     training_config = config.get("training", {})
+
+    # Metric selection: --metrics wins, else config's 'evaluation' section,
+    # else the built-in defaults (a hand-edited or legacy config may omit it).
+    metrics = ns.metrics or list(config.get("evaluation", {}).keys())
+    if not metrics:
+        metrics = list(DEFAULT_METRICS)
+        print_warning(
+            f"No 'evaluation' section in '{config_path}' and no --metrics given; "
+            f"using defaults: {', '.join(metrics)}."
+        )
 
     evaluator = ReconstructionEvaluator(
         checkpoint_path=Path(ns.checkpoint),
@@ -80,5 +82,6 @@ def evaluate_entry(args=None) -> None:
         device=ns.device,
         split=ns.split or None,
         training_config=training_config,
+        seed=ns.seed,
     )
     evaluator.run()

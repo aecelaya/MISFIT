@@ -24,6 +24,7 @@ import torch
 from misfit.inference import inference_utils
 from misfit.utils.console import print_section_header, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
+from misfit.utils.normalization import denormalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
 
 _NORMALIZED_MSE_LOSS = "normalized_masked_mse"
@@ -36,6 +37,7 @@ def _tiled_reconstruct(
     device: str | torch.device,
     denorm_patches: bool = False,
     amp: bool = True,
+    mask_patch_size: int = 16,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reconstruct *padded* volume patch-by-patch and stitch results.
 
@@ -46,14 +48,16 @@ def _tiled_reconstruct(
         model_fn: Callable that maps a ``(1, 1, pd, ph, pw)`` tensor to a
             dict with keys ``"reconstruction"`` and ``"mask"``.
         device: Torch device used for inference tensors.
-        denorm_patches: When ``True``, undo the per-patch normalization from
-            the model output before stitching. Set this when the model was
-            trained with ``normalized_masked_mse`` so that the stitched
-            reconstruction is in the same z-score space as the input (and can
-            be correctly denormalised to original intensities afterwards).
-            Defaults to ``False``.
+        denorm_patches: When ``True``, undo the per-cube normalization from the
+            model output before stitching, using the target's per-cube mean/std
+            (:func:`misfit.utils.normalization.denormalize_patchwise`). Set this
+            when the model was trained with ``normalized_masked_mse`` so the
+            stitched reconstruction is back in the volume z-score space (and can
+            then be denormalised to original intensities). Defaults to ``False``.
         amp: When ``True`` (default), run the forward pass under bfloat16
             autocast on CUDA devices. Has no effect on CPU.
+        mask_patch_size: Edge length of the normalization cubes — must match the
+            training ``mask_patch_size``. Only used when ``denorm_patches``.
 
     Returns:
         Tuple of ``(reconstruction, mask)`` numpy arrays, each of shape
@@ -77,13 +81,15 @@ def _tiled_reconstruct(
                     output = model_fn(tensor)
                 recon = output["reconstruction"].squeeze().float().cpu().numpy()
                 if denorm_patches:
-                    # The model was trained to predict per-patch-normalised values
-                    # (zero mean, unit variance per patch cube). Undo that using the
-                    # target patch's own statistics so the stitched reconstruction is
-                    # back in the volume-level z-score space.
-                    patch_std = float(patch.std()) + 1e-6
-                    patch_mean = float(patch.mean())
-                    recon = recon * patch_std + patch_mean
+                    # The model predicts per-mask-cube-normalised values (zero
+                    # mean, unit variance per mask_patch_size cube). Undo that
+                    # with the target's per-cube stats so the stitched
+                    # reconstruction is back in the volume z-score space.
+                    recon = denormalize_patchwise(
+                        torch.from_numpy(np.ascontiguousarray(recon)),
+                        torch.from_numpy(np.ascontiguousarray(patch)),
+                        mask_patch_size,
+                    ).numpy()
                 recon_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = recon
                 mask_out[di:di + pd_, hi:hi + ph_, wi:wi + pw_] = (
                     output["mask"].squeeze().float().cpu().numpy()
@@ -158,6 +164,7 @@ def reconstruct(
 
     checkpoint = inference_utils.load_checkpoint(checkpoint_path, device)
     patch_size = tuple(model_config["patch_size"])
+    mask_patch_size = int(model_config["mask_patch_size"])
 
     model = inference_utils.build_model_from_checkpoint(
         checkpoint, model_config, device
@@ -206,6 +213,7 @@ def reconstruct(
                 recon_padded, mask_padded = _tiled_reconstruct(
                     padded, patch_size, model_fn, device,
                     denorm_patches=denorm_patches, amp=use_amp,
+                    mask_patch_size=mask_patch_size,
                 )
 
                 d, h, w = original_shape

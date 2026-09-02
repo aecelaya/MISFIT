@@ -582,3 +582,128 @@ def test_run_partial_errors_prints_warning(evaluator_setup, tmp_path):
     # At least one warning about skipped volumes
     warning_texts = [str(c) for c in mock_warn.call_args_list]
     assert any("failed" in t for t in warning_texts)
+
+
+# ---------------------------------------------------------------------------
+# metric space (16³ cube), naive baseline + skill, determinism, SSIM opt-in
+# ---------------------------------------------------------------------------
+
+def test_default_metrics_exclude_ssim(evaluator_setup):
+    """metrics=None → the three DEFAULT_METRICS, no ssim."""
+    ckpt, idx, res = evaluator_setup
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+    with patch.object(
+        ReconstructionEvaluator, "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=None, device="cpu",
+        )
+    assert ev.metrics == ["masked_mae", "masked_mse", "masked_psnr"]
+
+
+def test_run_csv_has_naive_and_skill_columns(evaluator_setup):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res, metrics=["masked_mae", "masked_psnr"])
+    df = ev.run()
+    assert list(df.columns) == [
+        "volume_id",
+        "masked_mae", "masked_mae_naive", "masked_mae_skill",
+        "masked_psnr", "masked_psnr_naive", "masked_psnr_skill",
+    ]
+
+
+def test_ssim_available_via_explicit_request(evaluator_setup):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res, metrics=["ssim"])
+    df = ev.run()
+    assert {"ssim", "ssim_naive", "ssim_skill"}.issubset(df.columns)
+
+
+def test_evaluation_is_reproducible_under_fixed_seed(evaluator_setup, tmp_path):
+    ckpt, idx, _ = evaluator_setup
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    def _run(seed, name):
+        out = tmp_path / f"{name}.csv"
+        with patch.object(
+            ReconstructionEvaluator, "_build_model",
+            lambda self: _build_tiny_model(
+                self.checkpoint, self.model_config, self.device
+            ),
+        ):
+            ReconstructionEvaluator(
+                checkpoint_path=ckpt, index_path=idx, output_csv_path=out,
+                model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+                training_config={"loss": "normalized_masked_mse"}, seed=seed,
+            ).run()
+        return out.read_text()
+
+    assert _run(42, "a") == _run(42, "b")      # same seed → identical
+    assert _run(42, "c") != _run(7, "d")       # different seed → different
+
+
+def test_normalized_target_normalized_per_mask_cube(evaluator_setup):
+    """The target is normalized per mask_patch_size (16³) cube, not per
+    patch_size (32³) tile — so a strong low-frequency gradient across the tile
+    is removed cube-by-cube."""
+    ckpt, idx, res = evaluator_setup
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+    with patch.object(
+        ReconstructionEvaluator, "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            training_config={"loss": "normalized_masked_mse"},
+        )
+
+    # Ramp: one 16³ octant sits ~20 above the rest.
+    vol = np.random.default_rng(0).normal(0, 1, (32, 32, 32)).astype(np.float32)
+    vol[:16, :16, :16] += 20.0
+    (_, target, _), = ev._run_tiled_inference(vol)
+
+    # Per-16³-cube normalization → every cube ~zero mean (offset removed).
+    for d in (0, 16):
+        for h in (0, 16):
+            for w in (0, 16):
+                cube = target[d:d + 16, h:h + 16, w:w + 16]
+                assert abs(float(cube.mean())) < 0.05
+    # A per-32³ normalization would leave the +20 octant well above zero.
+
+
+def test_skill_nan_when_naive_is_zero(evaluator_setup):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res, metrics=["masked_mae"])
+    assert np.isnan(ev._skill("masked_mae", 0.3, 0.0))
+
+
+def test_skill_additive_for_higher_is_better_metric(evaluator_setup):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res, metrics=["masked_psnr"])
+    # PSNR is higher-is-better → skill is the dB gain.
+    assert ev._skill("masked_psnr", 18.0, 15.0) == pytest.approx(3.0)
+    # MAE is lower-is-better → skill is fraction of error removed.
+    assert ev._skill("masked_mae", 0.8, 1.0) == pytest.approx(0.2)
+
+
+def test_print_summary_covers_all_verdicts(evaluator_setup, capsys):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res, metrics=["masked_mae", "masked_psnr"])
+    rows = [
+        {"masked_mae": 0.5, "masked_mae_naive": 1.0, "masked_mae_skill": 0.5,
+         "masked_psnr": 18.0, "masked_psnr_naive": 15.0, "masked_psnr_skill": 3.0},
+        {"masked_mae": 1.0, "masked_mae_naive": 1.0, "masked_mae_skill": 0.0,
+         "masked_psnr": 14.0, "masked_psnr_naive": 15.0, "masked_psnr_skill": -1.0},
+    ]
+    ev._print_summary(rows)  # tied (mean skill 0.25 → beats) ... exercise branches
+    ev._print_summary([
+        {"masked_mae": 1.2, "masked_mae_naive": 1.0, "masked_mae_skill": -0.2,
+         "masked_psnr": 14.0, "masked_psnr_naive": 15.0, "masked_psnr_skill": -1.0},
+    ])
+    ev._print_summary([
+        {"masked_mae": 1.0, "masked_mae_naive": 1.0, "masked_mae_skill": 0.0,
+         "masked_psnr": 15.0, "masked_psnr_naive": 15.0, "masked_psnr_skill": 0.0},
+    ])

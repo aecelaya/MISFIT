@@ -10,18 +10,18 @@ import numpy as np
 import pandas as pd
 
 
-def initialize_results_dataframe(metric_names: list[str]) -> pd.DataFrame:
-    """Return an empty DataFrame with the correct evaluation columns.
+def initialize_results_dataframe(columns: list[str]) -> pd.DataFrame:
+    """Return an empty DataFrame with a ``volume_id`` column plus *columns*.
 
     Args:
-        metric_names: Ordered list of metric names (e.g. ``["masked_mae",
-            "ssim"]``).  One column is created per metric, preceded by a
-            ``volume_id`` column.
+        columns: Ordered list of the numeric result columns — the caller passes
+            the already-expanded list (e.g. ``["masked_mae", "masked_mae_naive",
+            "masked_mae_skill", ...]``).
 
     Returns:
-        Empty DataFrame with columns ``["volume_id", *metric_names]``.
+        Empty DataFrame with columns ``["volume_id", *columns]``.
     """
-    return pd.DataFrame(columns=["volume_id"] + list(metric_names))
+    return pd.DataFrame(columns=["volume_id"] + list(columns))
 
 
 def compute_results_stats(results_df: pd.DataFrame) -> pd.DataFrame:

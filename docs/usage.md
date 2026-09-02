@@ -200,9 +200,19 @@ reconstruct the correct model without re-specifying any flags.
 
 The **evaluation step** measures reconstruction quality on the validation split.
 For each volume, the evaluator tiles the full volume into non-overlapping
-patches, runs a complete MAE forward pass on each patch (with a fresh random
-mask), computes masked reconstruction metrics per patch, and averages the
-results across all patches to produce one score per volume.
+patches, runs a complete MAE forward pass on each patch, computes masked
+reconstruction metrics per patch, and averages the results across all patches to
+produce one score per volume. The per-tile mask is drawn from `--seed` so the
+whole evaluation is reproducible.
+
+Metrics are computed in the **training loss's space**: when the run used
+`normalized_masked_mse` the target is normalised per `mask_patch_size` cube —
+exactly as the loss does — so `masked_mse` is directly comparable to the run's
+`best_val_loss`. Because a per-region-normalised error is ≈ 1.0 for _any_
+constant predictor, every metric is also reported for a **naive baseline**
+(impute the masked voxels with the visible-region mean) plus a `_skill` column
+(`1 - model/naive` for lower-is-better metrics, `model - naive` for
+higher-is-better) — positive means the encoder beats the trivial baseline.
 
 <!-- prettier-ignore -->
 !!!note
@@ -215,10 +225,15 @@ Run evaluation with `misfit_evaluate`:
   `misfit_train`.
 - `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.
 - `--config JSON` (**required**): Path to the `config.json` produced by
-  `misfit_train`. Model architecture and metrics to compute are read from this
-  file.
+  `misfit_train`. Model architecture and the metric space are read from this
+  file; the `evaluation` section lists the metrics when `--metrics` is omitted.
 - `--output-csv CSV` (**required**): Path where the evaluation results CSV will
   be written.
+- `--metrics NAME [NAME ...]`: Metrics to compute, overriding the config.
+  _(default: `masked_mae masked_mse masked_psnr`)_. `ssim` is opt-in — see the
+  note below.
+- `--seed N`: Base RNG seed; the mask for tile _i_ is drawn from `seed + i`.
+  _(default: 42)_
 - `--split SPLIT`: If the index contains a `split` column, only rows whose split
   matches this value are evaluated. Pass `--split ""` to evaluate all rows.
   _(default: `val`)_
@@ -247,29 +262,38 @@ misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
 
 ### Output
 
-A single CSV file at the path given by `--output-csv`. Each row is one volume.
+A single CSV file at the path given by `--output-csv`. Each row is one volume,
+with three columns per metric — `<metric>`, `<metric>_naive`, `<metric>_skill`.
 Five summary rows are appended at the bottom of the file.
 
-| `volume_id`     | `masked_mae` | `masked_mse` | `masked_psnr` | `ssim` |
-| --------------- | ------------ | ------------ | ------------- | ------ |
-| CT_001          | 0.312        | 0.187        | 23.4          | 0.821  |
-| CT_002          | 0.298        | 0.163        | 24.1          | 0.845  |
-| ...             |              |              |               |        |
-| Mean            | 0.317        | 0.190        | 23.4          | 0.821  |
-| Std             | 0.019        | 0.025        | 0.7           | 0.020  |
-| 25th Percentile | 0.302        | 0.171        | 22.9          | 0.808  |
-| Median          | 0.316        | 0.188        | 23.5          | 0.822  |
-| 75th Percentile | 0.331        | 0.207        | 23.9          | 0.834  |
+| `volume_id`     | `masked_mse` | `masked_mse_naive` | `masked_mse_skill` | ... |
+| --------------- | ------------ | ------------------ | ------------------ | --- |
+| BRAIN_001       | 0.44         | 1.00               | +0.56              | ... |
+| BRAIN_002       | 0.47         | 1.00               | +0.53              | ... |
+| ...             |              |                    |                    |     |
+| Mean            | 0.46         | 1.00               | +0.54              | ... |
+| Std             | 0.02         | 0.01               | 0.02               | ... |
+| 25th Percentile | 0.44         | 0.99               | +0.52              | ... |
+| Median          | 0.46         | 1.00               | +0.54              | ... |
+| 75th Percentile | 0.48         | 1.01               | +0.56              | ... |
 
-All metrics operate on z-score normalised intensities (not original HU or signal
-units).
+`misfit_evaluate` also prints a short `model | naive | verdict` summary to the
+console.
 
-| Metric        | Description                                                | Direction        |
-| ------------- | ---------------------------------------------------------- | ---------------- |
-| `masked_mae`  | Mean absolute error on masked voxels.                      | Lower is better  |
-| `masked_mse`  | Mean squared error on masked voxels.                       | Lower is better  |
-| `masked_psnr` | Peak signal-to-noise ratio on masked voxels (dB).          | Higher is better |
-| `ssim`        | Structural similarity over the full patch (range −1 to 1). | Higher is better |
+| Metric        | Description                                       | Direction        |
+| ------------- | ------------------------------------------------- | ---------------- |
+| `masked_mae`  | Mean absolute error on masked voxels.             | Lower is better  |
+| `masked_mse`  | Mean squared error on masked voxels — the value   | Lower is better  |
+|               | `normalized_masked_mse` optimises.                |                  |
+| `masked_psnr` | Peak signal-to-noise ratio on masked voxels (dB). | Higher is better |
+| `ssim`        | Structural similarity (opt-in, see note).         | Higher is better |
+
+<!-- prettier-ignore -->
+!!!note
+    `ssim` is **not** in the default set. It needs a consistent absolute-intensity
+    space and a spatial window, and per-cube normalisation depresses its absolute
+    value with boundary seams. Request it with `--metrics ssim` if you want it in
+    the CSV, but for a viewer-space structural read use `misfit_inspect` instead.
 
 ---
 

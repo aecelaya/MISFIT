@@ -68,13 +68,14 @@ misfit/
   models/               MISFITModel base class; SwinMAE (SwinUNETR-V2 + MAE head)
   training/             MAETrainer; optimizer/LR-scheduler registries; training_utils
   loss_functions/       ReconstructionLoss base; masked_mse, masked_l1, normalized_mse
-  metrics/              ReconstructionMetric base; masked_mae, masked_mse, ssim, masked_psnr
+  metrics/              ReconstructionMetric base; masked_mae/mse/psnr (defaults) + ssim (opt-in)
   evaluation/           ReconstructionEvaluator; tiled full-volume inference + CSV output
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
   utils/                console (Rich), io (read/write JSON), progress_bar,
-                        hardware (bf16_supported / resolve_amp / autocast_context)
+                        hardware (bf16_supported / resolve_amp / autocast_context),
+                        normalization (normalize_patchwise / denormalize_patchwise)
 ```
 
 ## Key design decisions
@@ -96,9 +97,26 @@ statistics.
 
 ### `normalized_masked_mse` loss (default)
 
-Normalizes per-patch variance before computing MSE. This equalizes loss scale
+Normalizes the target within each `mask_patch_size` cube (zero mean, unit
+variance) before computing MSE on masked voxels. This equalizes loss scale
 across CT (HU values, large range) and MRI (arbitrary units), enabling
-mixed-modality pretraining in one run.
+mixed-modality pretraining in one run. The per-cube transform lives in
+`misfit.utils.normalization.normalize_patchwise` (with its inverse
+`denormalize_patchwise`) — the loss, `misfit_evaluate`, and `misfit_inspect` all
+call it, so metrics/reconstructions are in the space the model was optimized in.
+
+### Evaluation metric space (`misfit_evaluate`)
+
+Metrics are computed on masked voxels in the **training loss's space**
+(per-`mask_patch_size`-cube normalized target for `normalized_masked_mse`), so
+`masked_mse` is directly comparable to `best_val_loss`. The evaluator crops each
+volume to its foreground bbox (matching `MISFITDataset`) and draws deterministic
+masks from `--seed`. Every metric is also reported for a naive baseline (impute
+masked voxels with the visible-region mean) with a `_skill` column (`<metric>` /
+`<metric>_naive` / `<metric>_skill` in the CSV); positive skill = beats trivial.
+Defaults: `masked_mae`, `masked_mse`, `masked_psnr` (`DEFAULT_METRICS`). `ssim`
+is registered but opt-in via `--metrics ssim` — it has no consistent space here;
+use `misfit_inspect` for a viewer-space read.
 
 ### Model architecture (`models/swinunetr/misfit_swinunetr_mae.py`)
 

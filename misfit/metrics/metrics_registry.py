@@ -65,6 +65,15 @@ class ReconstructionMetric(ABC):
 
 METRIC_REGISTRY: dict[str, ReconstructionMetric] = {}
 
+# Metrics reported by ``misfit_evaluate`` and written into ``config.json`` by
+# default. All are computed on masked voxels in the training loss's space, so
+# they are directly comparable to ``best_val_loss`` and to a naive baseline.
+# ``ssim`` is registered but excluded: it needs a consistent absolute-intensity
+# space and a spatial window, and per-cube normalization depresses it with
+# boundary seams — request it explicitly (``--metrics ssim``) or use
+# ``misfit_inspect`` for a viewer-space read.
+DEFAULT_METRICS: tuple[str, ...] = ("masked_mae", "masked_mse", "masked_psnr")
+
 
 def register_metric(cls):
     """Class decorator — instantiates and registers the metric."""

@@ -692,6 +692,8 @@ def test_build_config_structure(tmp_path):
     assert "amp_dtype" not in config["training"]
     assert isinstance(config["evaluation"], dict)
     assert all(isinstance(v, dict) for v in config["evaluation"].values())
+    # Default eval set: the 3 masked metrics, no ssim.
+    assert list(config["evaluation"]) == ["masked_mae", "masked_mse", "masked_psnr"]
 
 
 def test_bf16_optimizer_uses_standard_epsilon(tmp_path):

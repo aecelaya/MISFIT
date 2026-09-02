@@ -1,12 +1,21 @@
 """ReconstructionEvaluator for MISFIT pretraining quality assessment.
 
 Loads a pretrained checkpoint, runs tiled inference over a validation index,
-and computes per-volume reconstruction quality metrics (SSIM, PSNR, MAE, MSE)
+and computes per-volume masked reconstruction metrics (MAE, MSE, PSNR)
 averaged across all non-overlapping patches.
+
+Metrics are computed in the **training loss's space**: when the run used
+``normalized_masked_mse`` the target is normalised per ``mask_patch_size`` cube
+(zero mean, unit variance) — exactly as the loss does — so ``masked_mse`` is
+directly comparable to ``best_val_loss``. Because a per-region-normalised MSE is
+~1.0 for *any* constant predictor, every metric is also reported for a **naive
+baseline** (impute masked voxels with the visible-region mean) plus a ``_skill``
+column so "did pretraining beat trivial?" is a single readable number.
 
 Unlike MIST's Evaluator — which reads pre-computed predictions from disk —
 this evaluator runs the model forward pass inline, since reconstruction
-quality can only be measured by running the model.
+quality can only be measured by running the model. Masks are drawn
+deterministically from ``seed`` so runs are reproducible.
 
 Typical usage::
 
@@ -14,7 +23,8 @@ Typical usage::
         checkpoint_path=Path("best_model.pt"),
         index_path=Path("val.parquet"),
         output_csv_path=Path("/runs/exp1/eval/evaluation_results.csv"),
-        metrics=["masked_mae", "masked_psnr", "ssim"],
+        model_config=config["model"],
+        training_config=config["training"],
     )
     evaluator.run()
 """
@@ -30,11 +40,18 @@ import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.evaluation import evaluation_utils
 from misfit.inference.inference_runners import _NORMALIZED_MSE_LOSS
 from misfit.inference.inference_utils import get_row_spacing, pad_to_multiple
-from misfit.metrics.metrics_registry import get_metric, list_registered_metrics
+from misfit.metrics.metrics_registry import (
+    DEFAULT_METRICS,
+    get_metric,
+)
 from misfit.models.model_registry import get_model_from_registry
 from misfit.utils.console import console, print_error, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
+from misfit.utils.normalization import normalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
+
+# Numerically-safe floor for the naive value in the lower-is-better skill ratio.
+_SKILL_EPS = 1e-12
 
 
 class ReconstructionEvaluator:
@@ -42,14 +59,17 @@ class ReconstructionEvaluator:
 
     For each volume in a Parquet index the evaluator:
 
-    1. Loads and z-score normalises the NIfTI data.
-    2. Zero-pads to the nearest multiple of *patch_size* in every dimension.
-    3. Tiles the padded volume into non-overlapping patches and runs a full
-       MAE forward pass on each patch.
-    4. Computes the requested masked metrics on each patch independently
-       (comparing reconstruction against the unmasked original on the masked
-       positions only — the actual MAE pretraining objective).
-    5. Averages the per-patch metrics to produce one row per volume.
+    1. Loads, z-score normalises, and crops to the index's foreground bounding
+       box (matching ``MISFITDataset``).
+    2. Zero-pads to the nearest multiple of *patch_size* in every dimension and
+       tiles into non-overlapping patches.
+    3. Runs a full MAE forward pass on each patch with a deterministic mask
+       (``seed + tile_index``).
+    4. Puts the target in the training loss's space (per ``mask_patch_size``
+       cube for ``normalized_masked_mse``), then computes the requested masked
+       metrics for the model and for a naive baseline (visible-region mean).
+    5. Averages per-patch, one row per volume, with ``_naive``/``_skill``
+       columns per metric.
 
     Args:
         checkpoint_path: Path to a checkpoint produced by ``MAETrainer``
@@ -60,17 +80,21 @@ class ReconstructionEvaluator:
         model_config: Model configuration dict (``config["model"]`` from
             ``config.json``).  Must contain ``architecture``, ``patch_size``,
             ``mask_patch_size``, and ``mask_ratio``.
-        metrics: List of metric names to compute. Defaults to all registered
-            metrics.
+        metrics: List of metric names to compute. Defaults to
+            ``DEFAULT_METRICS`` (``masked_mae``, ``masked_mse``, ``masked_psnr``).
         device: Torch device string (e.g. ``"cuda:0"``). Defaults to
             ``"cuda"`` if available, else ``"cpu"``.
         split: If the index has a ``split`` column, only rows matching this
             value are evaluated. Defaults to ``"val"``.
         training_config: Training configuration dict (``config["training"]``
-            from ``config.json``). The ``loss`` name selects target-patch
-            normalisation and the ``amp`` flag toggles autocast (defaults to
-            enabled when absent, then resolved against the current hardware —
-            BF16 needs an Ampere+ GPU, otherwise it falls back to FP32).
+            from ``config.json``). The ``loss`` name selects the metric space
+            (per-``mask_patch_size``-cube normalisation for
+            ``normalized_masked_mse``, whole-volume z-score otherwise) and the
+            ``amp`` flag toggles autocast (defaults to enabled when absent, then
+            resolved against the current hardware — BF16 needs an Ampere+ GPU,
+            otherwise it falls back to FP32).
+        seed: Base RNG seed. Each patch's mask is drawn from ``seed +
+            patch_index`` so the whole evaluation is reproducible.
     """
 
     def __init__(
@@ -83,12 +107,15 @@ class ReconstructionEvaluator:
         device: str | None = None,
         split: str | None = "val",
         training_config: dict | None = None,
+        seed: int = 42,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
         self.output_csv_path = Path(output_csv_path)
         self.model_config = model_config
-        self.metrics = metrics or list_registered_metrics()
+        self.metrics = list(metrics) if metrics else list(DEFAULT_METRICS)
+        self.seed = seed
+        self.mask_patch_size = int(model_config["mask_patch_size"])
         tcfg = training_config or {}
         # Resolve the config's AMP request against this machine's hardware —
         # evaluation may run on a different GPU (or CPU) than training did.
@@ -167,7 +194,25 @@ class ReconstructionEvaluator:
 
         data = np.clip(data, p1, p99)
         data = (data - fg_mean) / max(fg_std, 1e-8)
-        return data
+        return self._crop_to_foreground(data, row)
+
+    @staticmethod
+    def _crop_to_foreground(volume: np.ndarray, row: pd.Series) -> np.ndarray:
+        """Crop to the index's foreground bounding box.
+
+        ``MISFITDataset`` crops training patches to this box before sampling, so
+        the evaluator does too — otherwise the tiled patches would include air
+        and zero-padding the model was never trained on, diluting every metric.
+        No-op when the index predates the ``fg_*`` columns.
+        """
+        cols = ("fg_x_start", "fg_x_end", "fg_y_start", "fg_y_end",
+                "fg_z_start", "fg_z_end")
+        if not all(c in row for c in cols):
+            return volume
+        x0, x1 = int(row["fg_x_start"]), int(row["fg_x_end"]) + 1
+        y0, y1 = int(row["fg_y_start"]), int(row["fg_y_end"]) + 1
+        z0, z1 = int(row["fg_z_start"]), int(row["fg_z_end"]) + 1
+        return volume[x0:x1, y0:y1, z0:z1]
 
     def _run_inference(
         self, patch: np.ndarray
@@ -201,10 +246,15 @@ class ReconstructionEvaluator:
         patches.  Each patch is passed through the full MAE forward pass to
         obtain its reconstruction and mask.
 
-        When the model was trained with ``normalized_masked_mse``, the target
-        patch is normalised to zero mean and unit variance before being stored
-        so that metrics are computed in the same space as the training
-        objective.
+        When the model was trained with ``normalized_masked_mse`` the target
+        patch is normalised **per ``mask_patch_size`` cube** (via
+        :func:`misfit.utils.normalization.normalize_patchwise`) — the exact
+        transform the loss applies — so ``masked_mse`` is measured in the space
+        the model was optimised in. Other losses keep the whole-volume z-score
+        target.
+
+        The mask for tile *i* is drawn from ``seed + i`` so results are
+        reproducible.
 
         Args:
             volume: Normalised volume of shape (D, H, W).
@@ -217,15 +267,20 @@ class ReconstructionEvaluator:
         pd_, ph_, pw_ = self.patch_size
         D, H, W = padded.shape
         results = []
+        patch_index = 0
         for di in range(0, D, pd_):
             for hi in range(0, H, ph_):
                 for wi in range(0, W, pw_):
                     patch = padded[di:di + pd_, hi:hi + ph_, wi:wi + pw_]
+                    # Deterministic mask per tile → reproducible evaluation.
+                    torch.manual_seed(self.seed + patch_index)
+                    patch_index += 1
                     recon, mask = self._run_inference(patch)
                     if self.normalize_target_patches:
-                        patch_std = float(patch.std()) + 1e-6
-                        patch_mean = float(patch.mean())
-                        patch = (patch - patch_mean) / patch_std
+                        patch = normalize_patchwise(
+                            torch.from_numpy(np.ascontiguousarray(patch)),
+                            self.mask_patch_size,
+                        ).numpy()
                     results.append((recon, patch, mask))
         return results
 
@@ -247,6 +302,75 @@ class ReconstructionEvaluator:
                 results[metric_name] = metric.worst
         return results
 
+    @staticmethod
+    def _naive_prediction(target: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Impute the masked region with the mean of the visible voxels.
+
+        The canonical no-information inpainting baseline: any metric the model
+        cannot beat here means pretraining learned nothing useful for
+        reconstruction. Falls back to the whole-patch mean if the patch happens
+        to have no visible voxels.
+        """
+        visible = target[mask == 0]
+        fill = float(visible.mean()) if visible.size else float(target.mean())
+        return np.full_like(target, fill)
+
+    def _expanded_columns(self) -> list[str]:
+        """``[m, m_naive, m_skill, ...]`` for every requested metric."""
+        return [
+            col
+            for m in self.metrics
+            for col in (m, f"{m}_naive", f"{m}_skill")
+        ]
+
+    @staticmethod
+    def _skill(metric_name: str, model_value: float, naive_value: float) -> float:
+        """Signed improvement of the model over the naive baseline.
+
+        Positive = beats trivial, 0 = tied, negative = worse. For
+        lower-is-better metrics (MAE, MSE) this is the fraction of the trivial
+        error removed (``1 - model/naive``); for higher-is-better metrics
+        (PSNR, SSIM) it is the additive gain (``model - naive``, e.g. dB for
+        PSNR).
+        """
+        metric = get_metric(metric_name)
+        lower_is_better = metric.best < metric.worst
+        if lower_is_better:
+            if abs(naive_value) < _SKILL_EPS:
+                return float("nan")
+            return 1.0 - model_value / naive_value
+        return model_value - naive_value
+
+    def _print_summary(self, rows: list[dict]) -> None:
+        """Print a per-metric ``model | naive | skill`` summary + a verdict.
+
+        Called only with a non-empty *rows* (guarded by the caller).
+        """
+        console.print("\n[bold]Summary[/bold] (masked voxels, loss space)")
+        for m in self.metrics:
+            model_mean = float(np.nanmean([r[m] for r in rows]))
+            naive_mean = float(np.nanmean([r[f"{m}_naive"] for r in rows]))
+            skill_mean = float(np.nanmean([r[f"{m}_skill"] for r in rows]))
+            lower_is_better = get_metric(m).best < get_metric(m).worst
+            if lower_is_better:
+                verdict = (
+                    f"beats trivial ({skill_mean:+.1%} of its error removed)"
+                    if skill_mean > 0.005
+                    else "tied with trivial"
+                    if skill_mean > -0.005
+                    else f"worse than trivial ({skill_mean:+.1%})"
+                )
+            else:
+                verdict = (
+                    f"+{skill_mean:.3f} over trivial"
+                    if skill_mean > 0
+                    else f"{skill_mean:.3f} vs trivial"
+                )
+            console.print(
+                f"  {m:<14} model={model_mean:.4f}  "
+                f"naive={naive_mean:.4f}  {verdict}"
+            )
+
     # ------------------------------------------------------------------
     # Main evaluation loop
     # ------------------------------------------------------------------
@@ -254,14 +378,19 @@ class ReconstructionEvaluator:
     def run(self) -> pd.DataFrame:
         """Evaluate all volumes in the index and write results to CSV.
 
-        For each volume, masked metrics are computed per patch and averaged
-        across all patches to produce a single per-volume score.
+        For each volume, masked metrics are computed per patch (for the model
+        and for the naive baseline) and averaged across all patches to produce a
+        single per-volume score. The CSV has three columns per metric —
+        ``<metric>``, ``<metric>_naive``, ``<metric>_skill`` — plus the usual
+        summary rows.
 
         Returns:
             DataFrame with per-volume metric values and summary statistics.
         """
         self.output_csv_path.parent.mkdir(parents=True, exist_ok=True)
-        results_df = evaluation_utils.initialize_results_dataframe(self.metrics)
+        results_df = evaluation_utils.initialize_results_dataframe(
+            self._expanded_columns()
+        )
 
         n_total = len(self.index_df)
         n_errors = 0
@@ -298,21 +427,34 @@ class ReconstructionEvaluator:
                     progress.advance(task)
                     continue
 
-                # 3. Per-patch masked metrics, averaged across all patches.
-                all_patch_metrics = [
-                    self._compute_metrics(recon, target, mask)
-                    for recon, target, mask in patch_results
-                ]
-                metric_values = {
-                    k: float(np.mean([m[k] for m in all_patch_metrics]))
-                    for k in self.metrics
-                }
-                rows.append({"volume_id": volume_id, **metric_values})
+                # 3. Per-patch metrics for the model and the naive baseline,
+                #    averaged across all patches.
+                model_per_patch = []
+                naive_per_patch = []
+                for recon, target, mask in patch_results:
+                    model_per_patch.append(
+                        self._compute_metrics(recon, target, mask)
+                    )
+                    naive_per_patch.append(
+                        self._compute_metrics(
+                            self._naive_prediction(target, mask), target, mask
+                        )
+                    )
+
+                row = {"volume_id": volume_id}
+                for m in self.metrics:
+                    model_avg = float(np.mean([p[m] for p in model_per_patch]))
+                    naive_avg = float(np.mean([p[m] for p in naive_per_patch]))
+                    row[m] = model_avg
+                    row[f"{m}_naive"] = naive_avg
+                    row[f"{m}_skill"] = self._skill(m, model_avg, naive_avg)
+                rows.append(row)
 
                 progress.advance(task)
 
         # Build DataFrame and append summary stats.
         if rows:
+            self._print_summary(rows)
             results_df = pd.DataFrame(rows, columns=results_df.columns)
             results_df = evaluation_utils.compute_results_stats(results_df)
         else:

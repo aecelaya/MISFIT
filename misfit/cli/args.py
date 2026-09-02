@@ -8,8 +8,10 @@ import argparse
 from argparse import ArgumentParser
 
 import misfit.loss_functions  # noqa: F401 — trigger registrations
+import misfit.metrics.metrics_registry  # noqa: F401 — trigger registrations
 import misfit.models  # noqa: F401 — trigger registrations
 from misfit.loss_functions.loss_registry import list_registered_losses
+from misfit.metrics.metrics_registry import list_registered_metrics
 from misfit.models.model_registry import list_registered_models
 from misfit.training.lr_schedulers.lr_scheduler_registry import list_lr_schedulers
 from misfit.training.optimizers.optimizer_registry import list_optimizers
@@ -273,8 +275,31 @@ def add_evaluate_args(parser: ArgParser) -> None:
     inp.add_argument(
         "--config", required=True, metavar="JSON",
         help=(
-            "Path to the config.json produced by misfit_train. "
-            "Metrics to compute are read from the 'evaluation' section."
+            "Path to the config.json produced by misfit_train. The 'training' "
+            "section selects the metric space and, when --metrics is omitted, "
+            "the 'evaluation' section lists the metrics to compute."
+        ),
+    )
+
+    # --- Metrics ---
+    met = parser.add_argument_group("Evaluate: Metrics")
+    met.add_argument(
+        "--metrics", nargs="+", default=None, metavar="NAME",
+        choices=list_registered_metrics(),
+        help=(
+            "Metrics to compute, overriding config.json's 'evaluation' section. "
+            f"Choices: {', '.join(list_registered_metrics())}. "
+            "Default: masked_mae, masked_mse, masked_psnr. 'ssim' is opt-in — "
+            "it runs in the loss-normalised space and its absolute value is "
+            "depressed by cube-boundary seams; use misfit_inspect for a "
+            "viewer-space read."
+        ),
+    )
+    met.add_argument(
+        "--seed", type=non_negative_int, default=42, metavar="N",
+        help=(
+            "Base RNG seed. The mask for tile i is drawn from seed + i, so the "
+            "whole evaluation is reproducible. Defaults to 42."
         ),
     )
 

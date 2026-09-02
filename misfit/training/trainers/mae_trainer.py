@@ -353,7 +353,7 @@ class MAETrainer:
     def _build_config(self) -> dict:
         """Serialise current training args to a reproducibility config dict."""
         import misfit
-        from misfit.metrics.metrics_registry import list_registered_metrics
+        from misfit.metrics.metrics_registry import DEFAULT_METRICS
         return {
             "misfit_version": misfit.__version__,
             "data": {
@@ -380,7 +380,7 @@ class MAETrainer:
                 "bucket_cap_mb":              self.args.bucket_cap_mb,
             },
             "evaluation": {
-                metric: {} for metric in list_registered_metrics()
+                metric: {} for metric in DEFAULT_METRICS
             },
         }
 

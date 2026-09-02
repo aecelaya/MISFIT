@@ -58,3 +58,21 @@ def test_normalized_mse_registered():
     from misfit.loss_functions.loss_registry import get_loss
     cls = get_loss("normalized_masked_mse")
     assert cls is NormalizedMaskedMSELoss
+
+
+def test_normalize_patches_unchanged_after_shared_helper_refactor():
+    """Training invariant: _normalize_patches must still produce the exact
+    pre-refactor output (the loss is on the training path)."""
+    def _pre_refactor(target, p, eps=1e-6):
+        B, C, D, H, W = target.shape
+        gd, gh, gw = D // p, H // p, W // p
+        t = target.reshape(B, C, gd, p, gh, p, gw, p)
+        t = t.permute(0, 1, 2, 4, 6, 3, 5, 7).reshape(B, C, gd * gh * gw, p ** 3)
+        t = (t - t.mean(-1, keepdim=True)) / (t.std(-1, keepdim=True) + eps)
+        t = t.reshape(B, C, gd, gh, gw, p, p, p)
+        return t.permute(0, 1, 2, 5, 3, 6, 4, 7).reshape(B, C, D, H, W)
+
+    torch.manual_seed(0)
+    target = torch.randn(2, 1, 16, 16, 16)
+    loss = NormalizedMaskedMSELoss(patch_size=8)
+    assert torch.equal(loss._normalize_patches(target), _pre_refactor(target, 8))

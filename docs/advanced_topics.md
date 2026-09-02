@@ -46,11 +46,15 @@ Below is an example `config.json` produced by `misfit_train`.
   "evaluation": {
     "masked_mae": {},
     "masked_mse": {},
-    "masked_psnr": {},
-    "ssim": {}
+    "masked_psnr": {}
   }
 }
 ```
+
+The `evaluation` section lists the metrics `misfit_evaluate` computes when
+`--metrics` is not given. `ssim` is registered but not a default — request it
+with `--metrics ssim` (its absolute value is depressed by cube-boundary seams;
+use `misfit_inspect` for a viewer-space structural read).
 
 ### Resuming a run
 
