@@ -1,9 +1,9 @@
 # MISFIT: Medical Imaging Semantic Foundation Toolkit
 
-[![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue.svg)](https://www.python.org/)
-[![PyPI](https://img.shields.io/pypi/v/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
+[![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)](https://www.python.org/)
+[![PyPI](https://img.shields.io/pypi/v/misfit-medical)](https://pypi.org/project/misfit-medical/)
 [![Docker](https://img.shields.io/docker/v/mistmedical/misfit?label=docker&sort=semver)](https://hub.docker.com/r/mistmedical/misfit)
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)
+![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical
 imaging foundation models using masked autoencoders (MAE). Give it a directory
