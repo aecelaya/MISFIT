@@ -42,7 +42,7 @@ GitHub Release, mirroring MIST:
 2. Merge to `main`; run `pytest` locally first (no test CI gates the release).
 3. Create a GitHub Release tagged `v<version>` targeting `main`.
    - `.github/workflows/python-publish.yml` builds the sdist+wheel and uploads
-     to PyPI via **Trusted Publishing** (OIDC — no token secret).
+     to PyPI using the `PYPI_API_TOKEN` repo secret.
    - `.github/workflows/docker-publish.yml` then fires (`workflow_run`),
      rebuilds from `./Dockerfile` (which `pip install`s the just-published PyPI
      package), and pushes `mistmedical/misfit:<version>` + `:latest`. Needs repo
