@@ -1,5 +1,10 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "misfit-medical"
+# Keep in sync with misfit/__init__.py (guarded by tests/unit/test_packaging.py).
 version = "0.1.0-alpha"
 requires-python = ">= 3.10"
 description = "MISFIT: Medical Imaging Semantic Foundation Toolkit for training large-scale medical imaging foundation models."
@@ -10,7 +15,7 @@ authors = [
     {name = "David Fuentes", email = "dtfuentes@mdanderson.org"},
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -44,11 +49,13 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-cov",
+    "packaging",
 ]
 
 [project.urls]
 homepage = "https://github.com/mist-medical/MISFIT"
 repository = "https://github.com/mist-medical/MISFIT"
+documentation = "https://misfit-medical.readthedocs.io/"
 
 [project.scripts]
 misfit_index    = "misfit.cli.index_entrypoint:index_entry"
@@ -58,6 +65,9 @@ misfit_inspect  = "misfit.cli.inspect_entrypoint:inspect_entry"
 misfit_encode      = "misfit.cli.encode_entrypoint:encode_entry"
 misfit_embed       = "misfit.cli.embed_entrypoint:embed_entry"
 misfit_embed_train = "misfit.cli.embed_train_entrypoint:embed_train_entry"
+
+[tool.setuptools.packages.find]
+include = ["misfit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

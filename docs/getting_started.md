@@ -13,8 +13,19 @@ CPU is recommended for the indexing step.
 
 ### Install
 
-MISFIT is not yet published on PyPI. Clone the repository and install in
-editable mode — this is also the right setup if you want to customize the
+From PyPI:
+
+```console
+pip install misfit-medical
+```
+
+Or use the Docker image (CUDA 12.8, torch 2.9.1):
+
+```console
+docker pull mistmedical/misfit:latest
+```
+
+Clone and install in editable mode instead if you want to customize the
 underlying code (e.g., to add a new model or loss function):
 
 ```console

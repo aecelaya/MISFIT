@@ -30,6 +30,27 @@ mkdocs admonition in `docs/` is preceded by a `<!-- prettier-ignore -->` comment
 so Prettier leaves the `!!! note` block and its indented body intact — keep that
 comment when adding a new admonition.
 
+## Releasing
+
+`misfit-medical` (PyPI) and `mistmedical/misfit` (Docker Hub) publish on a
+GitHub Release, mirroring MIST:
+
+1. Bump the version in **both** `pyproject.toml` and `misfit/__init__.py` (they
+   must agree — `tests/unit/test_packaging.py` enforces it; `_build_config`
+   writes `misfit.__version__` into `config.json`, the Docker workflow reads
+   `pyproject.toml`).
+2. Merge to `main`; run `pytest` locally first (no test CI gates the release).
+3. Create a GitHub Release tagged `v<version>` targeting `main`.
+   - `.github/workflows/python-publish.yml` builds the sdist+wheel and uploads
+     to PyPI via **Trusted Publishing** (OIDC — no token secret).
+   - `.github/workflows/docker-publish.yml` then fires (`workflow_run`),
+     rebuilds from `./Dockerfile` (which `pip install`s the just-published PyPI
+     package), and pushes `mistmedical/misfit:<version>` + `:latest`. Needs repo
+     secrets `DOCKER_USERNAME` / `DOCKER_PASSWORD`.
+
+The `-alpha`/`-beta`/`-rc` suffix in `pyproject.toml` is transformed to the PEP
+440 form (`a0`/`b0`/`rc0`) for the Docker tag.
+
 ## Pipeline overview
 
 ```

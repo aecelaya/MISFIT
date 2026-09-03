@@ -1,6 +1,8 @@
 # MISFIT: Medical Imaging Semantic Foundation Toolkit
 
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue.svg)](https://www.python.org/)
+[![PyPI](https://img.shields.io/pypi/v/misfit-medical.svg)](https://pypi.org/project/misfit-medical/)
+[![Docker](https://img.shields.io/docker/v/mistmedical/misfit?label=docker&sort=semver)](https://hub.docker.com/r/mistmedical/misfit)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical
@@ -51,7 +53,19 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 
 ## Installation
 
-MISFIT is not yet published on PyPI — install from source:
+From PyPI:
+
+```console
+pip install misfit-medical
+```
+
+Or run the container (CUDA 12.8, torch 2.9.1):
+
+```console
+docker pull mistmedical/misfit:latest
+```
+
+From source (for development, or to add a new model / loss):
 
 ```console
 git clone https://github.com/mist-medical/MISFIT.git

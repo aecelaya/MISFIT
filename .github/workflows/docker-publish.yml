@@ -1,0 +1,65 @@
+# =============================================================================
+# Publish Docker images
+#
+# Builds the MISFIT container from ./Dockerfile and pushes it to Docker Hub as
+# mistmedical/misfit:<version> and mistmedical/misfit:latest. The image version
+# is derived from pyproject.toml; the PyTorch base image is pinned inside
+# ./Dockerfile and must NOT be overridden here.
+#
+# Triggers:
+#   - workflow_run: after "Upload Python Package" completes successfully, so a
+#     PyPI release is immediately followed by a matching container image.
+#   - workflow_dispatch: manual rebuild from the Actions tab.
+#
+# Requires repo secrets: DOCKER_USERNAME, DOCKER_PASSWORD (the mistmedical
+# Docker Hub account — same values as the MIST repo).
+# =============================================================================
+name: Publish Docker Images
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Upload Python Package]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  push_to_registry:
+    name: Push Docker image to Docker Hub
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          # For a release-triggered run, check out the exact released commit so
+          # the image matches the PyPI wheel. Falls back to the triggering ref
+          # for manual (workflow_dispatch) runs.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Extract and transform version from pyproject.toml
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          DOCKER_VERSION=$(echo "$VERSION" | sed 's/-alpha/a0/; s/-beta/b0/; s/-rc/rc0/')
+          echo "DOCKER_VERSION=$DOCKER_VERSION" >> "$GITHUB_ENV"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # PYTORCH_IMAGE is intentionally not overridden here so the base image
+          # stays pinned in a single place: the ARG default in ./Dockerfile.
+          push: true
+          tags: |
+            mistmedical/misfit:${{ env.DOCKER_VERSION }}
+            mistmedical/misfit:latest

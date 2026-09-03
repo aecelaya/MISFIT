@@ -1,0 +1,47 @@
+# =============================================================================
+# Publish Python package to PyPI
+#
+# Builds the misfit-medical sdist + wheel and uploads them to PyPI. Runs whenever
+# a GitHub Release is published, so cutting a release is what ships the package.
+# A successful run here also triggers the "Publish Docker Images" workflow.
+#
+# Auth: PyPI Trusted Publishing (OIDC) — no API token / secret. Configure a
+# pending publisher on PyPI for project "misfit-medical", repo
+# "mist-medical/MISFIT", workflow "python-publish.yml" before the first release.
+# =============================================================================
+name: Upload Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  # Required for Trusted Publishing (OIDC token exchange with PyPI).
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # PEP 517 build frontend for the sdist + wheel.
+      - name: Install build
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build package
+        run: python -m build
+
+      # Upload dist/* to PyPI via Trusted Publishing. Pinned to a commit SHA for
+      # supply-chain safety (v1.14.2).
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33

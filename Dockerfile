@@ -2,14 +2,13 @@ ARG PYTORCH_IMAGE=pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
 FROM ${PYTORCH_IMAGE}
 
 # Set environment variables for non-interactive installation.
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Install MISFIT from source. MISFIT is not published to PyPI, so the package
-# is built from the repository copied into the image (the build context must be
-# the repository root: `docker build -t misfit .`).
-WORKDIR /opt/misfit
-COPY . /opt/misfit
-RUN pip install --no-cache-dir .
+# Install MISFIT from PyPI. The base image is pinned above (torch 2.9.1) and
+# must not be overridden by the build workflow — newer torch has crashed
+# multi-GPU DDP startup.
+RUN pip install --no-cache-dir misfit-medical
 
 # Create app directory.
 RUN mkdir /app
