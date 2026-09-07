@@ -20,6 +20,24 @@ mamba run -n mist pytest
 
 Never use plain `pytest` or `python -m pytest`.
 
+## Continuous integration
+
+Two workflows run on every push and PR to `main` (and via `workflow_dispatch`):
+
+- **`test.yml`** — the pytest suite on Python 3.10 / 3.11 / 3.12, gated at
+  `--cov-fail-under=100` (the suite is 100%-covered; a regression fails the
+  build). A separate `distributed` leg runs the gloo DDP tests
+  (`pytest -o addopts= -m distributed`), which the default run skips. On push to
+  `main` the 3.12 leg regenerates `coverage.svg` (the README badge) and commits
+  it back with `[skip ci]`.
+- **`lint.yml`** — `ruff check .` (pinned to the `mist` env's ruff) and
+  `codespell` (config in `[tool.codespell]`). `ruff format` is intentionally not
+  enforced.
+
+`coverage.svg` is committed to the repo (not git-ignored, unlike `coverage.xml`
+/ `.coverage*`). Add domain abbreviations that trip codespell to
+`ignore-words-list` in `pyproject.toml` rather than scattering inline ignores.
+
 ## Formatting
 
 Python: `ruff check` (lint + import order). All Markdown: Prettier
@@ -39,7 +57,9 @@ GitHub Release, mirroring MIST:
    must agree — `tests/unit/test_packaging.py` enforces it; `_build_config`
    writes `misfit.__version__` into `config.json`, the Docker workflow reads
    `pyproject.toml`).
-2. Merge to `main`; run `pytest` locally first (no test CI gates the release).
+2. Merge to `main` with `test.yml` + `lint.yml` green (they run on the PR, but
+   no workflow _gates_ the Release itself — the tag is what ships). Run `pytest`
+   locally first regardless.
 3. Create a GitHub Release tagged `v<version>` targeting `main`.
    - `.github/workflows/python-publish.yml` builds the sdist+wheel and uploads
      to PyPI using the `PYPI_API_TOKEN` repo secret.

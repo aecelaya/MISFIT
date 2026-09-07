@@ -123,4 +123,8 @@ ignore = [
 "tests/**" = ["B"]  # bugbear rules are too noisy in test files
 
 [tool.codespell]
-skip = ".git"
+# node_modules/ is the git-ignored Prettier tooling; coverage.svg is generated.
+skip = "./.git,./node_modules,./htmlcov,./*.egg-info,./coverage.svg"
+# Domain terms / abbreviations that are not misspellings:
+#   nd = patch-grid depth count (paired with nh, nw) in the tiling loops
+ignore-words-list = "nd"

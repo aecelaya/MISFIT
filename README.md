@@ -3,7 +3,8 @@
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/misfit-medical)](https://pypi.org/project/misfit-medical/)
 [![Docker](https://img.shields.io/docker/v/mistmedical/misfit?label=docker&sort=semver)](https://hub.docker.com/r/mistmedical/misfit)
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+[![Tests](https://img.shields.io/github/actions/workflow/status/mist-medical/MISFIT/test.yml?branch=main&label=tests)](https://github.com/mist-medical/MISFIT/actions/workflows/test.yml)
+![Coverage](coverage.svg)
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical
 imaging foundation models using masked autoencoders (MAE). Give it a directory
