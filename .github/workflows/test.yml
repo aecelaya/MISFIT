@@ -47,16 +47,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Install the package itself so dependencies come from pyproject.toml
-      # (single source of truth — including the torch constraint) rather than a
-      # hand-maintained list that can drift. The [dev] extra brings pytest +
-      # pytest-cov; coverage-badge is the only CI-only tool.
-      # setuptools<81 is required because coverage-badge imports pkg_resources,
-      # which Python >= 3.12 environments no longer bundle and setuptools >= 81
-      # no longer ships.
+      # MISFIT's test suite is CPU-only. The mae_trainer tests exercise the GPU
+      # code path by monkeypatching torch.cuda.* (see the patch_cuda fixture),
+      # which only behaves on a CPU build of torch — a real CUDA build's
+      # lazy-init driver probe fires on the driverless runner instead. Install
+      # the CPU wheel first so CI matches the dev environment; the subsequent
+      # editable install then sees torch already satisfied and leaves it.
+      #
+      # The [dev] extra brings pytest + pytest-cov; coverage-badge is the only
+      # CI-only tool. setuptools<81 is required because coverage-badge imports
+      # pkg_resources, which Python >= 3.12 environments no longer bundle and
+      # setuptools >= 81 no longer ships.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]" coverage-badge "setuptools<81"
 
       # pyproject's addopts already sets `--cov=misfit --cov-report=term-missing
@@ -105,6 +110,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]"
 
       - name: Run distributed (gloo) tests
