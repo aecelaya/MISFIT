@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "misfit-medical"
 # Keep in sync with misfit/__init__.py (guarded by tests/unit/test_packaging.py).
-version = "0.1.0-alpha"
+version = "0.1.1-alpha"
 requires-python = ">= 3.10"
 description = "MISFIT: Medical Imaging Semantic Foundation Toolkit for training large-scale medical imaging foundation models."
 readme = "README.md"
