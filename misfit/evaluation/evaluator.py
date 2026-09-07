@@ -91,8 +91,8 @@ class ReconstructionEvaluator:
             (per-``mask_patch_size``-cube normalisation for
             ``normalized_masked_mse``, whole-volume z-score otherwise) and the
             ``amp`` flag toggles autocast (defaults to enabled when absent, then
-            resolved against the current hardware — BF16 needs an Ampere+ GPU,
-            otherwise it falls back to FP32).
+            resolved against the current hardware — BF16 needs an NVIDIA
+            Ampere+ or AMD CDNA/RDNA3+ GPU, otherwise it falls back to FP32).
         seed: Base RNG seed. Each patch's mask is drawn from ``seed +
             patch_index`` so the whole evaluation is reproducible.
     """

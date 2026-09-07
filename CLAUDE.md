@@ -95,7 +95,8 @@ misfit/
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
   utils/                console (Rich), io (read/write JSON), progress_bar,
-                        hardware (bf16_supported / resolve_amp / autocast_context),
+                        hardware (get_accelerator_type / bf16_supported /
+                        resolve_amp / autocast_context),
                         normalization (normalize_patchwise / denormalize_patchwise)
 ```
 
@@ -166,20 +167,36 @@ Resume validation checks model name and patch size (hard error on mismatch).
 ### Distributed training
 
 `MAETrainer` reads `RANK`, `LOCAL_RANK`, `WORLD_SIZE` from torchrun environment
-variables. The same class runs on 1 GPU or N×M GPUs (NCCL), and also on CPU /
-multi-process CPU (gloo) for testing — `self.use_cuda` gates device placement,
-backend, and cuDNN tuning; CPU pretraining is very slow and warns once.
+variables. The same class runs on 1 GPU or N×M GPUs (NCCL — RCCL on AMD ROCm,
+same backend name), and also on CPU / multi-process CPU (gloo) for testing —
+`self.use_cuda` gates device placement, backend, and cuDNN tuning; CPU
+pretraining is very slow and warns once. ROCm needs no special-casing: PyTorch's
+ROCm build reuses the `torch.cuda` namespace and the `cuda:<rank>` device string
+as a shim, so `use_cuda` is `True` and every CUDA code path already works.
 
 AMP is BF16-only — there is no fp16 path and no GradScaler, since BF16 has
 float32's dynamic range. It is _requested_ on by default, then resolved against
-the actual hardware by `misfit.utils.hardware.resolve_amp`: BF16 needs an
-Ampere+ GPU (compute capability ≥ 8.0), so pre-Ampere GPUs (V100, T4) and CPU
-fall back to FP32 with a warning. `MAETrainer.train()` resolves once (from the
-CLI default, or from the saved config on `--resume`) and persists the effective
-value to `config.json`; `misfit_evaluate` and `misfit_inspect` re-resolve the
-config value against their own hardware. Disable AMP entirely by setting
-`"amp": false` in `config.json`. Shared helper:
-`hardware.autocast_context(enabled)`.
+the actual hardware by `misfit.utils.hardware.resolve_amp` → `bf16_supported()`,
+which branches on `get_accelerator_type()` (cuda / rocm / cpu, via
+`torch.version.hip`):
+
+- **CUDA:** compute capability ≥ 8.0 (Ampere+: A100, H100, RTX 30xx+). Uses the
+  capability, not `torch.cuda.is_bf16_supported()`, which reports True on
+  V100/T4 via emulation.
+- **ROCm:** `gcnArchName` against `_ROCM_BF16_ACCELERATED_ARCHES` — an
+  allow-list of CDNA (MFMA) and RDNA3+ (WMMA) arches. The capability check is
+  useless here (ROCm reports ≥ (9,0) for every AMD GPU) and
+  `is_bf16_supported()` lies the same way it does on pre-Ampere NVIDIA — it
+  returns True on RDNA1/2 (gfx103x), which runs BF16 on shader ALUs with no
+  speedup. Unrecognized arch → unsupported (conservative default).
+- **CPU:** always False.
+
+`MAETrainer.train()` resolves once (from the CLI default, or from the saved
+config on `--resume`) and persists the effective value to `config.json`;
+`misfit_evaluate` and `misfit_inspect` re-resolve the config value against their
+own hardware. Disable AMP entirely by setting `"amp": false` in `config.json`.
+Shared helper: `hardware.autocast_context(enabled)` (device type `"cuda"` for
+both CUDA and ROCm, `"cpu"` otherwise).
 
 ### Transfer learning to MIST
 

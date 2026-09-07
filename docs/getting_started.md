@@ -3,13 +3,15 @@ Getting Started
 
 ### System Requirements
 
-An NVIDIA **Ampere or newer GPU** (A100, H100, RTX 30xx+) is recommended for
-training — it enables BF16 automatic mixed precision. On pre-Ampere
-architectures (Volta, Turing) and on CPU-only machines, MISFIT automatically
-falls back to FP32 with a warning; CPU training runs but is only practical for
-tests and small debugging runs. Multi-GPU and multi-node training are supported
-via `torchrun` (NCCL on GPU, gloo on CPU). For large datasets a high-core-count
-CPU is recommended for the indexing step.
+A **GPU with BF16 matrix hardware** is recommended for training — it enables
+BF16 automatic mixed precision. That means an NVIDIA **Ampere or newer GPU**
+(A100, H100, RTX 30xx+) or an AMD **CDNA / RDNA3+ GPU** (MI200/MI300 series, RX
+7000 series and newer). On pre-Ampere NVIDIA architectures (Volta, Turing), on
+older AMD GPUs (RDNA1/2 — RX 5000/6000 series), and on CPU-only machines, MISFIT
+automatically falls back to FP32 with a warning; CPU training runs but is only
+practical for tests and small debugging runs. Multi-GPU and multi-node training
+are supported via `torchrun` (NCCL/RCCL on GPU, gloo on CPU). For large datasets
+a high-core-count CPU is recommended for the indexing step.
 
 ### Install
 
@@ -33,6 +35,32 @@ git clone https://github.com/mist-medical/MISFIT.git
 cd MISFIT
 pip install -e .
 ```
+
+#### AMD ROCm GPU
+
+PyPI's default `torch` wheel has no ROCm support (and the Docker image is
+CUDA-only), so install a ROCm-enabled PyTorch build _first_ — matching the ROCm
+version on your machine, which you can check with `cat /opt/rocm/.info/version`
+— then install MISFIT on top of it. No install extra is needed; ROCm reuses the
+same code paths as CUDA (`torch.cuda` is a compatibility shim on ROCm builds):
+
+```console
+pip install torch --index-url https://download.pytorch.org/whl/rocm6.4
+pip install misfit-medical
+```
+
+Swap `rocm6.4` for whichever ROCm release matches your driver. To confirm the
+ROCm build of PyTorch is the one that got installed:
+
+```console
+python -c "import torch; print(torch.__version__, torch.version.hip, torch.cuda.is_available())"
+```
+
+You want a version string ending in `+rocmX.Y`, a non-`None`
+`torch.version.hip`, and `True` — that combination is what MISFIT's hardware
+detection checks for. BF16 AMP is then enabled automatically on CDNA
+(MI100/200/300) and RDNA3+ (RX 7000+) cards, and skipped with a warning on
+RDNA1/2.
 
 ### Data Format
 

@@ -142,14 +142,17 @@ A few practical guidelines:
 - **AMP** — MISFIT uses `bfloat16` automatic mixed precision during training.
   BF16 has the same dynamic range as float32, so no GradScaler is needed and
   training is numerically stable for long runs. AMP is _requested_ on by
-  default, then resolved against the actual hardware: BF16 acceleration needs an
-  Ampere+ GPU (A100, H100, RTX 30xx+), so pre-Ampere GPUs (V100, T4) and CPU
-  automatically fall back to FP32 with a warning. `misfit_train` resolves this
-  once and writes the effective value into `config.json`; `misfit_evaluate` and
-  `misfit_inspect` re-resolve it against their own hardware, so evaluating on a
-  login node without a suitable GPU still works. To disable AMP entirely, let
-  training run for at least one epoch (so `config.json` is written), then set
-  `"amp": false` in the `training` section of `config.json` and restart with
+  default, then resolved against the actual hardware: BF16 acceleration needs a
+  GPU with matrix hardware for it — an NVIDIA Ampere+ GPU (A100, H100, RTX
+  30xx+) or an AMD CDNA / RDNA3+ GPU (MI200/MI300 series, RX 7000+). Pre-Ampere
+  NVIDIA GPUs (V100, T4), older AMD GPUs (RDNA1/2 — RX 5000/6000 series; these
+  report BF16 as available but run it on shader ALUs with no speed benefit), and
+  CPU automatically fall back to FP32 with a warning. `misfit_train` resolves
+  this once and writes the effective value into `config.json`; `misfit_evaluate`
+  and `misfit_inspect` re-resolve it against their own hardware, so evaluating
+  on a login node without a suitable GPU still works. To disable AMP entirely,
+  let training run for at least one epoch (so `config.json` is written), then
+  set `"amp": false` in the `training` section of `config.json` and restart with
   `--resume`.
 
 - **Anisotropic data is handled natively.** MISFIT records each volume's voxel

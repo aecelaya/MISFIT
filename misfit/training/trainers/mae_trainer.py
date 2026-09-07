@@ -465,8 +465,9 @@ class MAETrainer:
             self._validate_resume(read_json_file(config_path))
 
         # Resolve the requested AMP setting against the actual hardware. BF16
-        # autocast is only accelerated on Ampere+ GPUs; resolve_amp downgrades
-        # to FP32 (with a warning) on older GPUs or CPU. On resume the requested
+        # autocast is only accelerated on GPUs with BF16 matrix hardware (NVIDIA
+        # Ampere+, AMD CDNA/RDNA3+); resolve_amp downgrades to FP32 (with a
+        # warning) on older GPUs or CPU. On resume the requested
         # value comes from the saved config. The resolved value is written into
         # config.json below, so every training step and downstream command
         # (misfit_evaluate / misfit_inspect) reads a hardware-appropriate value.
