@@ -140,7 +140,8 @@ def reconstruct(
             from ``config.json``). The ``loss`` name selects the correct
             denormalisation, and the ``amp`` flag toggles bfloat16 autocast
             (defaults to enabled when absent, then resolved against the current
-            hardware — BF16 needs an Ampere+ GPU, otherwise FP32 is used).
+            hardware — BF16 needs an NVIDIA Ampere+ or AMD CDNA/RDNA3+ GPU,
+            otherwise FP32 is used).
             When ``None``, volume-level-only denormalisation is applied
             (correct for ``masked_mse`` and ``masked_l1``).
         device: Torch device. Defaults to CUDA if available, else CPU.

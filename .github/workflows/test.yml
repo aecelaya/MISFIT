@@ -1,0 +1,117 @@
+# =============================================================================
+# Test suite + coverage badge
+#
+# Runs the MISFIT pytest suite under coverage across every supported Python
+# version, plus a separate leg for the gloo-backed distributed (DDP) tests.
+# Acts as the required status check on pull requests and keeps the coverage
+# badge (coverage.svg) in the repo up to date.
+#
+# Triggers:
+#   - push to main          (badge is refreshed and committed)
+#   - pull_request to main  (status check only; no commit)
+#   - workflow_dispatch     (manual "Run workflow" button / `gh workflow run`)
+# =============================================================================
+name: Run Tests and Generate Coverage Badge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# contents: write is required by the coverage-badge commit step below. Every
+# other step only needs read access.
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # MISFIT's test suite is CPU-only. The mae_trainer tests exercise the GPU
+      # code path by monkeypatching torch.cuda.* (see the patch_cuda fixture),
+      # which only behaves on a CPU build of torch — a real CUDA build's
+      # lazy-init driver probe fires on the driverless runner instead. Install
+      # the CPU wheel first so CI matches the dev environment; the subsequent
+      # editable install then sees torch already satisfied and leaves it.
+      #
+      # The [dev] extra brings pytest + pytest-cov; coverage-badge is the only
+      # CI-only tool. setuptools<81 is required because coverage-badge imports
+      # pkg_resources, which Python >= 3.12 environments no longer bundle and
+      # setuptools >= 81 no longer ships.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]" coverage-badge "setuptools<81"
+
+      # pyproject's addopts already sets `--cov=misfit --cov-report=term-missing
+      # -m 'not distributed'`. Add the xml report (feeds coverage-badge) and
+      # enforce the project's 100% standard as a hard gate.
+      - name: Run tests and generate coverage report
+        run: |
+          pytest --cov-report=xml --cov-fail-under=100
+          coverage-badge -o coverage.svg -f
+
+      # Publish the badge and commit it back only from a single matrix leg so
+      # the three jobs don't collide on the artifact name or race on the push.
+      - name: Upload coverage badge
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-badge
+          path: coverage.svg
+
+      - name: Commit coverage badge to repo (optional)
+        if: github.ref == 'refs/heads/main' && matrix.python-version == '3.12'
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add coverage.svg
+          # [skip ci] keeps this commit from re-triggering the workflow.
+          git commit -m "chore: update coverage badge [skip ci]" || exit 0
+          git push
+        continue-on-error: true
+
+  # The gloo multi-process DDP tests are excluded from the default run
+  # (addopts carries `-m 'not distributed'`); run them explicitly on one Python
+  # version. `-o addopts=` clears the inherited coverage/marker options so this
+  # leg is just the DDP semantics checks.
+  distributed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+
+      - name: Run distributed (gloo) tests
+        run: pytest -o addopts= -m distributed

@@ -3,7 +3,8 @@
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/misfit-medical)](https://pypi.org/project/misfit-medical/)
 [![Docker](https://img.shields.io/docker/v/mistmedical/misfit?label=docker&sort=semver)](https://hub.docker.com/r/mistmedical/misfit)
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+[![Tests](https://img.shields.io/github/actions/workflow/status/mist-medical/MISFIT/test.yml?branch=main&label=tests)](https://github.com/mist-medical/MISFIT/actions/workflows/test.yml)
+![Coverage](coverage.svg)
 
 MISFIT is a simple, scalable, end-to-end framework for pretraining 3D medical
 imaging foundation models using masked autoencoders (MAE). Give it a directory
@@ -43,8 +44,9 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
   variance, handling CT and MRI in the same training run
 - **Scalable** — single-GPU to multi-node training via `torchrun`; the same
   command runs everywhere (CPU too, for testing)
-- **BF16 AMP** — automatic `bfloat16` mixed precision on Ampere+ GPUs (A100,
-  H100, RTX 30xx+), with an automatic FP32 fallback on older GPUs and CPU
+- **BF16 AMP** — automatic `bfloat16` mixed precision on GPUs with BF16 matrix
+  hardware (NVIDIA Ampere+ — A100, H100, RTX 30xx+ — and AMD CDNA / RDNA3+),
+  with an automatic FP32 fallback on older GPUs and CPU
 - **Reproducible** — `config.json` captures every architecture and training
   hyperparameter; downstream commands require it rather than re-accepting flags
 - **100% test coverage**
@@ -73,9 +75,20 @@ cd MISFIT
 pip install -e .
 ```
 
-**Requirements:** Python ≥ 3.10. An NVIDIA Ampere or newer GPU (A100, H100, RTX
-30xx+) is recommended — it enables BF16 mixed precision. Pre-Ampere GPUs and
-CPU-only machines work too; MISFIT automatically falls back to FP32.
+On an **AMD ROCm** machine, install a ROCm-enabled PyTorch build first (PyPI's
+default `torch` wheel is CUDA-only; the Docker image is CUDA-only too), matching
+your driver's ROCm version, then MISFIT on top with nothing extra:
+
+```console
+pip install torch --index-url https://download.pytorch.org/whl/rocm6.4
+pip install misfit-medical
+```
+
+**Requirements:** Python ≥ 3.10. A GPU with BF16 matrix hardware — NVIDIA Ampere
+or newer (A100, H100, RTX 30xx+) or AMD CDNA / RDNA3+ (MI200/MI300, RX 7000+) —
+is recommended, since it enables BF16 mixed precision. Pre-Ampere NVIDIA GPUs,
+older AMD GPUs (RDNA1/2), and CPU-only machines work too; MISFIT automatically
+falls back to FP32.
 
 ---
 
