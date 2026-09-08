@@ -194,6 +194,15 @@ pretraining is very slow and warns once. ROCm needs no special-casing: PyTorch's
 ROCm build reuses the `torch.cuda` namespace and the `cuda:<rank>` device string
 as a shim, so `use_cuda` is `True` and every CUDA code path already works.
 
+`_setup_distributed` calls `torch.cuda.set_device(local_rank)` **before**
+`dist.init_process_group`, and passes
+`device_id=torch.device("cuda", local_rank)`. Both are load-bearing on
+multi-GPU: a NCCL group created while every rank is still on the default
+`cuda:0` binds DDP's construction-time param-shape allgather to device 0 on all
+ranks, so the first collective hangs (`rank 0 has inconsistent 0 params`, 10-min
+watchdog timeout). Guarded by
+`test_setup_distributed_sets_cuda_device_before_init_process_group`.
+
 AMP is BF16-only — there is no fp16 path and no GradScaler, since BF16 has
 float32's dynamic range. It is _requested_ on by default, then resolved against
 the actual hardware by `misfit.utils.hardware.resolve_amp` → `bf16_supported()`,

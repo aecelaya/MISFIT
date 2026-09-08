@@ -45,15 +45,25 @@ def fake_dist(monkeypatch):
     """Replace torch.distributed in the mae_trainer module with FakeDist."""
     import misfit.training.trainers.mae_trainer as mt
 
-    calls = {"init": 0, "destroy": 0, "barrier": 0, "all_reduce": 0, "backend": None}
+    calls = {
+        "init": 0,
+        "destroy": 0,
+        "barrier": 0,
+        "all_reduce": 0,
+        "backend": None,
+        "device_id": None,
+        "events": [],
+    }
 
     class FakeDist:
         _initialized = False
 
         @staticmethod
-        def init_process_group(backend):
+        def init_process_group(backend, **kwargs):
             calls["init"] += 1
             calls["backend"] = backend
+            calls["device_id"] = kwargs.get("device_id")
+            calls["events"].append("init_process_group")
             FakeDist._initialized = True
 
         @staticmethod
@@ -1014,6 +1024,44 @@ def test_setup_distributed_uses_gloo_backend_on_cpu(tmp_path, monkeypatch, fake_
     trainer = MAETrainer(_make_args(tmp_path))
     trainer._setup_distributed()
     assert fake_dist["backend"] == "gloo"
+
+
+def test_setup_distributed_sets_cuda_device_before_init_process_group(
+    tmp_path, monkeypatch, fake_dist
+):
+    """set_device must run *before* init_process_group.
+
+    Regression guard: a NCCL group created while every rank is still on the
+    default cuda:0 binds DDP's construction-time param-shape allgather to
+    device 0 on all ranks, so a multi-GPU job hangs on the first collective
+    ("rank 0 has inconsistent 0 params").
+    """
+    monkeypatch.setenv("WORLD_SIZE", "4")
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    monkeypatch.setattr(
+        torch.cuda, "set_device", lambda d: fake_dist["events"].append(f"set_device:{d}")
+    )
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    MAETrainer(_make_args(tmp_path))._setup_distributed()
+    assert fake_dist["events"] == ["set_device:2", "init_process_group"]
+
+
+def test_setup_distributed_passes_device_id_on_gpu(tmp_path, monkeypatch, fake_dist):
+    """init_process_group gets an explicit per-rank device_id on the GPU path."""
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    MAETrainer(_make_args(tmp_path))._setup_distributed()
+    assert fake_dist["device_id"] == torch.device("cuda", 1)
+
+
+def test_setup_distributed_omits_device_id_on_cpu(tmp_path, monkeypatch, fake_dist):
+    """The gloo (CPU) path has no per-rank device — device_id stays unset."""
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    MAETrainer(_make_args(tmp_path))._setup_distributed()
+    assert fake_dist["device_id"] is None
 
 
 def test_build_model_omits_device_ids_on_cpu(tmp_path, monkeypatch, fake_dist):
