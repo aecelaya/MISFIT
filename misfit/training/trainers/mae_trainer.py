@@ -97,14 +97,24 @@ class MAETrainer:
     def _setup_distributed(self) -> None:
         """Initialise the process group (torchrun-native).
 
-        Uses the NCCL backend on GPU and the gloo backend on CPU so that
-        multi-process runs work in both configurations.
+        Pins this rank to its own GPU with ``torch.cuda.set_device`` *before*
+        ``dist.init_process_group``, and passes ``device_id`` explicitly.
+        Order matters: a NCCL process group created while every rank still has
+        the default ``cuda:0`` as its current device binds its collectives —
+        including the param-shape allgather ``DDP`` issues at construction — to
+        device 0 on *all* ranks. On a multi-GPU job that piles every rank onto
+        one GPU and the first collective hangs until the NCCL watchdog fires
+        (``DDP expects same model across all ranks, but rank 0 has inconsistent
+        0 params``). NCCL backend on GPU, gloo on CPU.
         """
-        if self.is_distributed:
-            backend = "nccl" if self.use_cuda else "gloo"
-            dist.init_process_group(backend=backend)
         if self.use_cuda:
             torch.cuda.set_device(self.local_rank)
+        if self.is_distributed:
+            backend = "nccl" if self.use_cuda else "gloo"
+            init_kwargs: dict = {}
+            if self.use_cuda:
+                init_kwargs["device_id"] = torch.device("cuda", self.local_rank)
+            dist.init_process_group(backend=backend, **init_kwargs)
 
     def _enable_cudnn_optimisations(self) -> None:
         if not self.use_cuda:

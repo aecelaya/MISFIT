@@ -259,6 +259,32 @@ torchrun --nnodes=2 \
         --results /runs/exp1
 ```
 
+### If a multi-GPU run hangs at startup
+
+MISFIT pins each rank to its own GPU before initialising the process group, so
+the common "every rank piled onto `cuda:0`" hang does not apply. If a run still
+stalls at startup and (after ~10 minutes) dies with a NCCL collective-timeout
+(`Watchdog caught collective operation timeout`), the cause is GPU-to-GPU
+transport, not MISFIT. The usual trigger is a GPU set that spans two CPU sockets
+/ PCIe root complexes with no NVLink path between them — common when
+`CUDA_VISIBLE_DEVICES` hand-picks GPUs on a shared node. Run with
+`NCCL_DEBUG=INFO` and look at the `Setting affinity for GPU N to <cpu list>`
+lines: if the selected GPUs fall into two different CPU ranges, they're on
+separate sockets. Fixes, in order of preference:
+
+```console
+# 1. Pick GPUs on one socket (same CPU-affinity range) — best interconnect.
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 $(which misfit_train) ...
+
+# 2. Keep all the GPUs, let NCCL use NVLink where it exists and shared memory
+#    across the gap.
+NCCL_P2P_LEVEL=NVL torchrun --nproc_per_node=4 $(which misfit_train) ...
+
+# 3. Disable direct P2P entirely — always works, uses shared-memory staging
+#    (some throughput cost).
+NCCL_P2P_DISABLE=1 torchrun --nproc_per_node=4 $(which misfit_train) ...
+```
+
 ---
 
 ## Embedding Aggregators
