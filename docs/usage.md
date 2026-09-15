@@ -138,6 +138,13 @@ Run training with `misfit_train`:
 ### Miscellaneous
 
 - `--seed N`: Random seed for reproducibility. _(default: 42)_
+- `--no-amp`: Request FP32 instead of BF16 mixed precision on a fresh run. Not
+  consulted on `--resume` — `config.json`'s saved `training.amp` is
+  authoritative there; edit the file directly to change it on a resumed run.
+- `--init-only`: Write `config.json` and the `--results` skeleton
+  (`checkpoints/`, `models/`, `logs/`), then exit without touching the model,
+  data, or a GPU training loop. See
+  [Previewing a run without training](advanced_topics.md#previewing-a-run-without-training).
 - `--resume`: Resume from the latest checkpoint in `--results`. The model
   architecture and patch size must match the saved `config.json`; changes to
   other hyperparameters emit warnings but are allowed.
@@ -175,6 +182,15 @@ Resume a run that was interrupted.
 misfit_train --index   /data/index.parquet \
              --results /runs/exp1 \
              --resume
+```
+
+Preview the resolved `config.json` — in FP32 — before submitting a real (queued,
+multi-GPU) job.
+
+```console
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
+             --init-only --no-amp
 ```
 
 ### Output
