@@ -92,6 +92,35 @@ misfit_train --index   /data/index.parquet \
     `config.json` already exists in `--results`, `misfit_train` refuses to run.
     This is intentional — it prevents accidentally overwriting a completed run.
 
+### Previewing a run without training
+
+`--init-only` writes `config.json` and the `--results` skeleton (`checkpoints/`,
+`models/`, `logs/`), then exits — no model, data loader, or GPU training loop.
+It follows the same `--resume`/`--overwrite` rules as a real run (still refuses
+to touch an existing `config.json` unless you pass one of them), so it's safe to
+point at a directory you're about to submit a real job against.
+
+```console
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
+             --init-only --no-amp
+```
+
+This is the direct replacement for the old "run one epoch, kill it, hand-edit
+`config.json`, restart with `--resume`" dance: inspect or edit the written
+`config.json` (resolved AMP included, since `--init-only` still queries the real
+hardware), then launch the actual job — with `--resume` if you want it to pick
+up any edits you made, or without it if the generated config was already what
+you wanted:
+
+```console
+misfit_train --index /data/index.parquet --results /runs/exp1 --resume
+```
+
+`--init-only` needs no `torchrun` — it's inherently single-process — and
+finishes in well under a second, even for a job you'll eventually run on many
+GPUs.
+
 ### Immutable vs. mutable parameters
 
 The following parameters are **immutable** — changing them while resuming raises
@@ -150,10 +179,18 @@ A few practical guidelines:
   CPU automatically fall back to FP32 with a warning. `misfit_train` resolves
   this once and writes the effective value into `config.json`; `misfit_evaluate`
   and `misfit_inspect` re-resolve it against their own hardware, so evaluating
-  on a login node without a suitable GPU still works. To disable AMP entirely,
-  let training run for at least one epoch (so `config.json` is written), then
-  set `"amp": false` in the `training` section of `config.json` and restart with
-  `--resume`.
+  on a login node without a suitable GPU still works. To disable AMP entirely on
+  a **fresh** run, pass `--no-amp` — it skips the hardware check and always
+  trains in FP32. (On `--resume`, `--no-amp` is not consulted; `config.json`'s
+  saved `"amp"` value is authoritative there — edit the file directly, then
+  restart with `--resume`.)
+
+<!-- prettier-ignore -->
+!!!note
+    Combine `--no-amp` with `--init-only` to see the resolved config before
+    committing to a real job, without training at all — see
+    [Previewing a run without training](#previewing-a-run-without-training)
+    below.
 
 - **Anisotropic data is handled natively.** MISFIT records each volume's voxel
   spacing (mm) in the index and injects it into the model via sinusoidal
@@ -227,11 +264,17 @@ MISFIT uses `torch.distributed` and can be launched with `torchrun` on any
 cluster that supports NCCL. Distributed setup is handled automatically when
 `torchrun` sets the `LOCAL_RANK` environment variable.
 
+`-m misfit.cli.train_entrypoint` is the training target: it needs nothing on
+`PATH` and no shell, so it works identically from an interactive shell, inside a
+container image, and in a Kubernetes `command:` array. `$(which misfit_train)`
+also works, but only when a shell evaluates it — a bare `command` / `args` list
+in a pod spec passes the literal string `$(which` to Python.
+
 ### Single node, multiple GPUs
 
 ```console
 torchrun --nproc_per_node=4 \
-    $(which misfit_train) \
+    -m misfit.cli.train_entrypoint \
         --index      /data/index.parquet \
         --results    /runs/exp1 \
         --batch-size 2
@@ -254,10 +297,29 @@ torchrun --nnodes=2 \
          --node_rank=$SLURM_NODEID \
          --master_addr=$MASTER_ADDR \
          --master_port=29500 \
-    $(which misfit_train) \
+    -m misfit.cli.train_entrypoint \
         --index   /data/index.parquet \
         --results /runs/exp1
 ```
+
+### Kubernetes
+
+A pod's `command` / `args` go straight to `execve` — there is no shell — so
+`$(which misfit_train)` reaches Python as the literal string `$(which`. Use the
+`-m` form (nothing to resolve), or run the command through an explicit shell:
+
+```yaml
+# Direct — no shell.
+command: ["torchrun", "--nproc_per_node=4", "-m", "misfit.cli.train_entrypoint"]
+args: ["--index", "/data/index.parquet", "--results", "/runs/exp1"]
+
+# Or, to keep $(...) / env-var expansion, wrap it:
+command: ["bash", "-lc"]
+args: ["torchrun --nproc_per_node=4 -m misfit.cli.train_entrypoint --index ..."]
+```
+
+Multi-pod `Job`s set `--nnodes` / `--node_rank` / `--master_addr` /
+`--master_port` exactly as in the SLURM example above.
 
 ### If a multi-GPU run hangs at startup
 
@@ -274,15 +336,15 @@ separate sockets. Fixes, in order of preference:
 
 ```console
 # 1. Pick GPUs on one socket (same CPU-affinity range) — best interconnect.
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 $(which misfit_train) ...
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m misfit.cli.train_entrypoint ...
 
 # 2. Keep all the GPUs, let NCCL use NVLink where it exists and shared memory
 #    across the gap.
-NCCL_P2P_LEVEL=NVL torchrun --nproc_per_node=4 $(which misfit_train) ...
+NCCL_P2P_LEVEL=NVL torchrun --nproc_per_node=4 -m misfit.cli.train_entrypoint ...
 
 # 3. Disable direct P2P entirely — always works, uses shared-memory staging
 #    (some throughput cost).
-NCCL_P2P_DISABLE=1 torchrun --nproc_per_node=4 $(which misfit_train) ...
+NCCL_P2P_DISABLE=1 torchrun --nproc_per_node=4 -m misfit.cli.train_entrypoint ...
 ```
 
 ---
