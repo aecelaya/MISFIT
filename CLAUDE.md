@@ -226,12 +226,21 @@ which branches on `get_accelerator_type()` (cuda / rocm / cpu, via
   speedup. Unrecognized arch → unsupported (conservative default).
 - **CPU:** always False.
 
-`MAETrainer.train()` resolves once (from the CLI default, or from the saved
-config on `--resume`) and persists the effective value to `config.json`;
-`misfit_evaluate` and `misfit_inspect` re-resolve the config value against their
-own hardware. Disable AMP entirely by setting `"amp": false` in `config.json`.
-Shared helper: `hardware.autocast_context(enabled)` (device type `"cuda"` for
-both CUDA and ROCm, `"cpu"` otherwise).
+`MAETrainer.train()` resolves once (from `--no-amp`/the CLI default, or from the
+saved config on `--resume` — `--no-amp` is not consulted there, the saved value
+wins) and persists the effective value to `config.json`; `misfit_evaluate` and
+`misfit_inspect` re-resolve the config value against their own hardware. Shared
+helper: `hardware.autocast_context(enabled)` (device type `"cuda"` for both CUDA
+and ROCm, `"cpu"` otherwise).
+
+`--init-only` writes `config.json` + the `--results` skeleton
+(`checkpoints/`/`models/`/`logs/`) and returns before `_setup_distributed`,
+model, or data loader construction — `_build_config()` only needs `self.args` +
+the already-resolved `self.amp`, so nothing else is required. Shared between
+that path and the real run by `_write_results_skeleton()`. Combine with
+`--no-amp` to get an AMP-off config with no run/kill/edit/`--resume` dance;
+combine with `--resume` to just recreate the skeleton dirs (existing
+`config.json` is left alone, same as a real resume).
 
 ### Transfer learning to MIST
 

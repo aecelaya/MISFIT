@@ -87,8 +87,12 @@ class MAETrainer:
         )
         # Requested AMP setting; resolved against the actual hardware in
         # train() (BF16 autocast needs an Ampere+ GPU) and persisted to
-        # config.json. Can be turned off entirely via "amp": false in config.
-        self.amp = True
+        # config.json. On by default; --no-amp requests FP32 instead (only
+        # takes effect on a fresh run — see train()'s AMP resolution for the
+        # --resume case, where config.json's saved value wins). getattr guards
+        # callers that build args by hand (tests, MAETrainer.__new__ users)
+        # without a --no-amp field.
+        self.amp = not getattr(self.args, "no_amp", False)
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -395,6 +399,20 @@ class MAETrainer:
             },
         }
 
+    def _write_results_skeleton(self, results_dir: Path, config_path: Path) -> None:
+        """Create checkpoints/models/logs under ``results_dir`` and write config.json.
+
+        Rank-0-only work — callers are expected to guard with ``self.is_main``.
+        Skips the config.json write on ``--resume``, where the existing file on
+        disk is authoritative. Shared by the real training path and
+        ``--init-only`` (see ``train()``), so both stay byte-for-byte
+        consistent about what gets written.
+        """
+        for d in (results_dir / "checkpoints", results_dir / "models", results_dir / "logs"):
+            d.mkdir(parents=True, exist_ok=True)
+        if not self.args.resume:
+            write_json_file(config_path, self._build_config())
+
     def _validate_resume(self, saved_config: dict) -> None:
         """Check that the current args are compatible with a saved config.
 
@@ -490,6 +508,23 @@ class MAETrainer:
             requested_amp = self.amp
         self.amp = resolve_amp(requested_amp)
 
+        # --init-only: write config.json + the results skeleton and stop —
+        # no distributed setup, model, or data loader needed for either, so
+        # this works with or without torchrun and finishes in well under a
+        # second. Lets you inspect/hand-edit the resolved config (most often
+        # AMP, since --no-amp only covers "off"; there's no equivalent flag to
+        # force it *on* against resolve_amp's hardware read) before committing
+        # to a real (possibly queued, possibly multi-GPU) job.
+        if self.args.init_only:
+            if self.is_main:
+                self._write_results_skeleton(results_dir, config_path)
+                console.print(
+                    f"[bold]Initialised[/bold] '{results_dir}' — wrote "
+                    f"config.json (amp={self.amp}) without training. Edit it "
+                    "if needed, then rerun with --resume to pick up edits."
+                )
+            return
+
         if self.is_main and not self.use_cuda:
             print_warning(
                 "No CUDA device detected — training on CPU. This is intended "
@@ -530,10 +565,7 @@ class MAETrainer:
         models_dir = results_dir / "models"
         logs_dir = results_dir / "logs"
         if self.is_main:
-            for d in (checkpoint_dir, models_dir, logs_dir):
-                d.mkdir(parents=True, exist_ok=True)
-            if not self.args.resume:
-                write_json_file(config_path, self._build_config())
+            self._write_results_skeleton(results_dir, config_path)
         if self.is_distributed:
             dist.barrier()
 

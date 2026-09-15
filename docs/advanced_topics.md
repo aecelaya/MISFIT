@@ -92,6 +92,35 @@ misfit_train --index   /data/index.parquet \
     `config.json` already exists in `--results`, `misfit_train` refuses to run.
     This is intentional — it prevents accidentally overwriting a completed run.
 
+### Previewing a run without training
+
+`--init-only` writes `config.json` and the `--results` skeleton (`checkpoints/`,
+`models/`, `logs/`), then exits — no model, data loader, or GPU training loop.
+It follows the same `--resume`/`--overwrite` rules as a real run (still refuses
+to touch an existing `config.json` unless you pass one of them), so it's safe to
+point at a directory you're about to submit a real job against.
+
+```console
+misfit_train --index   /data/index.parquet \
+             --results /runs/exp1 \
+             --init-only --no-amp
+```
+
+This is the direct replacement for the old "run one epoch, kill it, hand-edit
+`config.json`, restart with `--resume`" dance: inspect or edit the written
+`config.json` (resolved AMP included, since `--init-only` still queries the real
+hardware), then launch the actual job — with `--resume` if you want it to pick
+up any edits you made, or without it if the generated config was already what
+you wanted:
+
+```console
+misfit_train --index /data/index.parquet --results /runs/exp1 --resume
+```
+
+`--init-only` needs no `torchrun` — it's inherently single-process — and
+finishes in well under a second, even for a job you'll eventually run on many
+GPUs.
+
 ### Immutable vs. mutable parameters
 
 The following parameters are **immutable** — changing them while resuming raises
@@ -150,10 +179,18 @@ A few practical guidelines:
   CPU automatically fall back to FP32 with a warning. `misfit_train` resolves
   this once and writes the effective value into `config.json`; `misfit_evaluate`
   and `misfit_inspect` re-resolve it against their own hardware, so evaluating
-  on a login node without a suitable GPU still works. To disable AMP entirely,
-  let training run for at least one epoch (so `config.json` is written), then
-  set `"amp": false` in the `training` section of `config.json` and restart with
-  `--resume`.
+  on a login node without a suitable GPU still works. To disable AMP entirely on
+  a **fresh** run, pass `--no-amp` — it skips the hardware check and always
+  trains in FP32. (On `--resume`, `--no-amp` is not consulted; `config.json`'s
+  saved `"amp"` value is authoritative there — edit the file directly, then
+  restart with `--resume`.)
+
+<!-- prettier-ignore -->
+!!!note
+    Combine `--no-amp` with `--init-only` to see the resolved config before
+    committing to a real job, without training at all — see
+    [Previewing a run without training](#previewing-a-run-without-training)
+    below.
 
 - **Anisotropic data is handled natively.** MISFIT records each volume's voxel
   spacing (mm) in the index and injects it into the model via sinusoidal

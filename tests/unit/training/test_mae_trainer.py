@@ -150,6 +150,8 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         batch_size=1,
         num_cpu_workers=0,
         seed=42,
+        no_amp=False,
+        init_only=False,
         resume=False,
         overwrite=False,
         results=str(tmp_path / "results"),
@@ -544,6 +546,114 @@ def test_train_writes_config_json(tmp_path):
     assert config["model"]["architecture"] == "swinunetr-small"
     assert config["training"]["epochs"] == 1
     assert "misfit_version" in config
+
+
+# ---------------------------------------------------------------------------
+# --init-only
+# ---------------------------------------------------------------------------
+
+def test_init_only_writes_config_without_building_model_or_data(tmp_path):
+    """--init-only writes config.json + the results skeleton and returns
+    before touching the model registry or data loaders — the whole point is
+    that it works without a GPU, torchrun, or even the index existing."""
+    import misfit.training.trainers.mae_trainer as mt
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.init_only = True
+
+    with patch.object(mt, "get_model_from_registry") as model_fn, \
+         patch.object(mt, "get_training_dataloader") as train_loader_fn, \
+         patch.object(mt, "get_validation_dataloader") as val_loader_fn:
+        trainer = MAETrainer(args)
+        trainer.train()
+
+    model_fn.assert_not_called()
+    train_loader_fn.assert_not_called()
+    val_loader_fn.assert_not_called()
+
+    results_dir = Path(args.results)
+    assert (results_dir / "config.json").exists()
+    for d in ("checkpoints", "models", "logs"):
+        assert (results_dir / d).is_dir()
+    assert not (results_dir / "checkpoints" / "checkpoint.pt").exists()
+
+
+def test_init_only_prints_a_confirmation(tmp_path):
+    """--init-only tells the user what it did (rank 0 only)."""
+    import misfit.training.trainers.mae_trainer as mt
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.init_only = True
+
+    with patch.object(mt, "get_model_from_registry"), \
+         patch.object(mt, "get_training_dataloader"), \
+         patch.object(mt, "get_validation_dataloader"), \
+         patch.object(mt.console, "print") as mock_print:
+        MAETrainer(args).train()
+
+    mock_print.assert_called_once()
+    assert "Initialised" in mock_print.call_args[0][0]
+
+
+def test_init_only_reflects_no_amp_in_written_config(tmp_path):
+    """--init-only --no-amp is the one-shot replacement for the old
+    run/kill/edit/--resume dance: the written config already has amp=false."""
+    import misfit.training.trainers.mae_trainer as mt
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.init_only = True
+    args.no_amp = True
+
+    with patch.object(mt, "get_model_from_registry"), \
+         patch.object(mt, "get_training_dataloader"), \
+         patch.object(mt, "get_validation_dataloader"):
+        trainer = MAETrainer(args)
+        trainer.train()
+
+    assert trainer.amp is False
+    config = json.loads((Path(args.results) / "config.json").read_text())
+    assert config["training"]["amp"] is False
+
+
+def test_init_only_does_not_overwrite_config_on_resume(tmp_path):
+    """--init-only --resume recreates the skeleton dirs but leaves an
+    existing config.json alone — same rule a real --resume run follows."""
+    import misfit.training.trainers.mae_trainer as mt
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    results_dir = Path(args.results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "config.json").write_text('{"sentinel": true}')
+
+    args.resume = True
+    args.init_only = True
+
+    with patch.object(mt, "get_model_from_registry"), \
+         patch.object(mt, "get_training_dataloader"), \
+         patch.object(mt, "get_validation_dataloader"):
+        MAETrainer(args).train()
+
+    config = json.loads((results_dir / "config.json").read_text())
+    assert config == {"sentinel": True}
+    assert (results_dir / "checkpoints").is_dir()
+
+
+def test_init_only_still_raises_if_config_exists_without_flags(tmp_path):
+    """--init-only doesn't bypass the usual existing-config.json guard."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.init_only = True
+    results_dir = Path(args.results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "config.json").write_text("{}")
+
+    with pytest.raises(RuntimeError, match="config.json"):
+        MAETrainer(args).train()
 
 
 def test_train_raises_if_config_exists_without_flags(tmp_path):
@@ -1142,6 +1252,98 @@ def test_train_keeps_amp_true_on_ampere(tmp_path):
     assert trainer.amp is True
     config = json.loads((Path(args.results) / "config.json").read_text())
     assert config["training"]["amp"] is True
+
+
+# ---------------------------------------------------------------------------
+# --no-amp
+# ---------------------------------------------------------------------------
+
+def test_no_amp_flag_sets_amp_false_before_any_hardware_check(tmp_path):
+    """--no-amp requests FP32 up front — __init__ doesn't need train() or
+    hardware detection to reflect it."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.no_amp = True
+    assert MAETrainer(args).amp is False
+
+
+def test_missing_no_amp_attr_defaults_to_amp_requested(tmp_path):
+    """A caller-built args without a no_amp field (e.g. MAETrainer used
+    directly, as tests/distributed does) still gets the pre-flag default:
+    AMP requested."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    del args.no_amp
+    assert MAETrainer(args).amp is True
+
+
+def test_no_amp_flag_resolves_to_fp32_even_on_ampere(tmp_path):
+    """--no-amp on a fresh run skips resolve_amp's hardware check entirely —
+    FP32 regardless of what the GPU supports (faked Ampere here)."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.no_amp = True
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = MAETrainer(args)
+        trainer.device = torch.device("cpu")
+        trainer.train()
+
+    assert trainer.amp is False
+    config = json.loads((Path(args.results) / "config.json").read_text())
+    assert config["training"]["amp"] is False
+
+
+def test_no_amp_flag_ignored_on_resume_saved_config_wins(tmp_path):
+    """On --resume, --no-amp is not consulted — config.json's saved value is
+    authoritative (edit the file, don't rely on the CLI flag, to change AMP
+    on a resumed run)."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    results_dir = Path(args.results)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "config.json").write_text(json.dumps({
+        "model": {
+            "architecture": args.model,
+            "patch_size": list(args.patch_size),
+            "mask_patch_size": args.mask_patch_size,
+        },
+        "training": {"amp": True},
+    }))
+
+    args.resume = True
+    args.no_amp = True  # ignored: the saved config says amp=true
+    tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    mock_loader = [dummy_batch]
+
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=tiny_model), \
+         patch("misfit.training.trainers.mae_trainer.get_training_dataloader",
+               autospec=True, return_value=mock_loader), \
+         patch("misfit.training.trainers.mae_trainer.get_validation_dataloader",
+               autospec=True, return_value=mock_loader):
+        trainer = MAETrainer(args)
+        trainer.device = torch.device("cpu")
+        trainer.train()
+
+    assert trainer.amp is True
 
 
 def test_train_resume_reresolves_amp_from_saved_config(tmp_path, monkeypatch):

@@ -228,6 +228,27 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
+    misc.add_argument(
+        "--no-amp", action="store_true", dest="no_amp",
+        help=(
+            "Request FP32 instead of BF16 automatic mixed precision. Only "
+            "takes effect on a fresh run — on --resume, config.json's saved "
+            "'training.amp' is authoritative (edit that instead). Without "
+            "this flag, AMP is requested by default and resolved against the "
+            "hardware (see --help for misfit_evaluate/misfit_inspect on how "
+            "the resolved value is reused downstream)."
+        ),
+    )
+    misc.add_argument(
+        "--init-only", action="store_true", dest="init_only",
+        help=(
+            "Write config.json and the --results skeleton (checkpoints/, "
+            "models/, logs/), then exit without touching data or a GPU "
+            "training loop. Lets you inspect or hand-edit the resolved "
+            "config (e.g. AMP) before committing to a real job — rerun "
+            "with --resume afterwards to pick up edits."
+        ),
+    )
 
     run_mode = parser.add_mutually_exclusive_group()
     run_mode.add_argument(
