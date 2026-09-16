@@ -145,6 +145,27 @@ once at index time, stored in the Parquet index, applied on the fly at load
 time. This handles CT and MRI in the same batch without dataset-level
 statistics.
 
+### Load-failure handling (`MISFITDataset.__getitem__`)
+
+Every path in the index was already confirmed loadable by `misfit_index` (bad
+files are dropped there, not passed through), so a load failure inside
+`MISFITDataset.__getitem__` means something changed since indexing — deleted,
+moved, a transient filesystem error. `Dataset.__getitem__` has no way to "skip"
+an index (unlike `misfit_evaluate`/`misfit_encode`/`misfit_embed`, which warn
+and `continue`), so an isolated failure substitutes a zero volume and **warns**
+(`UserWarning`, matches the existing 4D-volume-fallback pattern) rather than
+failing silently — a bare `except Exception: return zeros` with no warning at
+all was the original implementation, and it's a real footgun: a systemic problem
+(a mount gone away, permissions revoked) would silently train on an ever-growing
+fraction of zero-filled "volumes" with zero visibility. `max_load_failures`
+_consecutive_ failures (no successful load in between; counter lives on the
+`Dataset` instance, which `persistent_workers=True` keeps alive for the whole
+run) raises `RuntimeError` instead, so a systemic issue fails the run loudly
+rather than being tolerated indefinitely. Defaults to 3 — small enough to catch
+a sustained problem quickly, large enough not to trip over one-off, isolated bad
+files spread across a long run (the counter resets to 0 on every successful
+load).
+
 ### `normalized_masked_mse` loss (default)
 
 Normalizes the target within each `mask_patch_size` cube (zero mean, unit

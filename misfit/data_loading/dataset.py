@@ -55,6 +55,16 @@ class MISFITDataset(Dataset):
         crop_to_fg: If True, crop each volume to its precomputed foreground
             bounding box (fg_x/y/z_start/end columns) before patch sampling.
             Requires those columns in the index. Defaults to True.
+        max_load_failures: Every file was already confirmed loadable by
+            misfit_index, so a load failure here means something changed
+            since indexing (deleted, moved, a transient filesystem error).
+            An isolated one is tolerated — substitute a zero volume for that
+            sample and keep training. But ``max_load_failures`` *consecutive*
+            failures (no successful load in between) raises instead, so a
+            systemic problem (a mount gone away, permissions revoked) fails
+            the run loudly rather than silently training on an escalating
+            run of zero-filled "volumes". Resets to 0 on every successful
+            load. Defaults to 3.
     """
 
     def __init__(
@@ -64,6 +74,7 @@ class MISFITDataset(Dataset):
         augment: bool = True,
         split: str | None = None,
         crop_to_fg: bool = True,
+        max_load_failures: int = 3,
     ):
         self.index_df = pd.read_parquet(index_path)
         if split is not None and "split" in self.index_df.columns:
@@ -71,6 +82,8 @@ class MISFITDataset(Dataset):
         self.index_df = self.index_df.reset_index(drop=True)
         self.patch_size = patch_size
         self.crop_to_fg = crop_to_fg
+        self.max_load_failures = max_load_failures
+        self._consecutive_load_failures = 0
         self.transforms = (
             build_train_transforms(patch_size)
             if augment
@@ -122,16 +135,37 @@ class MISFITDataset(Dataset):
 
         Returns:
             Float32 tensor of shape (1, D, H, W) where spatial dims equal
-            patch_size. Returns a zero tensor of the same shape if the
-            file cannot be loaded, so that a single corrupt volume does not
-            crash a training run.
+            patch_size. Substitutes a zero tensor of the same shape (with a
+            ``UserWarning``) if the file fails to load, so an isolated bad
+            file doesn't crash a training run. Raises ``RuntimeError`` instead
+            once ``max_load_failures`` load failures happen back to back with
+            no successful load in between — see the class docstring.
         """
         row = self.index_df.iloc[idx]
 
         try:
             img = nib.load(str(row["path"]))
             volume = np.asarray(img.dataobj, dtype=np.float32)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            self._consecutive_load_failures += 1
+            if self._consecutive_load_failures >= self.max_load_failures:
+                raise RuntimeError(
+                    f"{self._consecutive_load_failures} volume loads failed "
+                    "back to back (no successful load in between) -- "
+                    "aborting instead of continuing to silently substitute "
+                    f"zero-filled volumes. Every path in the index was "
+                    "already confirmed loadable by misfit_index, so this "
+                    "means something changed since indexing (deleted/moved "
+                    "files, a filesystem outage, permissions). Most recent "
+                    f"failure: {row['path']}: {exc}"
+                ) from exc
+            warnings.warn(
+                f"{row['path']}: failed to load ({exc}); substituting a "
+                f"zero volume for this sample "
+                f"({self._consecutive_load_failures}/{self.max_load_failures} "
+                "consecutive failures before this aborts the run).",
+                stacklevel=2,
+            )
             spacing = torch.tensor(
                 [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
                 dtype=torch.float32,
@@ -140,6 +174,8 @@ class MISFITDataset(Dataset):
                 "image": torch.zeros(1, *self.patch_size, dtype=torch.float32),
                 "spacing": spacing,
             }
+
+        self._consecutive_load_failures = 0
 
         # Handle 4D volumes (fMRI, DWI): take the first frame.
         if volume.ndim == 4:
