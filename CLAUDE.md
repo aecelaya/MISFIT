@@ -120,7 +120,9 @@ misfit/
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
-  utils/                console (Rich), io (read/write JSON), progress_bar,
+  utils/                console (Rich), io (read/write JSON),
+                        progress_bar (get_progress_bar; TrainProgressBar /
+                        ValidationProgressBar — mirror mist.utils.progress_bar),
                         hardware (get_accelerator_type / bf16_supported /
                         resolve_amp / autocast_context),
                         normalization (normalize_patchwise / denormalize_patchwise)
@@ -241,6 +243,21 @@ that path and the real run by `_write_results_skeleton()`. Combine with
 `--no-amp` to get an AMP-off config with no run/kill/edit/`--resume` dance;
 combine with `--resume` to just recreate the skeleton dirs (existing
 `config.json` is left alone, same as a real resume).
+
+### Training progress bar
+
+`utils.progress_bar.TrainProgressBar` / `ValidationProgressBar` mirror
+`mist.utils.progress_bar`'s classes (same columns, same `loss: ` / `lr: `
+formatting) so `misfit_train` output looks like MIST's — no `fold` argument,
+since MISFIT pretraining has no cross-validation folds. `TrainProgressBar`
+diverges from MIST in one way: `update(loss=None, lr=None)` — both optional,
+where MIST's are always passed — because gradient accumulation means a
+cross-rank-aggregated loss only exists at a window end (`is_window_end` in
+`train()`); mid-window micro-steps call `update()` with no arguments to advance
+the bar without touching the displayed text (Rich's `Progress.update()` leaves
+omitted fields at their last value). At `accum_steps=1` every step is a window
+end, so the displayed loss is identical to MIST's: a running mean of the
+all-reduced per-step loss (`train_meter.value`), refreshed every step.
 
 ### Transfer learning to MIST
 
