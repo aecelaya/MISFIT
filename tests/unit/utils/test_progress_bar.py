@@ -8,8 +8,40 @@ from rich.progress import Progress
 from misfit.utils.progress_bar import (
     TrainProgressBar,
     ValidationProgressBar,
+    format_loss,
     get_progress_bar,
 )
+
+# ---------------------------------------------------------------------------
+# format_loss
+# ---------------------------------------------------------------------------
+
+
+def test_format_loss_normal_value_uses_fixed_point():
+    assert format_loss(0.123456) == "0.1235"
+
+
+def test_format_loss_true_zero_stays_fixed_point():
+    """Exact zero isn't "too small to show" -- it is zero, so no sci notation."""
+    assert format_loss(0.0) == "0.0000"
+
+
+def test_format_loss_switches_to_scientific_below_precision():
+    """A value that would round to 0.0000 switches to scientific notation."""
+    assert format_loss(0.00003) == "3.000e-05"
+    assert format_loss(1.23456e-7) == "1.235e-07"
+
+
+def test_format_loss_boundary_just_above_zero_stays_fixed_point():
+    """A value that still rounds to something nonzero at 4dp stays fixed-point."""
+    assert format_loss(0.0001) == "0.0001"
+
+
+def test_format_loss_custom_precision():
+    # 0.001 rounds to "0.00" at 2dp -> switches to scientific.
+    assert format_loss(0.001, precision=2) == "1.000e-03"
+    # 0.01 rounds to "0.01" at 2dp -> stays fixed-point.
+    assert format_loss(0.01, precision=2) == "0.01"
 
 
 def test_get_progress_bar_returns_progress():

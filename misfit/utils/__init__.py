@@ -18,6 +18,7 @@ from misfit.utils.normalization import denormalize_patchwise, normalize_patchwis
 from misfit.utils.progress_bar import (
     TrainProgressBar,
     ValidationProgressBar,
+    format_loss,
     get_progress_bar,
 )
 
@@ -39,5 +40,5 @@ __all__ = [
     "get_progress_bar",
     "TrainProgressBar",
     "ValidationProgressBar",
+    "format_loss",
 ]
-

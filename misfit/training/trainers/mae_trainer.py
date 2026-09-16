@@ -50,6 +50,7 @@ from misfit.utils import (
     ValidationProgressBar,
     autocast_context,
     console,
+    format_loss,
     print_warning,
     read_json_file,
     resolve_amp,
@@ -577,7 +578,7 @@ class MAETrainer:
             if self.is_main:
                 console.print(
                     f"[bold]Resumed from epoch {start_epoch} "
-                    f"(best val loss: {best_val_loss:.4f})[/bold]"
+                    f"(best val loss: {format_loss(best_val_loss)})[/bold]"
                 )
 
         # --- TensorBoard (rank 0 only) ---
@@ -680,13 +681,14 @@ class MAETrainer:
 
                 improved = val_meter.value < best_val_loss
                 status = (
-                    f"[green]↓ {best_val_loss:.4f} → {val_meter.value:.4f}[/green]"
+                    f"[green]↓ {format_loss(best_val_loss)} → "
+                    f"{format_loss(val_meter.value)}[/green]"
                     if improved
-                    else f"[dim](best: {best_val_loss:.4f})[/dim]"
+                    else f"[dim](best: {format_loss(best_val_loss)})[/dim]"
                 )
                 console.print(
-                    f"  train_loss={train_meter.value:.4f}  "
-                    f"val_loss={val_meter.value:.4f}  "
+                    f"  train_loss={format_loss(train_meter.value)}  "
+                    f"val_loss={format_loss(val_meter.value)}  "
                     f"lr={lr:.2e}  {status}"
                 )
 
@@ -725,6 +727,6 @@ class MAETrainer:
         if self.is_main:
             console.print(
                 f"\n[bold green]Training complete.[/bold green]  "
-                f"Best val loss: {best_val_loss:.4f}\n"
+                f"Best val loss: {format_loss(best_val_loss)}\n"
                 f"Best model saved to: {best_model_path}"
             )

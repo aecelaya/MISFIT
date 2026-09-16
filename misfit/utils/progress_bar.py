@@ -24,6 +24,33 @@ from rich.progress import (
 from misfit.utils.console import console
 
 
+def format_loss(value: float, precision: int = 4) -> str:
+    """Format a loss value, switching to scientific notation once fixed-point
+    display would round it away to all zeros.
+
+    Loss values here are non-negative (MSE-family losses), so once training
+    converges well past ``precision`` decimal places, ``f"{value:.4f}"``
+    prints a flat, uninformative ``"0.0000"`` no matter how much further the
+    loss actually drops. Switch to scientific notation in that case; a true
+    zero is left as fixed-point (it isn't "too small to show", it *is* zero).
+    Used by ``TrainProgressBar`` / ``ValidationProgressBar`` and by
+    ``MAETrainer``'s epoch-summary console output, so both stay consistent.
+
+    Args:
+        value: The loss value to format.
+        precision: Decimal places for the fixed-point form. Defaults to 4,
+            matching the progress bar and epoch-summary formatting.
+
+    Returns:
+        ``f"{value:.{precision}f}"``, or ``f"{value:.3e}"`` if that would be
+        indistinguishable from zero.
+    """
+    text = f"{value:.{precision}f}"
+    if value != 0.0 and float(text) == 0.0:
+        return f"{value:.3e}"
+    return text
+
+
 class TrainProgressBar:
     """Progress bar for the training loop with live loss and learning rate.
 
@@ -69,7 +96,7 @@ class TrainProgressBar:
         """
         fields = {}
         if loss is not None:
-            fields["loss"] = f"loss: {loss:.4f}"
+            fields["loss"] = f"loss: {format_loss(loss)}"
         if lr is not None:
             fields["lr"] = f"lr: {np.format_float_scientific(lr, precision=3)}"
         self.progress.update(self.task, advance=1, **fields)
@@ -110,7 +137,9 @@ class ValidationProgressBar:
 
     def update(self, loss: float) -> None:
         """Advance one step and refresh the displayed validation loss."""
-        self.progress.update(self.task, advance=1, loss=f"val_loss: {loss:.4f}")
+        self.progress.update(
+            self.task, advance=1, loss=f"val_loss: {format_loss(loss)}"
+        )
 
     def __enter__(self) -> "ValidationProgressBar":
         self.progress.start()
