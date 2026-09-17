@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/misfit-medical)](https://pypi.org/project/misfit-medical/)
 [![Docker](https://img.shields.io/docker/v/mistmedical/misfit?label=docker&sort=semver)](https://hub.docker.com/r/mistmedical/misfit)
-[![Docs](https://readthedocs.org/projects/misfit/badge/?version=latest)](https://misfit.readthedocs.io/en/latest/)
+[![Docs](https://img.shields.io/readthedocs/misfit)](https://misfit.readthedocs.io/en/latest/)
 [![Tests](https://img.shields.io/github/actions/workflow/status/mist-medical/MISFIT/test.yml?branch=main&label=tests)](https://github.com/mist-medical/MISFIT/actions/workflows/test.yml)
 ![Coverage](coverage.svg)
 
