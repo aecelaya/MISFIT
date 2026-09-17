@@ -332,15 +332,6 @@ def test_trainer_enable_cudnn_optimisations(tmp_path):
     trainer._enable_cudnn_optimisations()  # should not raise
 
 
-def test_trainer_make_progress(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    args = _make_args(tmp_path)
-    trainer = MAETrainer(args)
-    progress = trainer._make_progress()
-    assert progress is not None
-
-
-
 def test_trainer_train_runs_single_epoch(tmp_path):
     """train() completes one epoch without error using mocked cuda calls."""
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE

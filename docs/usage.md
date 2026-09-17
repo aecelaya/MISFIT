@@ -97,6 +97,18 @@ Train/val split is determined by the `split` column in the index.
 
 Run training with `misfit_train`:
 
+<!-- prettier-ignore -->
+!!!warning
+    If you see a `UserWarning` like `<path>: failed to load (...); substituting
+    a zero volume for this sample (N/3 consecutive failures ...)`, a file that
+    `misfit_index` confirmed readable has since become unreadable (deleted,
+    moved, a transient filesystem error). One or two isolated warnings are
+    tolerated and safe to ignore. Three **consecutive** ones (no successful
+    load in between) raise a `RuntimeError` and stop the run — that's a
+    systemic problem (a mount gone away, permissions revoked), not a fluke,
+    and the run stops rather than silently training on an escalating run of
+    zero-filled "volumes". Investigate the filesystem before restarting.
+
 ### Data
 
 - `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.

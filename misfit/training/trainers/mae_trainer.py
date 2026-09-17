@@ -46,9 +46,11 @@ from misfit.training.training_utils import (
     set_seed,
 )
 from misfit.utils import (
+    TrainProgressBar,
+    ValidationProgressBar,
     autocast_context,
     console,
-    get_progress_bar,
+    format_loss,
     print_warning,
     read_json_file,
     resolve_amp,
@@ -458,13 +460,6 @@ class MAETrainer:
                 )
 
     # ------------------------------------------------------------------
-    # Progress bar
-    # ------------------------------------------------------------------
-
-    def _make_progress(self):
-        return get_progress_bar()
-
-    # ------------------------------------------------------------------
     # Main training loop
     # ------------------------------------------------------------------
 
@@ -583,7 +578,7 @@ class MAETrainer:
             if self.is_main:
                 console.print(
                     f"[bold]Resumed from epoch {start_epoch} "
-                    f"(best val loss: {best_val_loss:.4f})[/bold]"
+                    f"(best val loss: {format_loss(best_val_loss)})[/bold]"
                 )
 
         # --- TensorBoard (rank 0 only) ---
@@ -617,15 +612,15 @@ class MAETrainer:
             # silently desynchronises ranks); it also scales the trailing
             # partial window by its actual size.
             plan = build_accumulation_plan(len(train_loader), accum_steps)
-            progress_ctx = self._make_progress() if self.is_main else nullcontext()
-            with progress_ctx as progress:
-                task = (
-                    progress.add_task(
-                        f"Epoch {epoch + 1}/{self.args.epochs} [train]",
-                        total=len(train_loader),
-                    )
-                    if self.is_main else None
+            progress_ctx = (
+                TrainProgressBar(
+                    current_epoch=epoch + 1,
+                    epochs=self.args.epochs,
+                    train_steps=len(train_loader),
                 )
+                if self.is_main else nullcontext()
+            )
+            with progress_ctx as pb:
                 optimizer.zero_grad()
                 accum_loss = 0.0
                 for (window_size, is_window_end), batch in zip(
@@ -636,14 +631,22 @@ class MAETrainer:
                         window_size=window_size, is_last_accum=is_window_end,
                     )
                     accum_loss += step_loss
-                    if self.is_main and progress is not None:
-                        progress.advance(task)
                     if is_window_end:
                         agg_loss = self._aggregate_loss(accum_loss / window_size)
                         train_meter.update(agg_loss)
                         global_step += 1
                         accum_loss = 0.0
                         optimizer.zero_grad()
+                        # A fresh cross-rank-aggregated loss is only available
+                        # at a window end; mid-window micro-steps (accum > 1)
+                        # just advance the bar (see TrainProgressBar.update).
+                        if self.is_main and pb is not None:
+                            pb.update(
+                                loss=train_meter.value,
+                                lr=optimizer.param_groups[0]["lr"],
+                            )
+                    elif self.is_main and pb is not None:
+                        pb.update()
 
             scheduler.step()
 
@@ -654,10 +657,17 @@ class MAETrainer:
             model.eval()
             val_meter = RunningMean()
 
-            for batch in val_loader:
-                step_loss = self._validation_step(model, batch, criterion)
-                step_loss = self._aggregate_loss(step_loss)
-                val_meter.update(step_loss)
+            val_progress_ctx = (
+                ValidationProgressBar(val_steps=len(val_loader))
+                if self.is_main else nullcontext()
+            )
+            with val_progress_ctx as vpb:
+                for batch in val_loader:
+                    step_loss = self._validation_step(model, batch, criterion)
+                    step_loss = self._aggregate_loss(step_loss)
+                    val_meter.update(step_loss)
+                    if self.is_main and vpb is not None:
+                        vpb.update(loss=val_meter.value)
 
             # ---- Logging & checkpointing (rank 0 only) ----
             if self.is_main:
@@ -671,13 +681,14 @@ class MAETrainer:
 
                 improved = val_meter.value < best_val_loss
                 status = (
-                    f"[green]↓ {best_val_loss:.4f} → {val_meter.value:.4f}[/green]"
+                    f"[green]↓ {format_loss(best_val_loss)} → "
+                    f"{format_loss(val_meter.value)}[/green]"
                     if improved
-                    else f"[dim](best: {best_val_loss:.4f})[/dim]"
+                    else f"[dim](best: {format_loss(best_val_loss)})[/dim]"
                 )
                 console.print(
-                    f"  train_loss={train_meter.value:.4f}  "
-                    f"val_loss={val_meter.value:.4f}  "
+                    f"  train_loss={format_loss(train_meter.value)}  "
+                    f"val_loss={format_loss(val_meter.value)}  "
                     f"lr={lr:.2e}  {status}"
                 )
 
@@ -716,6 +727,6 @@ class MAETrainer:
         if self.is_main:
             console.print(
                 f"\n[bold green]Training complete.[/bold green]  "
-                f"Best val loss: {best_val_loss:.4f}\n"
+                f"Best val loss: {format_loss(best_val_loss)}\n"
                 f"Best model saved to: {best_model_path}"
             )

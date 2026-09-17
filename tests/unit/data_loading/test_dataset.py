@@ -4,6 +4,7 @@ import json
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from misfit.data_loading.dataset import MISFITDataset
@@ -39,6 +40,24 @@ def _make_nifti(tmp_path, name="volume.nii.gz", shape=(32, 32, 32)):
     p = tmp_path / name
     nib.save(img, str(p))
     return p
+
+
+def _write_multi_index(tmp_path, paths):
+    """Like _write_index but with one row per path, in order."""
+    rows = [{
+        "volume_id": f"vol{i}",
+        "path": str(p),
+        "shape_d": 32, "shape_h": 32, "shape_w": 32,
+        "spacing_d": 1.0, "spacing_h": 1.0, "spacing_w": 1.0,
+        "affine": json.dumps(np.eye(4).tolist()),
+        "fg_x_start": 0, "fg_x_end": 31,
+        "fg_y_start": 0, "fg_y_end": 31,
+        "fg_z_start": 0, "fg_z_end": 31,
+        "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
+    } for i, p in enumerate(paths)]
+    out = tmp_path / "index.parquet"
+    pd.DataFrame(rows).to_parquet(out, index=False)
+    return out
 
 
 def test_dataset_len(tmp_path):
@@ -90,9 +109,75 @@ def test_dataset_missing_file_returns_zeros(tmp_path):
     """Missing nifti should return zeros image with spacing still populated."""
     index_path = _write_index(tmp_path, tmp_path / "missing.nii.gz")
     ds = MISFITDataset(index_path, patch_size=(32, 32, 32), augment=False)
-    sample = ds[0]
+    with pytest.warns(UserWarning, match="failed to load"):
+        sample = ds[0]
     assert torch.all(sample["image"] == 0.0)
     assert sample["spacing"].shape == (3,)
+
+
+# ---------------------------------------------------------------------------
+# Load-failure circuit breaker
+# ---------------------------------------------------------------------------
+#
+# Every path in the index was already confirmed loadable by misfit_index, so
+# a load failure at train time means something changed since (deleted/moved
+# file, transient filesystem error). An isolated one is tolerated (warn,
+# substitute a zero volume); max_load_failures *consecutive* failures raises
+# instead, so a systemic problem fails the run loudly rather than silently
+# training on an escalating run of zero-filled "volumes".
+
+def test_dataset_load_failure_warns_with_progress_toward_the_limit(tmp_path):
+    index_path = _write_multi_index(
+        tmp_path, [tmp_path / "missing0.nii.gz", tmp_path / "missing1.nii.gz"]
+    )
+    ds = MISFITDataset(
+        index_path, patch_size=(32, 32, 32), augment=False, max_load_failures=3
+    )
+    with pytest.warns(UserWarning, match=r"1/3 consecutive failures"):
+        ds[0]
+    with pytest.warns(UserWarning, match=r"2/3 consecutive failures"):
+        ds[1]
+
+
+def test_dataset_load_failure_counter_resets_after_a_success(tmp_path):
+    """A good load in between failures resets the streak -- isolated bad
+    files spread across a long run never trip the breaker."""
+    good_path = _make_nifti(tmp_path)
+    index_path = _write_multi_index(
+        tmp_path, [tmp_path / "missing0.nii.gz", good_path, tmp_path / "missing1.nii.gz"]
+    )
+    ds = MISFITDataset(
+        index_path, patch_size=(32, 32, 32), augment=False, max_load_failures=2
+    )
+    with pytest.warns(UserWarning, match=r"1/2 consecutive failures"):
+        ds[0]  # streak = 1
+    ds[1]  # successful load -> streak resets to 0
+    with pytest.warns(UserWarning, match=r"1/2 consecutive failures"):
+        ds[2]  # streak = 1 again, not 2 -- would have raised if it hadn't reset
+
+
+def test_dataset_raises_after_max_consecutive_load_failures(tmp_path):
+    """max_load_failures consecutive failures aborts instead of continuing."""
+    index_path = _write_multi_index(
+        tmp_path,
+        [tmp_path / "missing0.nii.gz", tmp_path / "missing1.nii.gz",
+         tmp_path / "missing2.nii.gz"],
+    )
+    ds = MISFITDataset(
+        index_path, patch_size=(32, 32, 32), augment=False, max_load_failures=3
+    )
+    with pytest.warns(UserWarning):
+        ds[0]
+    with pytest.warns(UserWarning):
+        ds[1]
+    with pytest.raises(RuntimeError, match="3 volume loads failed back to back"):
+        ds[2]
+
+
+def test_dataset_max_load_failures_defaults_to_three(tmp_path):
+    index_path = _write_index(tmp_path, tmp_path / "missing.nii.gz")
+    ds = MISFITDataset(index_path, patch_size=(32, 32, 32), augment=False)
+    assert ds.max_load_failures == 3
 
 
 def test_dataset_pads_small_volume(tmp_path):

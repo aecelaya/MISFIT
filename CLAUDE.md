@@ -120,7 +120,9 @@ misfit/
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
-  utils/                console (Rich), io (read/write JSON), progress_bar,
+  utils/                console (Rich), io (read/write JSON),
+                        progress_bar (get_progress_bar; TrainProgressBar /
+                        ValidationProgressBar — mirror mist.utils.progress_bar),
                         hardware (get_accelerator_type / bf16_supported /
                         resolve_amp / autocast_context),
                         normalization (normalize_patchwise / denormalize_patchwise)
@@ -142,6 +144,27 @@ Per-volume clip to [p1, p99] then z-score with foreground mean/std — computed
 once at index time, stored in the Parquet index, applied on the fly at load
 time. This handles CT and MRI in the same batch without dataset-level
 statistics.
+
+### Load-failure handling (`MISFITDataset.__getitem__`)
+
+Every path in the index was already confirmed loadable by `misfit_index` (bad
+files are dropped there, not passed through), so a load failure inside
+`MISFITDataset.__getitem__` means something changed since indexing — deleted,
+moved, a transient filesystem error. `Dataset.__getitem__` has no way to "skip"
+an index (unlike `misfit_evaluate`/`misfit_encode`/`misfit_embed`, which warn
+and `continue`), so an isolated failure substitutes a zero volume and **warns**
+(`UserWarning`, matches the existing 4D-volume-fallback pattern) rather than
+failing silently — a bare `except Exception: return zeros` with no warning at
+all was the original implementation, and it's a real footgun: a systemic problem
+(a mount gone away, permissions revoked) would silently train on an ever-growing
+fraction of zero-filled "volumes" with zero visibility. `max_load_failures`
+_consecutive_ failures (no successful load in between; counter lives on the
+`Dataset` instance, which `persistent_workers=True` keeps alive for the whole
+run) raises `RuntimeError` instead, so a systemic issue fails the run loudly
+rather than being tolerated indefinitely. Defaults to 3 — small enough to catch
+a sustained problem quickly, large enough not to trip over one-off, isolated bad
+files spread across a long run (the counter resets to 0 on every successful
+load).
 
 ### `normalized_masked_mse` loss (default)
 
@@ -241,6 +264,21 @@ that path and the real run by `_write_results_skeleton()`. Combine with
 `--no-amp` to get an AMP-off config with no run/kill/edit/`--resume` dance;
 combine with `--resume` to just recreate the skeleton dirs (existing
 `config.json` is left alone, same as a real resume).
+
+### Training progress bar
+
+`utils.progress_bar.TrainProgressBar` / `ValidationProgressBar` mirror
+`mist.utils.progress_bar`'s classes (same columns, same `loss: ` / `lr: `
+formatting) so `misfit_train` output looks like MIST's — no `fold` argument,
+since MISFIT pretraining has no cross-validation folds. `TrainProgressBar`
+diverges from MIST in one way: `update(loss=None, lr=None)` — both optional,
+where MIST's are always passed — because gradient accumulation means a
+cross-rank-aggregated loss only exists at a window end (`is_window_end` in
+`train()`); mid-window micro-steps call `update()` with no arguments to advance
+the bar without touching the displayed text (Rich's `Progress.update()` leaves
+omitted fields at their last value). At `accum_steps=1` every step is a window
+end, so the displayed loss is identical to MIST's: a running mean of the
+all-reduced per-step loss (`train_meter.value`), refreshed every step.
 
 ### Transfer learning to MIST
 

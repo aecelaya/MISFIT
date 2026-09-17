@@ -15,7 +15,12 @@ from misfit.utils.hardware import (
 )
 from misfit.utils.io import read_json_file, write_json_file
 from misfit.utils.normalization import denormalize_patchwise, normalize_patchwise
-from misfit.utils.progress_bar import get_progress_bar
+from misfit.utils.progress_bar import (
+    TrainProgressBar,
+    ValidationProgressBar,
+    format_loss,
+    get_progress_bar,
+)
 
 __all__ = [
     "console",
@@ -33,4 +38,7 @@ __all__ = [
     "read_json_file",
     "write_json_file",
     "get_progress_bar",
+    "TrainProgressBar",
+    "ValidationProgressBar",
+    "format_loss",
 ]
