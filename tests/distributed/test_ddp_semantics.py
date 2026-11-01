@@ -68,8 +68,7 @@ def _grad_sync_worker(rank: int, world_size: int, port: int, is_last_accum: bool
 
     # Rank-specific data so that, without synchronisation, gradients differ.
     torch.manual_seed(100 + rank)
-    batch = {"image": torch.randn(1, 1, 32, 32, 32) * (rank + 1),
-             "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32) * (rank + 1)}
     optimizer.zero_grad()
     trainer._training_step(ddp, batch, criterion, optimizer,
                            window_size=1, is_last_accum=is_last_accum)

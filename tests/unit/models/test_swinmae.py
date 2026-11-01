@@ -324,3 +324,14 @@ def test_mist_swinunetr_small_accepts_misfit_encoder(tmp_path):
     assert len(summary["skipped"]) == 0, (
         f"Encoder weights were skipped (key mismatch): {summary['skipped'][:5]}"
     )
+
+
+def test_load_state_dict_ignores_legacy_spacing_embedding(tiny_model):
+    """Checkpoints with the removed spacing_embed module still load strictly."""
+    state = OrderedDict(tiny_model.state_dict())
+    state["spacing_embed.proj.0.weight"] = torch.zeros(4, 4)
+    fresh = SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
+    result = fresh.load_state_dict(state)
+    assert not result.missing_keys and not result.unexpected_keys
+    key = next(iter(tiny_model.state_dict()))
+    assert torch.equal(fresh.state_dict()[key], tiny_model.state_dict()[key])

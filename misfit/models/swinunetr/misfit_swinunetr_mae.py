@@ -24,7 +24,6 @@ Transfer learning compatibility:
     torch.save and passed directly to ``mist_train --pretrained-weights``.
 """
 
-import math
 from collections import OrderedDict
 from typing import Any
 
@@ -96,57 +95,6 @@ class MAEDecoder(nn.Module):
         for block in self.blocks:
             x = block(x)
         return self.head(x)
-
-
-class SpacingEmbedding(nn.Module):
-    """Sinusoidal embedding of 3D voxel spacing conditioned into the MAE decoder.
-
-    Encodes (spacing_d, spacing_h, spacing_w) as sinusoidal features and
-    projects them to the bottleneck channel count. The result is added to
-    the encoder bottleneck before decoding, so the decoder (and therefore
-    the encoder through backprop) learns to account for physical voxel size.
-
-    Args:
-        embed_dim: Sinusoidal feature dimension per spatial axis. Total input
-            to the MLP is 3 * embed_dim. Defaults to 64.
-        out_channels: Output dimension; must match the encoder bottleneck
-            channel count so the embedding can be broadcast-added.
-    """
-
-    def __init__(self, embed_dim: int = 64, out_channels: int = 768) -> None:
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.proj = nn.Sequential(
-            nn.Linear(3 * embed_dim, out_channels),
-            nn.SiLU(),
-            nn.Linear(out_channels, out_channels),
-        )
-
-    def _sinusoidal(self, values: torch.Tensor) -> torch.Tensor:
-        """Map a (B,) scalar to (B, embed_dim) sinusoidal features."""
-        half = self.embed_dim // 2
-        freqs = torch.exp(
-            -math.log(10000.0)
-            * torch.arange(half, dtype=torch.float32, device=values.device)
-            / max(half - 1, 1)
-        )
-        args = values.float().unsqueeze(-1) * freqs.unsqueeze(0)  # (B, half)
-        return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)  # (B, embed_dim)
-
-    def forward(self, spacing: torch.Tensor) -> torch.Tensor:
-        """Encode voxel spacing into a bottleneck-shaped embedding vector.
-
-        Args:
-            spacing: Tensor of shape (B, 3) containing (spacing_d, spacing_h,
-                spacing_w) in mm per voxel.
-
-        Returns:
-            Embedding tensor of shape (B, out_channels).
-        """
-        embeds = torch.cat(
-            [self._sinusoidal(spacing[:, i]) for i in range(3)], dim=-1
-        )  # (B, 3 * embed_dim)
-        return self.proj(embeds)  # (B, out_channels)
 
 
 class SwinMAE(MISFITModel):
@@ -250,10 +198,6 @@ class SwinMAE(MISFITModel):
             num_upsample=5,
         )
 
-        self.spacing_embed = SpacingEmbedding(
-            embed_dim=64,
-            out_channels=_bottleneck_channels,
-        )
 
     def generate_mask(
         self,
@@ -300,7 +244,6 @@ class SwinMAE(MISFITModel):
     def forward(
         self,
         x: torch.Tensor,
-        spacing: torch.Tensor | None = None,
         mask_ratio: float | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward pass.
@@ -308,11 +251,6 @@ class SwinMAE(MISFITModel):
         Args:
             x: Input tensor of shape (B, C, D, H, W). All spatial dimensions
                 must match img_size.
-            spacing: Voxel spacing in mm, shape (B, 3) as
-                (spacing_d, spacing_h, spacing_w). When provided, a sinusoidal
-                embedding of the spacing is added to the encoder bottleneck
-                before decoding so the model is aware of physical voxel size.
-                Defaults to None (spacing conditioning disabled).
             mask_ratio: Override the instance mask_ratio for this call.
                 Useful for curriculum training schedules. If None, uses the
                 value set at construction. Defaults to None.
@@ -333,16 +271,23 @@ class SwinMAE(MISFITModel):
         hidden_states = self.encoder(masked_x)
         bottleneck = hidden_states[4]  # (B, C', D/32, H/32, W/32)
 
-        # 3. Inject spacing conditioning into the bottleneck so the decoder
-        #    (and encoder through backprop) learns physical-scale awareness.
-        if spacing is not None:
-            spacing_emb = self.spacing_embed(spacing)
-            bottleneck = bottleneck + spacing_emb.view(bottleneck.shape[0], -1, 1, 1, 1)
-
-        # 4. Decode from bottleneck back to original resolution.
+        # 3. Decode from bottleneck back to original resolution.
         reconstruction = self.decoder(bottleneck)
 
         return {"reconstruction": reconstruction, "mask": mask}
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load weights, ignoring the removed spacing embedding.
+
+        Checkpoints from MISFIT 0.1.3-alpha and earlier contain a
+        ``spacing_embed.*`` decoder-conditioning module that no longer exists.
+        It never affected the encoder, so those keys are dropped and the rest
+        of the checkpoint loads strictly as usual.
+        """
+        state_dict = OrderedDict(
+            (k, v) for k, v in state_dict.items() if not k.startswith("spacing_embed.")
+        )
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     def get_encoder_state_dict(self) -> OrderedDict:
         """Return encoder-only weights for downstream transfer learning.

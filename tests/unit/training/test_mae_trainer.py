@@ -298,7 +298,7 @@ def test_trainer_training_step(tmp_path):
     criterion = MaskedMSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     loss_val = trainer._training_step(model, batch, criterion, optimizer)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
@@ -318,7 +318,7 @@ def test_trainer_validation_step(tmp_path):
     model.eval()
     criterion = MaskedMSELoss()
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     loss_val = trainer._validation_step(model, batch, criterion)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
@@ -346,7 +346,7 @@ def test_trainer_train_runs_single_epoch(tmp_path):
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("torch.cuda.set_device"), \
@@ -376,7 +376,7 @@ def test_trainer_train_with_resume(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("torch.cuda.set_device"), \
@@ -473,7 +473,7 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
 
     # Mock loader needs a sampler with set_epoch (DistributedSampler contract)
     mock_sampler = MagicMock()
@@ -515,7 +515,7 @@ def test_train_writes_config_json(tmp_path):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -699,7 +699,7 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -836,7 +836,7 @@ def test_train_resume_reads_and_validates_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -906,7 +906,7 @@ def test_training_step_skips_optimizer_on_non_last_accum(tmp_path):
     criterion = MaskedMSELoss()
     optimizer = MagicMock(wraps=torch.optim.Adam(model.parameters(), lr=1e-4))
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     optimizer.zero_grad()  # caller's responsibility
     trainer._training_step(model, batch, criterion, optimizer,
                            window_size=2, is_last_accum=False)
@@ -930,7 +930,7 @@ def test_training_step_scales_loss_by_window_size(tmp_path):
                         mask_patch_size=16, mask_ratio=0.75)
         criterion = MaskedMSELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+        batch = {"image": torch.randn(1, 1, 32, 32, 32)}
         optimizer.zero_grad()
         trainer._training_step(model, batch, criterion, optimizer,
                                window_size=window_size, is_last_accum=False)
@@ -972,7 +972,7 @@ def test_train_partial_trailing_window_steps_once(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     # 3 micro-batches, accum=2 → one full window (batches 0-1) + a trailing
     # partial window (batch 2). Both must produce an optimizer step.
     mock_loader = [dummy_batch, dummy_batch, dummy_batch]
@@ -1011,7 +1011,7 @@ def test_train_gradient_accumulation_two_steps(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch, dummy_batch]  # exactly 2 micro-batches
 
     step_count = {"n": 0}
@@ -1200,7 +1200,7 @@ def test_train_resolves_amp_to_false_on_cpu(tmp_path, monkeypatch):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -1225,7 +1225,7 @@ def test_train_keeps_amp_true_on_ampere(tmp_path):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -1280,7 +1280,7 @@ def test_no_amp_flag_resolves_to_fp32_even_on_ampere(tmp_path):
     args.no_amp = True
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -1321,7 +1321,7 @@ def test_no_amp_flag_ignored_on_resume_saved_config_wins(tmp_path):
     args.no_amp = True  # ignored: the saved config says amp=true
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -1350,7 +1350,7 @@ def test_train_resume_reresolves_amp_from_saved_config(tmp_path, monkeypatch):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     # Saved config requests AMP on; resuming on a CPU must downgrade it.
@@ -1384,7 +1384,7 @@ def test_train_warns_once_on_cpu(tmp_path, monkeypatch):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = [dummy_batch]
 
     warn = MagicMock()

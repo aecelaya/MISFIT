@@ -213,7 +213,7 @@ class MAETrainer:
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model.
-            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
+            batch: Dict with "image" (B, 1, D, H, W).
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
             window_size: Number of micro-steps in the current accumulation
@@ -231,7 +231,6 @@ class MAETrainer:
             normalisation), for logging purposes.
         """
         images = batch["image"].to(self.device, non_blocking=True)
-        spacing = batch["spacing"].to(self.device, non_blocking=True)
 
         amp_ctx = autocast_context(self.amp)
         # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
@@ -241,7 +240,7 @@ class MAETrainer:
             else nullcontext()
         )
         with sync_ctx, amp_ctx:
-            output = model(images, spacing=spacing)
+            output = model(images)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
@@ -265,17 +264,16 @@ class MAETrainer:
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model in eval mode.
-            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
+            batch: Dict with "image" (B, 1, D, H, W).
             criterion: Reconstruction loss function.
 
         Returns:
             Scalar loss value for this batch.
         """
         images = batch["image"].to(self.device, non_blocking=True)
-        spacing = batch["spacing"].to(self.device, non_blocking=True)
         amp_ctx = autocast_context(self.amp)
         with torch.no_grad(), amp_ctx:
-            output = model(images, spacing=spacing)
+            output = model(images)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,

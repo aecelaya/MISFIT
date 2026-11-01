@@ -192,12 +192,12 @@ A few practical guidelines:
     [Previewing a run without training](#previewing-a-run-without-training)
     below.
 
-- **Anisotropic data is handled natively.** MISFIT records each volume's voxel
-  spacing (mm) in the index and injects it into the model via sinusoidal
-  `SpacingEmbedding` conditioning on the decoder bottleneck. The model learns
-  the physical size of each crop regardless of acquisition protocol — no
-  resampling to isotropic spacing is required. Volumes from thick-slice CT (e.g.
-  5 mm slices) and thin-slice MRI can coexist in the same training run.
+- **Volumes are used at their native voxel spacing.** `misfit_index` records
+  each volume's spacing in mm (`spacing_d`, `spacing_h`, `spacing_w`) in the
+  index, but the model does not use it: crops are taken at native resolution, so
+  a 96-voxel crop covers a different physical extent on thick-slice CT (e.g. 5
+  mm slices) than on 1 mm MRI. If your corpus mixes very different spacings,
+  consider resampling volumes to a common spacing before indexing.
 
 - **The patch size is fixed at inference time.** `misfit_inspect`,
   `misfit_evaluate`, and `misfit_embed` all read `patch_size` from `config.json`

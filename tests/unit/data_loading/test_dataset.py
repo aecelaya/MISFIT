@@ -75,8 +75,8 @@ def test_dataset_getitem_shape_val(tmp_path):
     assert isinstance(sample, dict)
     assert sample["image"].shape == (1, 32, 32, 32)
     assert sample["image"].dtype == torch.float32
-    assert sample["spacing"].shape == (3,)
-    assert sample["spacing"].dtype == torch.float32
+    # Spacing stays in the index but is not part of the training batch.
+    assert set(sample) == {"image"}
 
 
 def test_dataset_getitem_shape_train(tmp_path):
@@ -106,13 +106,13 @@ def test_dataset_4d_nifti(tmp_path):
 
 
 def test_dataset_missing_file_returns_zeros(tmp_path):
-    """Missing nifti should return zeros image with spacing still populated."""
+    """Missing nifti should return a zeros image under the same batch keys."""
     index_path = _write_index(tmp_path, tmp_path / "missing.nii.gz")
     ds = MISFITDataset(index_path, patch_size=(32, 32, 32), augment=False)
     with pytest.warns(UserWarning, match="failed to load"):
         sample = ds[0]
     assert torch.all(sample["image"] == 0.0)
-    assert sample["spacing"].shape == (3,)
+    assert set(sample) == {"image"}
 
 
 # ---------------------------------------------------------------------------

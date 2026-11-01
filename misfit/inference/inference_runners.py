@@ -200,19 +200,11 @@ def reconstruct(
             try:
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
 
-                # Condition the decoder on this volume's voxel spacing, exactly
-                # as during training — otherwise the reconstruction is produced
-                # from an out-of-distribution bottleneck.
-                spacing = inference_utils.get_row_spacing(row, device)
-
-                def model_fn(tensor, _spacing=spacing):
-                    return model(tensor, spacing=_spacing)
-
                 padded, original_shape = inference_utils.pad_to_multiple(
                     volume, patch_size
                 )
                 recon_padded, mask_padded = _tiled_reconstruct(
-                    padded, patch_size, model_fn, device,
+                    padded, patch_size, model, device,
                     denorm_patches=denorm_patches, amp=use_amp,
                     mask_patch_size=mask_patch_size,
                 )

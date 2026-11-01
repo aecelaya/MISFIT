@@ -41,7 +41,7 @@ class MISFITDataset(Dataset):
     Args:
         index_path: Path to the Parquet metadata index produced by
             misfit_index. Must contain columns: path, p1, p99, fg_mean,
-            fg_std, spacing_d, spacing_h, spacing_w.
+            fg_std.
         patch_size: Spatial dimensions of the output patch (D, H, W).
             Must be divisible by 32 (SwinUNETR-V2 requirement) and must
             match SwinMAE.img_size. Defaults to (96, 96, 96).
@@ -166,14 +166,7 @@ class MISFITDataset(Dataset):
                 "consecutive failures before this aborts the run).",
                 stacklevel=2,
             )
-            spacing = torch.tensor(
-                [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
-                dtype=torch.float32,
-            )
-            return {
-                "image": torch.zeros(1, *self.patch_size, dtype=torch.float32),
-                "spacing": spacing,
-            }
+            return {"image": torch.zeros(1, *self.patch_size, dtype=torch.float32)}
 
         self._consecutive_load_failures = 0
 
@@ -197,10 +190,5 @@ class MISFITDataset(Dataset):
         # Add channel dim (1, D, H, W) for MONAI transforms.
         volume_t = torch.from_numpy(volume.copy()).unsqueeze(0)
 
-        spacing = torch.tensor(
-            [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
-            dtype=torch.float32,
-        )
-
         # Apply spatial crop and augmentation.
-        return {"image": self.transforms(volume_t), "spacing": spacing}
+        return {"image": self.transforms(volume_t)}
