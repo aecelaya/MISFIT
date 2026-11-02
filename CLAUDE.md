@@ -243,7 +243,7 @@ trainer, evaluator, inference, and encode/embed code are architecture-agnostic:
 `forward(x, mask_ratio=None)` returns `{"reconstruction", "mask"}` in both train
 and eval mode, `model.encoder(x)[-1]` is the bottleneck (`misfit_encode` /
 `misfit_embed`), and every parameter must receive a gradient (DDP runs with
-`find_unused_parameters=False`; `test_ddp_synchronises_gradients_on_window_end`
+`find_unused_parameters=False`; `test_ddp_synchronizes_gradients_on_window_end`
 is parametrized over architectures and asserts it).
 
 `ResEncMAE(MISFITModel)` (`--model resenc`, the same name as MIST's model) is

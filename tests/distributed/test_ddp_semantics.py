@@ -1,9 +1,9 @@
 """Multi-process DDP integration tests using the CPU ``gloo`` backend.
 
 These spawn real torch.distributed process groups (no GPU needed) to exercise
-behaviour that single-process, ``world_size==1`` unit tests cannot reach:
+behavior that single-process, ``world_size==1`` unit tests cannot reach:
 
-* gradient synchronisation semantics that the gradient-accumulation fix relies
+* gradient synchronization semantics that the gradient-accumulation fix relies
   on (the trailing-window ``no_sync()`` divergence bug);
 * the config precondition guard failing fast on *every* rank instead of
   leaving worker ranks hung on rendezvous.
@@ -79,7 +79,7 @@ def _grad_sync_worker(
     criterion = MaskedMSELoss()
     optimizer = torch.optim.SGD(ddp.parameters(), lr=0.0)  # inspect grads, don't move params
 
-    # Rank-specific data so that, without synchronisation, gradients differ.
+    # Rank-specific data so that, without synchronization, gradients differ.
     torch.manual_seed(100 + rank)
     batch = {"image": torch.randn(1, 1, 32, 32, 32) * (rank + 1)}
     optimizer.zero_grad()
@@ -99,7 +99,7 @@ def _grad_sync_worker(
     spread = max(gathered) - min(gathered)
     if is_last_accum:
         # Window end → gradients are all-reduced → identical on every rank.
-        assert spread < 1e-6, f"gradients not synchronised across ranks: {gathered}"
+        assert spread < 1e-6, f"gradients not synchronized across ranks: {gathered}"
     else:
         # no_sync() → each rank keeps its own (different) gradients.
         assert spread > 1e-9, f"gradients unexpectedly identical under no_sync: {gathered}"
@@ -128,7 +128,7 @@ def _guard_worker(rank: int, world_size: int, results_dir: str) -> None:
 
 
 @pytest.mark.parametrize("model_name", ["swinunetr", "resenc"])
-def test_ddp_synchronises_gradients_on_window_end(model_name):
+def test_ddp_synchronizes_gradients_on_window_end(model_name):
     """is_last_accum=True → DDP all-reduces, so gradients match across ranks."""
     mp.spawn(_grad_sync_worker, args=(2, _free_port(), True, model_name),
              nprocs=2, join=True)

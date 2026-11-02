@@ -584,7 +584,7 @@ MISFIT trains on single-channel images. MIST tasks are often multi-channel
 `--input-channel-strategy` flag controls how the single-channel patch embedding
 is adapted to the multi-channel model:
 
-| Strategy  | Behaviour                                                                                |
+| Strategy  | Behavior                                                                                 |
 | --------- | ---------------------------------------------------------------------------------------- |
 | `average` | Average source channels to one, then tile to match the target channel count. _(default)_ |
 | `first`   | Use only the first source channel, then tile to match the target channel count.          |

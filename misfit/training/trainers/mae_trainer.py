@@ -146,7 +146,7 @@ class MAETrainer:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
-    def _warn_if_underutilising_gpus(self) -> None:
+    def _warn_if_underutilizing_gpus(self) -> None:
         """Warn when multiple GPUs are visible but we are not under torchrun.
 
         MISFIT has no mp.spawn fallback: without torchrun, WORLD_SIZE is 1 and
@@ -260,7 +260,7 @@ class MAETrainer:
         images = batch["image"].to(self.device, non_blocking=True)
 
         amp_ctx = autocast_context(self.amp)
-        # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
+        # Skip all-reduce on non-final micro-steps to avoid premature synchronization.
         sync_ctx = (
             model.no_sync()
             if (self.is_distributed and not is_last_accum)
@@ -418,7 +418,7 @@ class MAETrainer:
     # ------------------------------------------------------------------
 
     def _build_config(self) -> dict:
-        """Serialise current training args to a reproducibility config dict."""
+        """Serialize current training args to a reproducibility config dict."""
         import misfit
         from misfit.metrics.metrics_registry import DEFAULT_METRICS
         return {
@@ -616,7 +616,7 @@ class MAETrainer:
                 "for testing and debugging; MAE pretraining on CPU is very slow."
             )
 
-        self._warn_if_underutilising_gpus()
+        self._warn_if_underutilizing_gpus()
         self._setup_distributed()
         self._enable_cudnn_optimizations()
         set_seed(self.args.seed, self.rank)
@@ -722,7 +722,7 @@ class MAETrainer:
             # here (the loader yields a whole number of windows), but the plan
             # still guarantees the final batch closes its window, so its
             # gradients are synced and stepped instead of being left under
-            # no_sync() (which silently desynchronises ranks).
+            # no_sync() (which silently desynchronizes ranks).
             plan = build_accumulation_plan(len(train_loader), accum_steps)
             progress_ctx = (
                 TrainProgressBar(

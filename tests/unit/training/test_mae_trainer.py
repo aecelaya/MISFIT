@@ -843,7 +843,7 @@ def test_build_config_records_target_spacing(tmp_path):
     assert config["spatial_config"] == {
         "patch_size": [32, 32, 32], "target_spacing": [1.0, 1.0, 2.5],
     }
-    json.dumps(config)  # stays JSON-serialisable
+    json.dumps(config)  # stays JSON-serializable
 
 
 def test_build_model_passes_target_spacing(tmp_path):
@@ -1120,7 +1120,7 @@ def test_train_gradient_accumulation_two_steps(tmp_path):
     assert step_count["n"] == 1
 
 
-def test_warn_if_underutilising_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, monkeypatch):
+def test_warn_if_underutilizing_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, monkeypatch):
     """Warns when >1 GPU is visible but WORLD_SIZE==1 (no torchrun)."""
     import misfit.training.trainers.mae_trainer as mt
 
@@ -1131,14 +1131,14 @@ def test_warn_if_underutilising_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, m
 
     warn = MagicMock()
     monkeypatch.setattr(mt, "print_warning", warn)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     warn.assert_called_once()
     msg = warn.call_args.args[0]
     assert "torchrun" in msg and "--nproc_per_node=4" in msg
 
 
-def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypatch):
+def test_warn_if_underutilizing_gpus_silent_when_distributed(tmp_path, monkeypatch):
     """No warning under torchrun (is_distributed) or with a single visible GPU."""
     import misfit.training.trainers.mae_trainer as mt
 
@@ -1150,12 +1150,12 @@ def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypat
     trainer.is_distributed = True
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 8)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     # Single visible GPU: nothing to warn about.
     trainer.is_distributed = False
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     warn.assert_not_called()
 

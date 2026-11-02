@@ -1,7 +1,7 @@
 """Shared Rich console and output formatting helpers for MISFIT.
 
 All user-facing messages should go through these helpers so that formatting
-(colours, prefixes, spacing) is consistent across every CLI command and
+(colors, prefixes, spacing) is consistent across every CLI command and
 module. Import the shared ``console`` singleton rather than creating new
 Console instances per module.
 """
