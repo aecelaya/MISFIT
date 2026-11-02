@@ -119,7 +119,7 @@ class MAETrainer:
     # ------------------------------------------------------------------
 
     def _setup_distributed(self) -> None:
-        """Initialise the process group (torchrun-native).
+        """Initialize the process group (torchrun-native).
 
         Pins this rank to its own GPU with ``torch.cuda.set_device`` *before*
         ``dist.init_process_group``, and passes ``device_id`` explicitly.
@@ -140,7 +140,7 @@ class MAETrainer:
                 init_kwargs["device_id"] = torch.device("cuda", self.local_rank)
             dist.init_process_group(backend=backend, **init_kwargs)
 
-    def _enable_cudnn_optimisations(self) -> None:
+    def _enable_cudnn_optimizations(self) -> None:
         if not self.use_cuda:
             return
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -604,7 +604,7 @@ class MAETrainer:
             if self.is_main:
                 self._write_results_skeleton(results_dir, config_path)
                 console.print(
-                    f"[bold]Initialised[/bold] '{results_dir}' — wrote "
+                    f"[bold]Initialized[/bold] '{results_dir}' — wrote "
                     f"config.json (amp={self.amp}) without training. Edit it "
                     "if needed, then rerun with --resume to pick up edits."
                 )
@@ -618,7 +618,7 @@ class MAETrainer:
 
         self._warn_if_underutilising_gpus()
         self._setup_distributed()
-        self._enable_cudnn_optimisations()
+        self._enable_cudnn_optimizations()
         set_seed(self.args.seed, self.rank)
 
         # --- Build components ---

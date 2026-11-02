@@ -1,6 +1,6 @@
 """Utilities for MISFIT reconstruction evaluation.
 
-Mirrors MIST's evaluation_utils pattern: DataFrame initialisation and
+Mirrors MIST's evaluation_utils pattern: DataFrame initialization and
 per-column summary statistics (mean, std, quartiles).
 """
 import warnings

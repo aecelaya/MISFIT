@@ -345,12 +345,12 @@ def test_trainer_validation_step(tmp_path):
     assert loss_val >= 0
 
 
-def test_trainer_enable_cudnn_optimisations(tmp_path):
-    """_enable_cudnn_optimisations sets cuda flags (no-op on CPU, just no error)."""
+def test_trainer_enable_cudnn_optimizations(tmp_path):
+    """_enable_cudnn_optimizations sets cuda flags (no-op on CPU, just no error)."""
     from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
-    trainer._enable_cudnn_optimisations()  # should not raise
+    trainer._enable_cudnn_optimizations()  # should not raise
 
 
 def test_trainer_train_runs_single_epoch(tmp_path):
@@ -606,7 +606,7 @@ def test_init_only_prints_a_confirmation(tmp_path):
         MAETrainer(args).train()
 
     mock_print.assert_called_once()
-    assert "Initialised" in mock_print.call_args[0][0]
+    assert "Initialized" in mock_print.call_args[0][0]
 
 
 def test_init_only_reflects_no_amp_in_written_config(tmp_path):
@@ -1181,19 +1181,19 @@ def test_trainer_falls_back_to_cpu_when_cuda_unavailable(tmp_path, monkeypatch):
     assert trainer.device == torch.device("cpu")
 
 
-def test_enable_cudnn_optimisations_noop_on_cpu(tmp_path, monkeypatch):
-    """_enable_cudnn_optimisations returns early on CPU without flipping cudnn flags."""
+def test_enable_cudnn_optimizations_noop_on_cpu(tmp_path, monkeypatch):
+    """_enable_cudnn_optimizations returns early on CPU without flipping cudnn flags."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     from misfit.training.trainers.mae_trainer import MAETrainer
     trainer = MAETrainer(_make_args(tmp_path))
 
     monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
-    trainer._enable_cudnn_optimisations()  # must not raise
+    trainer._enable_cudnn_optimizations()  # must not raise
     assert torch.backends.cudnn.benchmark is False  # untouched on the CPU path
 
 
 def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_dist):
-    """Multi-process GPU run initialises the process group with NCCL."""
+    """Multi-process GPU run initializes the process group with NCCL."""
     monkeypatch.setenv("WORLD_SIZE", "2")
     from misfit.training.trainers.mae_trainer import MAETrainer
     trainer = MAETrainer(_make_args(tmp_path))
@@ -1202,7 +1202,7 @@ def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_
 
 
 def test_setup_distributed_uses_gloo_backend_on_cpu(tmp_path, monkeypatch, fake_dist):
-    """Multi-process CPU run initialises the process group with gloo."""
+    """Multi-process CPU run initializes the process group with gloo."""
     monkeypatch.setenv("WORLD_SIZE", "2")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     from misfit.training.trainers.mae_trainer import MAETrainer

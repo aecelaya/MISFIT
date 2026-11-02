@@ -24,7 +24,7 @@ class EmbedTrainer:
     - One aggregator forward pass per volume.
     - Optional output head (classification: linear; contrastive: MLP).
     - Loss computed by the objective.
-    - Adam optimiser with cosine LR decay.
+    - Adam optimizer with cosine LR decay.
 
     Args:
         input_csv: Unified CSV with columns ``volume_id``, ``split``,
@@ -125,9 +125,9 @@ class EmbedTrainer:
         head = self.objective.build_head(self.embed_dim).to(self.device)
 
         params = list(self.aggregator.parameters()) + list(head.parameters())
-        optimiser = torch.optim.Adam(params, lr=self.learning_rate)
+        optimizer = torch.optim.Adam(params, lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimiser, T_max=self.num_epochs
+            optimizer, T_max=self.num_epochs
         )
 
         console.print(
@@ -140,7 +140,7 @@ class EmbedTrainer:
                 "Training", total=self.num_epochs
             )
             for epoch in range(1, self.num_epochs + 1):
-                avg_loss = self._train_epoch(loader, head, optimiser)
+                avg_loss = self._train_epoch(loader, head, optimizer)
                 scheduler.step()
                 progress.advance(epoch_task)
 
@@ -162,7 +162,7 @@ class EmbedTrainer:
         self,
         loader: DataLoader,
         head: nn.Module,
-        optimiser: torch.optim.Optimizer,
+        optimizer: torch.optim.Optimizer,
     ) -> float:
         self.aggregator.train()
         head.train()
@@ -182,9 +182,9 @@ class EmbedTrainer:
             head_output = head(embeddings)           # (B, num_classes) or (B, proj_dim)
             loss = self.objective.compute_loss(head_output, labels)
 
-            optimiser.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
-            optimiser.step()
+            optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1

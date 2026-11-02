@@ -410,7 +410,7 @@ Multi-pod `Job`s set `--nnodes` / `--node_rank` / `--master_addr` /
 
 ### If a multi-GPU run hangs at startup
 
-MISFIT pins each rank to its own GPU before initialising the process group, so
+MISFIT pins each rank to its own GPU before initializing the process group, so
 the common "every rank piled onto `cuda:0`" hang does not apply. If a run still
 stalls at startup and (after ~10 minutes) dies with a NCCL collective-timeout
 (`Watchdog caught collective operation timeout`), the cause is GPU-to-GPU

@@ -257,7 +257,7 @@ class ReconstructionEvaluator:
         patch is normalized **per ``mask_patch_size`` cube** (via
         :func:`misfit.utils.normalization.normalize_patchwise`) — the exact
         transform the loss applies — so ``masked_mse`` is measured in the space
-        the model was optimised in. Other losses keep the whole-volume z-score
+        the model was optimized in. Other losses keep the whole-volume z-score
         target.
 
         The mask for tile *i* is drawn from ``seed + i`` so results are

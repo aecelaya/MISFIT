@@ -201,8 +201,8 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         ),
     )
 
-    # --- Optimisation ---
-    opt = parser.add_argument_group("Optimisation")
+    # --- Optimization ---
+    opt = parser.add_argument_group("Optimization")
     opt.add_argument(
         "--epochs", type=non_negative_int, default=1000, metavar="N",
         help=(

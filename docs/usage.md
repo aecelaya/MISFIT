@@ -186,7 +186,7 @@ Run training with `misfit_train`:
   `normalized_masked_mse`)_ See
   [Loss Functions](advanced_topics.md#loss-functions) for available options.
 
-### Optimisation
+### Optimization
 
 - `--epochs N`: Training epochs. _(default: 1000)_
 - `--steps-per-epoch N`: Optimizer steps per epoch. _(default: 250)_
@@ -379,7 +379,7 @@ console.
 | ------------- | ------------------------------------------------- | ---------------- |
 | `masked_mae`  | Mean absolute error on masked voxels.             | Lower is better  |
 | `masked_mse`  | Mean squared error on masked voxels — the value   | Lower is better  |
-|               | `normalized_masked_mse` optimises.                |                  |
+|               | `normalized_masked_mse` optimizes.                |                  |
 | `masked_psnr` | Peak signal-to-noise ratio on masked voxels (dB). | Higher is better |
 | `ssim`        | Structural similarity (opt-in, see note).         | Higher is better |
 
