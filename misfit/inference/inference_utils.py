@@ -76,7 +76,7 @@ def build_model_from_checkpoint(
     return model
 
 
-def load_and_normalise(
+def load_and_normalize(
     nifti_path: str | Path,
     p1: float,
     p99: float,
@@ -86,7 +86,7 @@ def load_and_normalise(
     spacing: tuple[float, float, float] | None = None,
     target_spacing: tuple[float, float, float] | None = None,
 ) -> np.ndarray | None:
-    """Load a NIfTI volume, apply clip + z-score normalisation, and resample.
+    """Load a NIfTI volume, apply clip + z-score normalization, and resample.
 
     Args:
         nifti_path: Path to a ``.nii`` or ``.nii.gz`` file.
@@ -97,7 +97,7 @@ def load_and_normalise(
         eps: Minimum value for fg_std to avoid division by zero.
         spacing: The volume's (x, y, z) voxel spacing (from its index row).
             Required when target_spacing is set.
-        target_spacing: Resample the normalised volume to this spacing, as
+        target_spacing: Resample the normalized volume to this spacing, as
             training did. None (default) keeps the native resolution.
 
     Returns:

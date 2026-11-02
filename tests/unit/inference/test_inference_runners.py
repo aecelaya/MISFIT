@@ -247,7 +247,7 @@ class TestReconstruct:
             "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
             side_effect=_tiny_model,
         ), patch(
-            "misfit.inference.inference_runners.inference_utils.load_and_normalise",
+            "misfit.inference.inference_runners.inference_utils.load_and_normalize",
             return_value=None,
         ):
             reconstruct(
@@ -571,7 +571,7 @@ class TestTiledReconstructDenormPatches:
     def test_denorm_patches_true_scales_by_patch_stats(self):
         """With denorm_patches=True each patch is scaled by the input patch mean/std.
 
-        The model output is treated as patch-normalised (unit variance, zero mean).
+        The model output is treated as patch-normalized (unit variance, zero mean).
         A reconstruction of all-zeros should be restored to the patch mean.
         """
         from misfit.inference.inference_runners import _tiled_reconstruct

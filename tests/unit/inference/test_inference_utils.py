@@ -11,7 +11,7 @@ from misfit.inference.inference_utils import (
     build_model_from_checkpoint,
     centre_crop_or_pad,
     get_default_device,
-    load_and_normalise,
+    load_and_normalize,
     load_checkpoint,
     pad_to_multiple,
 )
@@ -73,28 +73,28 @@ def test_build_model_default_device(tmp_path):
     assert model is not None
 
 
-def test_load_and_normalise_success(tmp_path):
+def test_load_and_normalize_success(tmp_path):
     data = np.random.randn(16, 16, 16).astype(np.float32)
     img = nib.Nifti1Image(data, np.eye(4))
     p = tmp_path / "vol.nii.gz"
     nib.save(img, str(p))
 
-    result = load_and_normalise(p, p1=-2, p99=2, fg_mean=0.0, fg_std=1.0)
+    result = load_and_normalize(p, p1=-2, p99=2, fg_mean=0.0, fg_std=1.0)
     assert result is not None
     assert result.shape == (16, 16, 16)
 
 
-def test_load_and_normalise_missing_file(tmp_path):
-    result = load_and_normalise(tmp_path / "missing.nii.gz", -1, 1, 0, 1)
+def test_load_and_normalize_missing_file(tmp_path):
+    result = load_and_normalize(tmp_path / "missing.nii.gz", -1, 1, 0, 1)
     assert result is None
 
 
-def test_load_and_normalise_4d(tmp_path):
+def test_load_and_normalize_4d(tmp_path):
     data = np.random.randn(16, 16, 16, 2).astype(np.float32)
     img = nib.Nifti1Image(data, np.eye(4))
     p = tmp_path / "vol4d.nii.gz"
     nib.save(img, str(p))
-    result = load_and_normalise(p, -2, 2, 0.0, 1.0)
+    result = load_and_normalize(p, -2, 2, 0.0, 1.0)
     assert result.shape == (16, 16, 16)
 
 
@@ -136,21 +136,21 @@ def test_pad_to_multiple_padded_region_is_zero():
     assert padded[:, :, 33:].sum() == 0
 
 
-def test_load_and_normalise_resamples_to_target_spacing(tmp_path):
+def test_load_and_normalize_resamples_to_target_spacing(tmp_path):
     p = tmp_path / "vol.nii.gz"
     nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
                              np.eye(4)), str(p))
-    result = load_and_normalise(
+    result = load_and_normalize(
         p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0), target_spacing=(1.0, 1.0, 1.0)
     )
     assert result.shape == (8, 8, 16)
 
 
-def test_load_and_normalise_without_target_spacing_ignores_spacing(tmp_path):
+def test_load_and_normalize_without_target_spacing_ignores_spacing(tmp_path):
     p = tmp_path / "vol.nii.gz"
     nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
                              np.eye(4)), str(p))
-    result = load_and_normalise(p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0))
+    result = load_and_normalize(p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0))
     assert result.shape == (16, 16, 4)
 
 

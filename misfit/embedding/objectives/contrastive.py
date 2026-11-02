@@ -98,7 +98,7 @@ class SupervisedContrastiveLoss(nn.Module):
         """Compute SupCon loss.
 
         Args:
-            projections: ``(B, D)`` ℓ²-normalised projection vectors.
+            projections: ``(B, D)`` ℓ²-normalized projection vectors.
             labels: ``(B,)`` integer group indices.
 
         Returns:
@@ -151,7 +151,7 @@ class ContrastiveObjective(TrainingObjective):
 
     The output head is a two-layer MLP projection head (``embed_dim →
     embed_dim → PROJECTION_DIM``) with ReLU activation and ℓ²
-    normalisation.  The contrastive loss operates on the projected space.
+    normalization.  The contrastive loss operates on the projected space.
     """
 
     name: str = "contrastive"
@@ -245,7 +245,7 @@ class ContrastiveObjective(TrainingObjective):
         )
 
     def build_head(self, embed_dim: int) -> nn.Module:
-        """Two-layer MLP projection head with ℓ² normalisation."""
+        """Two-layer MLP projection head with ℓ² normalization."""
         return nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.ReLU(inplace=True),
@@ -256,10 +256,10 @@ class ContrastiveObjective(TrainingObjective):
     def compute_loss(
         self, head_output: torch.Tensor, labels: torch.Tensor
     ) -> torch.Tensor:
-        """Supervised Contrastive loss on ℓ²-normalised projections.
+        """Supervised Contrastive loss on ℓ²-normalized projections.
 
         Args:
-            head_output: ``(B, PROJECTION_DIM)`` ℓ²-normalised projections.
+            head_output: ``(B, PROJECTION_DIM)`` ℓ²-normalized projections.
             labels: ``(B,)`` integer group indices.
 
         Returns:

@@ -18,7 +18,7 @@ class CropFeaturesDataset(Dataset):
     - ``feature_map``: ``(N_crops, C, D', H', W')`` float32 — raw spatial
       bottleneck feature maps from the encoder.  GAP is applied internally
       to yield ``(N_crops, C)`` before passing to the aggregator.
-    - ``positions``: ``(N_crops, 3)`` float32 — normalised 3-D crop
+    - ``positions``: ``(N_crops, 3)`` float32 — normalized 3-D crop
       coordinates in ``[0, 1]``.
 
     Args:

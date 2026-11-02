@@ -15,7 +15,7 @@ spatial-aware consumers can be added without re-running encoding.
 Each volume is saved as a compressed ``.npz`` file with two arrays:
 
 - ``feature_map``: ``(N_crops, C, D', H', W')`` float32
-- ``positions``:   ``(N_crops, 3)`` float32 — normalised 3-D crop centres
+- ``positions``:   ``(N_crops, 3)`` float32 — normalized 3-D crop centres
 
 Usage::
 
@@ -65,7 +65,7 @@ def encode_entry(args=None) -> None:
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
         get_default_device,
-        load_and_normalise,
+        load_and_normalize,
         load_checkpoint,
     )
 
@@ -97,7 +97,7 @@ def encode_entry(args=None) -> None:
                 progress.advance(task)
                 continue
 
-            volume = load_and_normalise(
+            volume = load_and_normalize(
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
                 spacing=get_row_spacing(row) if target_spacing else None,
                 target_spacing=target_spacing,
@@ -135,7 +135,7 @@ def _encode_volume(
     """Tile *volume* into crops and return raw bottleneck feature maps.
 
     Args:
-        volume: Normalised float32 array of shape ``(D, H, W)``.
+        volume: Normalized float32 array of shape ``(D, H, W)``.
         model: Pretrained MISFIT model with a ``.encoder`` attribute.
         patch_size: Crop size in voxels. Either a single int (cubic crop) or a
             ``(D, H, W)`` sequence for anisotropic crops.
@@ -143,7 +143,7 @@ def _encode_volume(
 
     Returns:
         feature_map: ``(N_crops, C, D', H', W')`` float32 ndarray.
-        positions:   ``(N_crops, 3)`` float32 ndarray of normalised crop centres.
+        positions:   ``(N_crops, 3)`` float32 ndarray of normalized crop centres.
     """
     pd_, ph_, pw_ = (
         (patch_size, patch_size, patch_size)

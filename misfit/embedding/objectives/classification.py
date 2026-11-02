@@ -52,7 +52,7 @@ class ClassificationObjective(TrainingObjective):
         unique_labels = sorted(df[label_col].astype(str).unique())
         self.label_to_idx = {lbl: idx for idx, lbl in enumerate(unique_labels)}
         self.num_classes = len(unique_labels)
-        # Normalise the label column to string so the mapping applies cleanly.
+        # Normalize the label column to string so the mapping applies cleanly.
         df[label_col] = df[label_col].astype(str)
         return df
 

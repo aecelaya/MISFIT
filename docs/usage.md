@@ -283,9 +283,9 @@ produce one score per volume. The per-tile mask is drawn from `--seed` so the
 whole evaluation is reproducible.
 
 Metrics are computed in the **training loss's space**: when the run used
-`normalized_masked_mse` the target is normalised per `mask_patch_size` cube —
+`normalized_masked_mse` the target is normalized per `mask_patch_size` cube —
 exactly as the loss does — so `masked_mse` is directly comparable to the run's
-`best_val_loss`. Because a per-region-normalised error is ≈ 1.0 for _any_
+`best_val_loss`. Because a per-region-normalized error is ≈ 1.0 for _any_
 constant predictor, every metric is also reported for a **naive baseline**
 (impute the masked voxels with the visible-region mean) plus a `_skill` column
 (`1 - model/naive` for lower-is-better metrics, `model - naive` for
@@ -368,7 +368,7 @@ console.
 <!-- prettier-ignore -->
 !!!note
     `ssim` is **not** in the default set. It needs a consistent absolute-intensity
-    space and a spatial window, and per-cube normalisation depresses its absolute
+    space and a spatial window, and per-cube normalization depresses its absolute
     value with boundary seams. Request it with `--metrics ssim` if you want it in
     the CSV, but for a viewer-space structural read use `misfit_inspect` instead.
 
@@ -383,14 +383,14 @@ quality — open the input and output side-by-side in a viewer such as ITK-SNAP 
 
 The reconstruction pipeline:
 
-1. Loads and z-score normalises the volume.
+1. Loads and z-score normalizes the volume.
 2. Zero-pads to the nearest multiple of the patch size in every dimension.
 3. Tiles the padded volume into non-overlapping patches and runs MAE
    reconstruction on each.
 4. Stitches the reconstructed patches and their masks back into the full padded
    volume.
 5. Trims padding to restore the original voxel dimensions.
-6. Denormalises reconstruction intensities back to the original intensity space
+6. Denormalizes reconstruction intensities back to the original intensity space
    (`reconstruction × fg_std + fg_mean`).
 7. Saves outputs under two subdirectories of `--output-dir`:
    - `reconstructions/<volume_id>.nii.gz` — full-volume reconstruction.
@@ -564,7 +564,7 @@ One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
 | Key           | Shape                      | Description                                    |
 | ------------- | -------------------------- | ---------------------------------------------- |
 | `feature_map` | `(N_crops, C, D', H', W')` | Full spatial bottleneck feature maps.          |
-| `positions`   | `(N_crops, 3)`             | Normalised 3D centre coordinates of each crop. |
+| `positions`   | `(N_crops, 3)`             | Normalized 3D centre coordinates of each crop. |
 
 ---
 

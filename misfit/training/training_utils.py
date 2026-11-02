@@ -57,7 +57,7 @@ def build_accumulation_plan(
        Under DDP the closing micro-step runs with gradient synchronisation, so
        the optimizer never steps on un-all-reduced gradients (which would let
        ranks silently diverge).
-    2. Each window's loss is normalised by its **actual** size, so the trailing
+    2. Each window's loss is normalized by its **actual** size, so the trailing
        window of ``num_batches % accum_steps`` micro-steps is scaled correctly
        rather than by the full ``accum_steps``.
 

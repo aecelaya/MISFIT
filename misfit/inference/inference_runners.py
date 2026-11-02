@@ -3,7 +3,7 @@
 ``reconstruct``
     Runs the full MAE forward pass on every non-overlapping patch of each
     volume, stitches the results back into the original coordinate space,
-    denormalises the intensities, and saves outputs under two subdirectories:
+    denormalizes the intensities, and saves outputs under two subdirectories:
 
     - ``reconstructions/`` — full-volume reconstruction NIfTIs.
     - ``masks/`` — binary masks using the model convention (1 = masked /
@@ -54,7 +54,7 @@ def _tiled_reconstruct(
             (:func:`misfit.utils.normalization.denormalize_patchwise`). Set this
             when the model was trained with ``normalized_masked_mse`` so the
             stitched reconstruction is back in the volume z-score space (and can
-            then be denormalised to original intensities). Defaults to ``False``.
+            then be denormalized to original intensities). Defaults to ``False``.
         amp: When ``True`` (default), run the forward pass under bfloat16
             autocast on CUDA devices. Has no effect on CPU.
         mask_patch_size: Edge length of the normalization cubes — must match the
@@ -82,7 +82,7 @@ def _tiled_reconstruct(
                     output = model_fn(tensor)
                 recon = output["reconstruction"].squeeze().float().cpu().numpy()
                 if denorm_patches:
-                    # The model predicts per-mask-cube-normalised values (zero
+                    # The model predicts per-mask-cube-normalized values (zero
                     # mean, unit variance per mask_patch_size cube). Undo that
                     # with the target's per-cube stats so the stitched
                     # reconstruction is back in the volume z-score space.
@@ -113,7 +113,7 @@ def reconstruct(
 
     For each volume the function:
 
-    1. Loads and z-score normalises the NIfTI data, then resamples it to
+    1. Loads and z-score normalizes the NIfTI data, then resamples it to
        *target_spacing* when the run used one.
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension.
     3. Tiles the padded volume into non-overlapping patches and runs MAE
@@ -123,10 +123,10 @@ def reconstruct(
     5. Trims padding to restore the original voxel dimensions, resampling back
        to the volume's native grid if step 1 resampled it, so outputs overlay
        on the input NIfTI with its own affine.
-    6. Denormalises reconstruction intensities (``recon × fg_std + fg_mean``).
+    6. Denormalizes reconstruction intensities (``recon × fg_std + fg_mean``).
        When ``training_config["loss"]`` is ``"normalized_masked_mse"``, the
-       per-patch normalisation applied by the loss is first undone (step 4a)
-       before the volume-level denormalisation so that saved intensities are
+       per-patch normalization applied by the loss is first undone (step 4a)
+       before the volume-level denormalization so that saved intensities are
        in the original physical range.
     7. Saves outputs under two subdirectories of *output_dir*:
        - ``reconstructions/<volume_id>.nii.gz``
@@ -143,11 +143,11 @@ def reconstruct(
             ``config.json``).
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects the correct
-            denormalisation, and the ``amp`` flag toggles bfloat16 autocast
+            denormalization, and the ``amp`` flag toggles bfloat16 autocast
             (defaults to enabled when absent, then resolved against the current
             hardware — BF16 needs an NVIDIA Ampere+ or AMD CDNA/RDNA3+ GPU,
             otherwise FP32 is used).
-            When ``None``, volume-level-only denormalisation is applied
+            When ``None``, volume-level-only denormalization is applied
             (correct for ``masked_mse`` and ``masked_l1``).
         device: Torch device. Defaults to CUDA if available, else CPU.
         split: If the index contains a ``split`` column, only rows whose
@@ -197,7 +197,7 @@ def reconstruct(
             recon_path = recon_dir / f"{volume_id}.nii.gz"
             mask_path = mask_dir / f"{volume_id}.nii.gz"
 
-            volume = inference_utils.load_and_normalise(
+            volume = inference_utils.load_and_normalize(
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
                 spacing=get_row_spacing(row) if target_spacing else None,
                 target_spacing=target_spacing,

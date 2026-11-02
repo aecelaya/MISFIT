@@ -426,7 +426,7 @@ def test_embed_entry_calls_extract_features(tmp_path):
             patch.object(_iutils, "build_model_from_checkpoint") as mock_model, \
             patch.object(_areg, "get_aggregator") as mock_agg_cls, \
             patch.object(_emb_mod, "Embedder") as mock_embedder_cls, \
-            patch.object(_iutils, "load_and_normalise",
+            patch.object(_iutils, "load_and_normalize",
                          return_value=np.zeros((8, 8, 8), dtype=np.float32)):
 
         mock_model.return_value = MagicMock()
@@ -625,7 +625,7 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
                       return_value=tiny_model), \
          patch.object(_areg, "get_aggregator",
                       return_value=MeanPoolAggregator), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
@@ -667,7 +667,7 @@ def test_embed_entry_exception_during_processing(tmp_path):
          patch.object(_areg, "get_aggregator",
                       return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         # must not raise — exception is caught internally
         embed_entry([
@@ -681,8 +681,8 @@ def test_embed_entry_exception_during_processing(tmp_path):
     assert not (output_dir / "bad_vol.npz").exists()
 
 
-def test_embed_entry_load_normalise_returns_none(tmp_path):
-    """embed_entry skips a volume when load_and_normalise returns None."""
+def test_embed_entry_load_normalize_returns_none(tmp_path):
+    """embed_entry skips a volume when load_and_normalize returns None."""
     from misfit.cli.embed_entrypoint import embed_entry
 
     manifest = tmp_path / "index.parquet"
@@ -708,7 +708,7 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
          patch.object(_areg_n, "get_aggregator",
                       return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod_n, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils_n, "load_and_normalise", return_value=None):
+         patch.object(_iutils_n, "load_and_normalize", return_value=None):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
             "--config", str(config_path),
@@ -752,7 +752,7 @@ def test_embed_entry_split_filters_index(tmp_path):
          patch.object(_iutils, "build_model_from_checkpoint", return_value=MagicMock()), \
          patch.object(_areg, "get_aggregator", return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         embed_entry([
             "--encoder-checkpoint", "best.pt",

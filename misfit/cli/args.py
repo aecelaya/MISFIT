@@ -328,7 +328,7 @@ def add_evaluate_args(parser: ArgParser) -> None:
             "Metrics to compute, overriding config.json's 'evaluation' section. "
             f"Choices: {', '.join(list_registered_metrics())}. "
             "Default: masked_mae, masked_mse, masked_psnr. 'ssim' is opt-in — "
-            "it runs in the loss-normalised space and its absolute value is "
+            "it runs in the loss-normalized space and its absolute value is "
             "depressed by cube-boundary seams; use misfit_inspect for a "
             "viewer-space read."
         ),

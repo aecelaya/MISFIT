@@ -105,7 +105,7 @@ def test_encode_entry_saves_npz(tmp_path):
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
                       return_value=_make_tiny_model()), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((PATCH_SIZE, PATCH_SIZE, PATCH_SIZE),
                                             dtype=np.float32)):
         encode_entry([
@@ -152,7 +152,7 @@ def test_encode_entry_skips_existing_output(tmp_path):
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
                       return_value=_make_tiny_model()), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((PATCH_SIZE, PATCH_SIZE, PATCH_SIZE),
                                             dtype=np.float32)) as mock_load:
         encode_entry([
@@ -165,7 +165,7 @@ def test_encode_entry_skips_existing_output(tmp_path):
 
 
 def test_encode_entry_skips_on_load_failure(tmp_path):
-    """encode_entry skips a volume when load_and_normalise returns None."""
+    """encode_entry skips a volume when load_and_normalize returns None."""
     from misfit.cli.encode_entrypoint import encode_entry
 
     index_path = _make_index(tmp_path)
@@ -177,7 +177,7 @@ def test_encode_entry_skips_on_load_failure(tmp_path):
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
                       return_value=_make_tiny_model()), \
-         patch.object(_iutils, "load_and_normalise", return_value=None):
+         patch.object(_iutils, "load_and_normalize", return_value=None):
         encode_entry([
             "--encoder-checkpoint", str(ckpt_path),
             "--config", str(config_path),
@@ -201,7 +201,7 @@ def test_encode_entry_skips_on_exception(tmp_path):
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
                       return_value=_make_tiny_model()), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((PATCH_SIZE, PATCH_SIZE, PATCH_SIZE),
                                             dtype=np.float32)), \
          patch("misfit.cli.encode_entrypoint._encode_volume",
@@ -233,7 +233,7 @@ def test_encode_entry_split_filters_index(tmp_path):
     with patch.object(_iutils, "load_checkpoint", return_value={"model": {}}), \
          patch.object(_iutils, "build_model_from_checkpoint",
                       return_value=_make_tiny_model()), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((PATCH_SIZE, PATCH_SIZE, PATCH_SIZE),
                                             dtype=np.float32)):
         encode_entry([
@@ -277,7 +277,7 @@ def test_encode_volume_multi_crop(tmp_path):
     assert positions.shape == (8, 3)
 
 
-def test_encode_volume_positions_normalised(tmp_path):
+def test_encode_volume_positions_normalized(tmp_path):
     """Crop centre positions should be in (0, 1]."""
     from misfit.cli.encode_entrypoint import _encode_volume
 

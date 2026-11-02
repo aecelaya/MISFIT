@@ -234,7 +234,7 @@ class MAETrainer:
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
             window_size: Number of micro-steps in the current accumulation
-                window; the loss is divided by this to normalise gradient
+                window; the loss is divided by this to normalize gradient
                 magnitude. Use the window's actual size (which may be smaller
                 than accum_steps for the trailing window of an epoch).
             is_last_accum: When True, performs the optimizer step and gradient
@@ -245,7 +245,7 @@ class MAETrainer:
 
         Returns:
             Un-scaled scalar loss for this micro-batch (before 1/window_size
-            normalisation), for logging purposes.
+            normalization), for logging purposes.
         """
         images = batch["image"].to(self.device, non_blocking=True)
 

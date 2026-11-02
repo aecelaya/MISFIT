@@ -15,7 +15,7 @@ class AttentionPoolAggregator(AbstractAggregator):
     attention over the ``N`` crop keys.  Padded crops are masked out before
     softmax so they contribute nothing to the output.
 
-    Optionally adds a linear projection of the normalised 3-D crop position
+    Optionally adds a linear projection of the normalized 3-D crop position
     to the keys before attention, allowing the aggregator to weight crops
     differently based on where they are in the volume (e.g., apical lung
     vs. basal lung in a chest CT).
@@ -23,7 +23,7 @@ class AttentionPoolAggregator(AbstractAggregator):
     Args:
         embed_dim: Dimensionality ``C`` of each crop embedding.
         use_position_encoding: If ``True`` (default), learn a linear
-            projection from 3-D normalised coordinates to ``ℝᶜ`` that is
+            projection from 3-D normalized coordinates to ``ℝᶜ`` that is
             added to the keys before computing attention weights.
     """
 
@@ -47,7 +47,7 @@ class AttentionPoolAggregator(AbstractAggregator):
 
         Args:
             crop_features: ``(N, C)`` per-crop embeddings.
-            positions: ``(N, 3)`` normalised crop coordinates.  Required
+            positions: ``(N, 3)`` normalized crop coordinates.  Required
                 when ``use_position_encoding=True``.
             padding_mask: ``(N,)`` boolean mask, ``True`` = padded crop
                 that should be ignored.

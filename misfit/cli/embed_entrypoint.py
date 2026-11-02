@@ -47,7 +47,7 @@ def embed_entry(args=None) -> None:
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
         get_default_device,
-        load_and_normalise,
+        load_and_normalize,
         load_checkpoint,
     )
 
@@ -113,7 +113,7 @@ def embed_entry(args=None) -> None:
                 progress.advance(task)
                 continue
 
-            volume = load_and_normalise(
+            volume = load_and_normalize(
                 row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
                 spacing=get_row_spacing(row) if target_spacing else None,
                 target_spacing=target_spacing,

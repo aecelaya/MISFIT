@@ -290,7 +290,7 @@ from NIfTI to model input resamples with the same helpers in
 `misfit.utils.resampling` (trilinear `F.interpolate`, shape =
 `round(n * spacing / target)` per axis): `MISFITDataset` (normalize → fg crop →
 resample → pad/crop/augment, so only the foreground is interpolated), the
-evaluator (same order), and `inference_utils.load_and_normalise` (no fg crop)
+evaluator (same order), and `inference_utils.load_and_normalize` (no fg crop)
 for inspect/encode/embed. Spacing comes from the index's `spacing_d/h/w` columns
 (x, y, z — nibabel and MIST's transposed SimpleITK arrays share (x, y, z) order,
 which is why `--patch-size` is labelled `X Y Z` like MIST's). Downstream

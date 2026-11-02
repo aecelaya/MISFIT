@@ -5,9 +5,9 @@ and computes per-volume masked reconstruction metrics (MAE, MSE, PSNR)
 averaged across all non-overlapping patches.
 
 Metrics are computed in the **training loss's space**: when the run used
-``normalized_masked_mse`` the target is normalised per ``mask_patch_size`` cube
+``normalized_masked_mse`` the target is normalized per ``mask_patch_size`` cube
 (zero mean, unit variance) — exactly as the loss does — so ``masked_mse`` is
-directly comparable to ``best_val_loss``. Because a per-region-normalised MSE is
+directly comparable to ``best_val_loss``. Because a per-region-normalized MSE is
 ~1.0 for *any* constant predictor, every metric is also reported for a **naive
 baseline** (impute masked voxels with the visible-region mean) plus a ``_skill``
 column so "did pretraining beat trivial?" is a single readable number.
@@ -60,7 +60,7 @@ class ReconstructionEvaluator:
 
     For each volume in a Parquet index the evaluator:
 
-    1. Loads, z-score normalises, and crops to the index's foreground bounding
+    1. Loads, z-score normalizes, and crops to the index's foreground bounding
        box (matching ``MISFITDataset``).
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension and
        tiles into non-overlapping patches.
@@ -89,7 +89,7 @@ class ReconstructionEvaluator:
             value are evaluated. Defaults to ``"val"``.
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects the metric space
-            (per-``mask_patch_size``-cube normalisation for
+            (per-``mask_patch_size``-cube normalization for
             ``normalized_masked_mse``, whole-volume z-score otherwise) and the
             ``amp`` flag toggles autocast (defaults to enabled when absent, then
             resolved against the current hardware — BF16 needs an NVIDIA
@@ -176,10 +176,10 @@ class ReconstructionEvaluator:
     # Per-volume helpers
     # ------------------------------------------------------------------
 
-    def _load_and_normalise(
+    def _load_and_normalize(
         self, row: pd.Series
     ) -> np.ndarray | None:
-        """Load, clip + z-score normalise, crop to foreground, and resample.
+        """Load, clip + z-score normalize, crop to foreground, and resample.
 
         Returns None (and logs a warning) if the file cannot be read.
         """
@@ -227,7 +227,7 @@ class ReconstructionEvaluator:
         """Run one forward pass on a single patch and return (reconstruction, mask).
 
         Args:
-            patch: Normalised patch of shape ``patch_size``.
+            patch: Normalized patch of shape ``patch_size``.
 
         Returns:
             Tuple of ``(reconstruction, mask)``, each shape ``patch_size``.
@@ -254,7 +254,7 @@ class ReconstructionEvaluator:
         obtain its reconstruction and mask.
 
         When the model was trained with ``normalized_masked_mse`` the target
-        patch is normalised **per ``mask_patch_size`` cube** (via
+        patch is normalized **per ``mask_patch_size`` cube** (via
         :func:`misfit.utils.normalization.normalize_patchwise`) — the exact
         transform the loss applies — so ``masked_mse`` is measured in the space
         the model was optimised in. Other losses keep the whole-volume z-score
@@ -264,7 +264,7 @@ class ReconstructionEvaluator:
         reproducible.
 
         Args:
-            volume: Normalised volume of shape (D, H, W).
+            volume: Normalized volume of shape (D, H, W).
 
         Returns:
             List of ``(reconstruction, target, mask)`` tuples — one per patch
@@ -414,8 +414,8 @@ class ReconstructionEvaluator:
             for _, row in self.index_df.iterrows():
                 volume_id = row["volume_id"]
 
-                # 1. Load + normalise.
-                volume = self._load_and_normalise(row)
+                # 1. Load + normalize.
+                volume = self._load_and_normalize(row)
                 if volume is None:
                     n_errors += 1
                     progress.advance(task)
