@@ -139,15 +139,45 @@ All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 
 ## Model Variants
 
-MISFIT provides three SwinMAE variants corresponding to different encoder
-capacities. All variants share the same SwinUNETR backbone architecture but
-differ in the width of the feature maps (`feature_size`).
+MISFIT's architectures come from MIST, and each `--model` name matches the MIST
+model it fine-tunes into. All of them use the same image-level masking: masked
+cubes are replaced in the input before the encoder.
+
+### SwinUNETR
+
+Three SwinMAE variants with the same SwinUNETR-V2 backbone, differing in the
+width of the feature maps (`feature_size`). The encoder feeds a lightweight
+convolutional decoder from its bottleneck.
 
 | Variant | `--model`         | `feature_size` | Parameters (approx.)  | Recommended for                        |
 | ------- | ----------------- | -------------- | --------------------- | -------------------------------------- |
 | Small   | `swinunetr-small` | 24             | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
 | Base    | `swinunetr-base`  | 48             | ~28M (18.6M encoder)  | Standard pretraining (default)         |
 | Large   | `swinunetr-large` | 96             | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+
+### ResEnc
+
+`--model resenc` is nnU-Net's Residual Encoder UNet (the network shared by its
+ResEnc M/L/XL presets), pretrained the way nnssl does: the full UNet, skip
+connections included, reconstructs the masked image. The skips cannot leak the
+answer because masked regions are blank at every resolution.
+
+ResEnc plans its depth from the patch size, at isotropic 1 mm spacing: one
+downsampling stage per halving, up to six stages. The patch size therefore sets
+the model size:
+
+| `--patch-size` | Stages | Parameters (approx.) |
+| -------------- | ------ | -------------------- |
+| 96³            | 5      | ~63M (57M encoder)   |
+| 128³ or larger | 6      | ~102M (90M encoder)  |
+
+<!-- prettier-ignore -->
+!!! tip
+    Pretrain ResEnc with a patch of at least 128³ (nnssl uses 160³) so the
+    encoder has all six stages. A MIST `resenc` model with more stages than
+    the pretrained encoder trains its extra stages from scratch, and stages
+    whose kernel shapes differ (anisotropic MIST data) are skipped; MIST
+    warns about the mismatch rather than failing.
 
 <!-- prettier-ignore -->
 !!!note
@@ -477,9 +507,9 @@ results/
 ### Fine-tuning in MIST
 
 Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
-architecture variant must match the one used during MISFIT pretraining — both
-tools use the same variant names (`swinunetr-small`, `swinunetr-base`,
-`swinunetr-large`) with identical `feature_size` values:
+architecture must match the one used during MISFIT pretraining — both tools use
+the same names (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
+`resenc`) for the same networks:
 
 ```console
 mist_train \
@@ -532,7 +562,7 @@ annotated cases is small relative to the model capacity.
 
 <!-- prettier-ignore -->
 !!! note
-    MISFIT encoder weights are only compatible with MIST's SwinUNETR
-    architectures (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`).
-    Other MIST architectures (nnUNet, MedNeXt, FMG-Net, W-Net) have different
-    encoder structures and are not compatible with MISFIT checkpoints.
+    MISFIT encoder weights are compatible with the MIST architectures MISFIT
+    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`, and
+    `resenc`. Other MIST architectures (nnUNet, MedNeXt, Primus, FMG-Net,
+    W-Net) are not yet available in MISFIT.

@@ -123,7 +123,8 @@ Run training with `misfit_train`:
 
 ### Model
 
-- `--model NAME`: SwinMAE variant to train. _(default: `swinunetr-base`)_ See
+- `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
+  `swinunetr-large`, or `resenc`. _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
 - `--patch-size D H W`: Spatial crop size fed to the model in voxels. Must be
   divisible by 32. _(default: `96 96 96`)_

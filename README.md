@@ -161,13 +161,13 @@ misfit_train --index   /data/index.parquet \
 
 Key options:
 
-| Flag                 | Default                 | Description                                              |
-| -------------------- | ----------------------- | -------------------------------------------------------- |
-| `--model`            | `swinunetr-base`        | `swinunetr-small` / `swinunetr-base` / `swinunetr-large` |
-| `--patch-size D H W` | `96 96 96`              | Spatial crop size (must be divisible by 32)              |
-| `--epochs`           | `200`                   | Total training epochs                                    |
-| `--batch-size`       | `2`                     | Per-GPU batch size                                       |
-| `--loss`             | `normalized_masked_mse` | Loss function                                            |
+| Flag                 | Default                 | Description                                         |
+| -------------------- | ----------------------- | --------------------------------------------------- |
+| `--model`            | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
+| `--patch-size D H W` | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
+| `--epochs`           | `200`                   | Total training epochs                               |
+| `--batch-size`       | `2`                     | Per-GPU batch size                                  |
+| `--loss`             | `normalized_masked_mse` | Loss function                                       |
 
 Training writes a `config.json` to `--results` that captures every architecture
 and hyperparameter decision. All downstream commands read this file — you never
@@ -273,11 +273,19 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`.
 
 ## Model Variants
 
-| Variant | `--model`         | Parameters            | Recommended for                        |
-| ------- | ----------------- | --------------------- | -------------------------------------- |
-| Small   | `swinunetr-small` | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
-| Base    | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
-| Large   | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+| Variant         | `--model`         | Parameters            | Recommended for                        |
+| --------------- | ----------------- | --------------------- | -------------------------------------- |
+| SwinUNETR Small | `swinunetr-small` | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
+| SwinUNETR Base  | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
+| SwinUNETR Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+| ResEnc          | `resenc`          | ~102M (90M encoder)¹  | nnU-Net/nnssl-style CNN pretraining    |
+
+¹ At a patch size of 128³ or larger. ResEnc plans its depth from `--patch-size`;
+see
+[Model Variants](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#model-variants).
+
+Every architecture is built from MIST, so `--model` names match the MIST model
+each encoder fine-tunes into.
 
 ---
 

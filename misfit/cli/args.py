@@ -157,7 +157,10 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     model.add_argument(
         "--model", default="swinunetr-base",
         choices=list_registered_models(),
-        help="SwinMAE variant (controls feature_size: 24 / 48 / 96).",
+        help=(
+            "Architecture to pretrain (built from the MIST model of the same "
+            "name): swinunetr-small / -base / -large, or resenc."
+        ),
     )
     model.add_argument(
         "--patch-size", type=positive_int, nargs=3, default=[96, 96, 96],
