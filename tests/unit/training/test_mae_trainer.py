@@ -1763,3 +1763,61 @@ def test_build_config_records_step_and_validation_fields(tmp_path):
     assert training["val_every"] == 5
     assert training["val_volumes"] == 64
     assert training["checkpoint_minutes"] == 15.0
+
+
+# ---------------------------------------------------------------------------
+# --init-weights
+# ---------------------------------------------------------------------------
+
+def _saved_tiny_resenc(tmp_path):
+    from misfit.models.resenc.misfit_resenc_mae import ResEncMAE
+    torch.manual_seed(1)
+    source = ResEncMAE(in_channels=1, img_size=(32, 32, 32), mask_patch_size=16)
+    path = tmp_path / "init.pth"
+    torch.save({"network_weights": source.state_dict()}, path)
+    return source, path
+
+
+def test_build_model_loads_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    source, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights = "resenc", str(path)
+    with patch("misfit.training.trainers.mae_trainer.console") as mock_console:
+        model = MAETrainer(args)._build_model()
+
+    assert torch.equal(model.state_dict()["head.weight"], source.state_dict()["head.weight"])
+    assert "Initialized" in mock_console.print.call_args[0][0]
+
+
+def test_build_model_ignores_init_weights_on_resume(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    _, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights, args.resume = "resenc", str(path), True
+    with patch("misfit.training.trainers.mae_trainer.load_pretrained_weights") as load:
+        MAETrainer(args)._build_model()
+    load.assert_not_called()
+
+
+def test_build_model_rejects_mismatched_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    _, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights = "resenc", str(path)
+    args.patch_size = [64, 64, 64]  # a deeper network than the saved one
+    with pytest.raises(ValueError, match="don't match"):
+        MAETrainer(args)._build_model()
+
+
+def test_build_config_records_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    assert MAETrainer(args)._build_config()["training"]["init_weights"] is None
+    args.init_weights = "/models/checkpoint_final.pth"
+    config = MAETrainer(args)._build_config()
+    assert config["training"]["init_weights"] == "/models/checkpoint_final.pth"

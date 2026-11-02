@@ -206,6 +206,63 @@ patch size then sets the model size:
     cannot be changed when resuming. To use a different variant, start a new run
     with `--overwrite` or in a new `--results` directory.
 
+### Starting from nnFoundation
+
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN) (Harsy et
+al., 2026) is an openly released ResEnc pretrained by nnssl with the same MAE
+objective, at 192³ and 1 mm. MISFIT's `resenc` at 1 mm with a patch of at least
+128³ is the same network, decoder and reconstruction head included: loaded with
+nnFoundationCNN's weights, it produces exactly the output of nnU-Net's own
+`ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB, CC-BY-SA-4.0)
+and use it two ways.
+
+**As a ready-made encoder.** Every command that takes a checkpoint
+(`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
+it directly. Write a matching `config.json` with `--init-only`, without
+training:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation \
+             --model          resenc \
+             --patch-size     192 192 192 \
+             --target-spacing 1 1 1 \
+             --init-only
+
+misfit_embed --encoder-checkpoint /models/checkpoint_final.pth \
+             --index              /data/index.parquet \
+             --config             /runs/nnfoundation/config.json \
+             --output-dir         /data/embeddings_nnfoundation
+```
+
+This gives a strong baseline to compare your own pretraining against.
+
+**As a starting point for pretraining.** `--init-weights` continues MAE
+pretraining from nnFoundationCNN on your own data, for example to adapt it to a
+modality or anatomy it saw little of:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation_ft \
+             --model          resenc \
+             --patch-size     192 192 192 \
+             --target-spacing 1 1 1 \
+             --init-weights   /models/checkpoint_final.pth
+```
+
+`--target-spacing 1 1 1` and a patch of at least 128³ are required: they give
+the six-stage network the checkpoint holds. Any other layout stops with an error
+listing the mismatched weights rather than mixing pretrained and random weights.
+
+<!-- prettier-ignore -->
+!!! note
+    nnFoundation was pretrained on images z-scored over the whole volume,
+    while MISFIT clips each volume to its 1st–99th foreground percentiles and
+    z-scores the foreground. The weights still work (in a smoke test on
+    synthetic data, nnFoundation's masked reconstruction error under MISFIT's
+    normalization was about 9× lower than a random network's), but the
+    mismatch may cost some of the benefit.
+
 ---
 
 ## Patch Size Selection

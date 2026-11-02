@@ -318,6 +318,24 @@ but its paper (Wald et al. 2025, "Revisiting MAE pre-training") takes that from
 nnU-Net without ablating optimizers, so it isn't evidence SGD beats AdamW; one
 shared recipe also keeps architecture comparisons clean.
 
+### Pretrained weights (`models/pretrained.py`, `--init-weights`)
+
+`load_model_weights` is the one loader for full-network weights: the trainer's
+`--init-weights` and every inference path (`build_model_from_checkpoint`,
+`ReconstructionEvaluator`) use it, so all commands accept a MISFIT checkpoint
+(`"model"`), an nnssl checkpoint (`"network_weights"`, e.g. nnFoundationCNN), or
+a plain state dict. Each model maps foreign names in
+`adapt_pretrained_state_dict` (ResEncMAE: last `decoder.seg_layers.N` → `head`,
+drop `decoder.encoder.*` aliases and deep-supervision layers; SwinMAE: drop the
+legacy `spacing_embed.*`). Loading is strict — only `mask_token` may be absent
+(nnssl masks with zeros, the token's init) — because a partial load would
+silently mix pretrained and random weights.
+
+nnFoundationCNN equals `resenc` at 1 mm with a patch ≥128³; verified against
+nnU-Net's `ResidualEncoderUNet` with the real checkpoint (max output difference
+0). MIST pins the same layout with a name/shape fingerprint test
+(`test_resenc_layout_matches_nnfoundation_cnn_checkpoint`).
+
 ### Target spacing (`--target-spacing X Y Z`, `utils/resampling.py`)
 
 Off by default (native resolution, the original behavior). When set, every path

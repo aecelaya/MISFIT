@@ -248,18 +248,24 @@ class SwinMAE(MISFITModel):
 
         return {"reconstruction": reconstruction, "mask": mask}
 
-    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
-        """Load weights, ignoring the removed spacing embedding.
+    @staticmethod
+    def adapt_pretrained_state_dict(state_dict: OrderedDict) -> OrderedDict:
+        """Drop the removed spacing embedding from older checkpoints.
 
         Checkpoints from MISFIT 0.1.3-alpha and earlier contain a
         ``spacing_embed.*`` decoder-conditioning module that no longer exists.
         It never affected the encoder, so those keys are dropped and the rest
         of the checkpoint loads strictly as usual.
         """
-        state_dict = OrderedDict(
+        return OrderedDict(
             (k, v) for k, v in state_dict.items() if not k.startswith("spacing_embed.")
         )
-        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load weights, ignoring the removed spacing embedding."""
+        return super().load_state_dict(
+            self.adapt_pretrained_state_dict(state_dict), strict=strict, assign=assign
+        )
 
     def get_encoder_state_dict(self) -> OrderedDict:
         """Return encoder-only weights for downstream transfer learning.

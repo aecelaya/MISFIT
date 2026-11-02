@@ -30,7 +30,10 @@ Transfer learning compatibility:
     The encoder is MIST's ResidualEncoder held as ``self.encoder``, so
     get_encoder_state_dict() returns MIST's own ``encoder.*`` keys unchanged.
     The returned state dict can be saved with torch.save and passed directly to
-    ``mist_train --pretrained-weights``.
+    ``mist_train --pretrained-weights``. In the other direction, nnssl ResEnc-L
+    checkpoints such as nnFoundationCNN load into the whole network (see
+    :meth:`ResEncMAE.adapt_pretrained_state_dict` and
+    :mod:`misfit.models.pretrained`).
 """
 
 from collections import OrderedDict
@@ -190,3 +193,37 @@ class ResEncMAE(MISFITModel):
         return OrderedDict(
             (k, v) for k, v in self.state_dict().items() if k.startswith("encoder.")
         )
+
+    @staticmethod
+    def adapt_pretrained_state_dict(state_dict: OrderedDict) -> OrderedDict:
+        """Map an nnU-Net/nnssl ResEnc state dict onto this model's names.
+
+        nnssl checkpoints (e.g. nnFoundationCNN) use nnU-Net's
+        ResidualEncoderUNet names, which match MIST's, apart from two things:
+        the reconstruction head is the decoder's last (full-resolution)
+        segmentation layer, ``decoder.seg_layers.<last>``, where this model
+        holds it as ``head``; and nnU-Net's decoder registers the encoder a
+        second time as ``decoder.encoder.*``. The head is renamed, and the
+        duplicate names and the deep-supervision layers (which this model
+        drops) are removed. A MISFIT state dict passes through unchanged.
+
+        Args:
+            state_dict: Checkpoint state dict.
+
+        Returns:
+            The state dict with this model's parameter names.
+        """
+        seg_layers = {
+            int(k.split(".")[2]) for k in state_dict
+            if k.startswith("decoder.seg_layers.")
+        }
+        if not seg_layers:
+            return state_dict
+        head_prefix = f"decoder.seg_layers.{max(seg_layers)}."
+        adapted = OrderedDict()
+        for key, value in state_dict.items():
+            if key.startswith(head_prefix):
+                adapted["head." + key[len(head_prefix):]] = value
+            elif not key.startswith(("decoder.seg_layers.", "decoder.encoder.")):
+                adapted[key] = value
+        return adapted

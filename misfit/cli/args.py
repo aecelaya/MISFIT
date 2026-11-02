@@ -182,6 +182,17 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         ),
     )
     model.add_argument(
+        "--init-weights", default=None, metavar="PT", dest="init_weights",
+        help=(
+            "Start from these weights instead of random initialization: the "
+            "whole MAE network (encoder, decoder, and reconstruction head). "
+            "Accepts a MISFIT checkpoint or an nnssl one, such as "
+            "nnFoundationCNN's checkpoint_final.pth (needs --model resenc "
+            "--target-spacing 1 1 1 and a patch of at least 128^3). Every "
+            "weight must match, or misfit_train stops. Ignored on --resume."
+        ),
+    )
+    model.add_argument(
         "--mask-patch-size", type=positive_int, default=16, metavar="P",
         help="Edge length of each masked 3D cube (voxels).",
     )

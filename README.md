@@ -291,6 +291,12 @@ see
 Every architecture is built from MIST, so `--model` names match the MIST model
 each encoder fine-tunes into.
 
+`resenc` is the same network as the openly released
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN): its weights
+work directly in every MISFIT command, as a baseline encoder or as the starting
+point for `--init-weights`. See
+[Starting from nnFoundation](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#starting-from-nnfoundation).
+
 ---
 
 ## Output Structure

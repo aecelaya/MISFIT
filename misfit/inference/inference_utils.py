@@ -8,6 +8,7 @@ import torch.nn as nn
 
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_model_weights
 from misfit.utils.resampling import resample_to_spacing
 
 
@@ -24,11 +25,13 @@ def load_checkpoint(
 
     Args:
         checkpoint_path: Path to a ``.pt`` checkpoint produced by
-            :class:`~misfit.training.trainers.mae_trainer.MAETrainer`.
+            :class:`~misfit.training.trainers.mae_trainer.MAETrainer`, or an
+            nnssl checkpoint such as nnFoundationCNN's ``checkpoint_final.pth``
+            (see :mod:`misfit.models.pretrained`).
         device: Target device. Defaults to :func:`get_default_device`.
 
     Returns:
-        Checkpoint dictionary with keys ``model``, ``epoch``, etc.
+        Checkpoint dictionary (for MISFIT: keys ``model``, ``epoch``, etc.).
     """
     device = device or get_default_device()
     return torch.load(
@@ -70,7 +73,7 @@ def build_model_from_checkpoint(
         mask_ratio=model_config["mask_ratio"],
         target_spacing=target_spacing,
     )
-    model.load_state_dict(checkpoint["model"])
+    load_model_weights(model, checkpoint)
     model.to(device)
     model.eval()
     return model

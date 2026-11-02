@@ -44,6 +44,7 @@ from misfit.data_loading.dataloader import (
 )
 from misfit.loss_functions.loss_registry import get_loss
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_pretrained_weights
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
@@ -184,6 +185,16 @@ class MAETrainer:
             mask_ratio=self.args.mask_ratio,
             target_spacing=self._target_spacing(),
         )
+        # On --resume the checkpoint supplies the weights, so --init-weights
+        # only seeds a fresh run. Every rank loads the same file before DDP
+        # wrapping (DDP would broadcast rank 0's weights anyway).
+        init_weights = getattr(self.args, "init_weights", None)
+        if init_weights is not None and not self.args.resume:
+            load_pretrained_weights(model, init_weights)
+            if self.is_main:
+                console.print(
+                    f"[bold]Initialized[/bold] {self.args.model} from '{init_weights}'"
+                )
         model = model.to(self.device)
         if self.is_distributed:
             model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -456,6 +467,7 @@ class MAETrainer:
                 "val_every":                  self.args.val_every,
                 "val_volumes":                self.args.val_volumes,
                 "checkpoint_minutes":         self.args.checkpoint_minutes,
+                "init_weights":               getattr(self.args, "init_weights", None),
             },
             "evaluation": {
                 metric: {} for metric in DEFAULT_METRICS
@@ -841,7 +853,7 @@ class MAETrainer:
                 console.print(
                     f"  train_loss={format_loss(train_meter.value)}  "
                     f"{val_text}  lr={lr:.2e}  "
-                    f"{samples_per_sec:.1f} samples/s  {status}"
+                    f"{samples_per_sec:.3g} samples/s  {status}"
                 )
 
                 # Update best_val_loss before saving rolling checkpoint so that

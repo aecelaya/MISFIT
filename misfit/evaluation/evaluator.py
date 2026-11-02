@@ -45,6 +45,7 @@ from misfit.metrics.metrics_registry import (
     get_metric,
 )
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_model_weights
 from misfit.utils.console import console, print_error, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import normalize_patchwise
@@ -167,7 +168,7 @@ class ReconstructionEvaluator:
             mask_ratio=cfg["mask_ratio"],
             target_spacing=self.target_spacing,
         )
-        model.load_state_dict(self.checkpoint["model"])
+        load_model_weights(model, self.checkpoint)
         model.to(self.device)
         model.eval()
         return model

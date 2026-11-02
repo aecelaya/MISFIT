@@ -176,6 +176,12 @@ Run training with `misfit_train`:
   `1 1 1` for 1 mm isotropic) before cropping patches. Saved to `config.json`
   and applied by every downstream command. _(default: off — native resolution)_
   See [Target Spacing](advanced_topics.md#target-spacing).
+- `--init-weights PT`: Start from these weights instead of random initialization
+  — the whole MAE network (encoder, decoder, and reconstruction head). Accepts a
+  MISFIT checkpoint or an nnssl one such as nnFoundationCNN's. Every weight must
+  match the model, or training stops. Ignored on `--resume`. See
+  [Starting from nnFoundation](advanced_topics.md#starting-from-nnfoundation).
+  _(default: off)_
 - `--mask-patch-size P`: Edge length of each masked 3D cube in voxels.
   _(default: 16)_
 - `--mask-ratio R`: Fraction of patch tokens to mask. _(default: 0.75)_
@@ -317,7 +323,7 @@ higher-is-better) — positive means the encoder beats the trivial baseline.
 Run evaluation with `misfit_evaluate`:
 
 - `--checkpoint PT` (**required**): Path to a checkpoint produced by
-  `misfit_train`.
+  `misfit_train`, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and the metric space are read from this
@@ -416,7 +422,8 @@ The reconstruction pipeline:
 
 Run inspection with `misfit_inspect`:
 
-- `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint.
+- `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint, or
+  an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to reconstruct.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
@@ -481,7 +488,7 @@ retrieval or UMAP visualization. Pass a trained aggregator checkpoint via
 Run embedding extraction with `misfit_embed`:
 
 - `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
-  checkpoint.
+  checkpoint, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to embed.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
@@ -557,7 +564,7 @@ Use `misfit_encode` when you need spatially-rich features for:
 Run encoding with `misfit_encode`:
 
 - `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
-  checkpoint.
+  checkpoint, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to encode.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
