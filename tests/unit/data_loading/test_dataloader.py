@@ -1,5 +1,7 @@
 """Tests for misfit.data_loading.dataloader."""
 import json
+import os
+from multiprocessing import resource_tracker
 
 import nibabel as nib
 import numpy as np
@@ -9,6 +11,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from misfit.data_loading.dataloader import (
     get_training_dataloader,
     get_validation_dataloader,
+    seal_resource_tracker_fd,
 )
 
 
@@ -143,3 +146,30 @@ def test_validation_dataloader_filters_val_split(tmp_path):
         index_path, patch_size=(32, 32, 32), batch_size=1, num_workers=0,
     )
     assert len(loader.dataset) == 1
+
+
+def test_dataloaders_seal_resource_tracker_fd_in_workers(tmp_path):
+    """Both loaders run seal_resource_tracker_fd as their worker_init_fn."""
+    index_path = _write_index_and_nifti(tmp_path)
+    for factory in (get_training_dataloader, get_validation_dataloader):
+        loader = factory(index_path, patch_size=(32, 32, 32), num_workers=0)
+        assert loader.worker_init_fn is seal_resource_tracker_fd
+
+
+def test_seal_resource_tracker_fd_marks_fd_close_on_exec(monkeypatch):
+    """The worker's (inheritable) tracker fd is made non-inheritable."""
+    read_fd, write_fd = os.pipe()
+    try:
+        os.set_inheritable(write_fd, True)
+        monkeypatch.setattr(resource_tracker._resource_tracker, "_fd", write_fd)
+        seal_resource_tracker_fd(0)
+        assert not os.get_inheritable(write_fd)
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_seal_resource_tracker_fd_noop_without_tracker(monkeypatch):
+    """No tracker fd (e.g. fork start method) → nothing to do, no error."""
+    monkeypatch.setattr(resource_tracker._resource_tracker, "_fd", None)
+    seal_resource_tracker_fd(0)

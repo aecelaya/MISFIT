@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from misfit.data_loading.dataloader import seal_resource_tracker_fd
 from misfit.embedding.aggregators.aggregator_registry import get_aggregator
 from misfit.embedding.objectives.base import crop_collate_fn
 from misfit.embedding.objectives.objective_registry import get_objective
@@ -107,6 +108,7 @@ class EmbedTrainer:
                 collate_fn=crop_collate_fn,
                 num_workers=self.num_workers,
                 pin_memory=self.device.type == "cuda",
+                worker_init_fn=seal_resource_tracker_fd,
             )
         else:
             loader = DataLoader(
@@ -117,6 +119,7 @@ class EmbedTrainer:
                 collate_fn=crop_collate_fn,
                 num_workers=self.num_workers,
                 pin_memory=self.device.type == "cuda",
+                worker_init_fn=seal_resource_tracker_fd,
             )
 
         head = self.objective.build_head(self.embed_dim).to(self.device)

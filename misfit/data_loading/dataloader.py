@@ -22,11 +22,37 @@ Typical multi-node usage (inside a torchrun worker)::
         distributed=True,
     )
 """
+import os
+from multiprocessing import resource_tracker
 from pathlib import Path
 
 from torch.utils.data import DataLoader, DistributedSampler
 
 from misfit.data_loading.dataset import MISFITDataset
+
+
+def seal_resource_tracker_fd(worker_id: int) -> None:
+    """DataLoader ``worker_init_fn`` that keeps the resource tracker exitable.
+
+    Under the ``spawn`` start method (the default on macOS), each worker
+    inherits the write end of the multiprocessing resource tracker's pipe,
+    marked inheritable. With the ``file_system`` sharing strategy (the only
+    one PyTorch supports on macOS), the worker's first shared-memory batch
+    launches a ``torch_shm_manager`` daemon via fork + exec, which inherits
+    that fd and outlives the worker for as long as the main process stays
+    connected to it. At interpreter exit, ``ResourceTracker.__del__``
+    (added in recent 3.12 / 3.13 patch releases) closes the main process's end and blocks in
+    ``waitpid`` for the tracker, which never sees EOF because the daemon
+    still holds a write end. The daemon in turn waits on the main process,
+    so ``misfit_train`` hangs after training. Marking the fd close-on-exec
+    keeps it out of exec'd daemons; the worker itself still uses it normally.
+
+    A no-op when the worker has no tracker fd (e.g. ``fork`` on Linux, where
+    the default ``file_descriptor`` strategy never starts a tracker).
+    """
+    fd = getattr(resource_tracker._resource_tracker, "_fd", None)
+    if fd is not None:
+        os.set_inheritable(fd, False)
 
 
 def get_training_dataloader(
@@ -83,6 +109,7 @@ def get_training_dataloader(
         # overhead — nibabel has non-trivial module-load cost per worker.
         persistent_workers=(num_workers > 0),
         prefetch_factor=2 if num_workers > 0 else None,
+        worker_init_fn=seal_resource_tracker_fd,
         drop_last=True,
     )
 
@@ -131,5 +158,6 @@ def get_validation_dataloader(
         pin_memory=True,
         persistent_workers=(num_workers > 0),
         prefetch_factor=2 if num_workers > 0 else None,
+        worker_init_fn=seal_resource_tracker_fd,
         drop_last=False,
     )
