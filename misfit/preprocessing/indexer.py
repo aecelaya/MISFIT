@@ -40,31 +40,131 @@ _STATS_COLUMNS = [
     "fg_mean", "fg_std",
 ]
 
-# Full parquet schema including the split assignment.
-INDEX_COLUMNS = ["volume_id", "path", "split"] + _STATS_COLUMNS[2:]
+# Full parquet schema including the split assignment. ``group`` holds the
+# optional grouping key from the input file (e.g. a subject ID), or null.
+INDEX_COLUMNS = ["volume_id", "path", "split", "group"] + _STATS_COLUMNS[2:]
 
-# Default 80 / 10 / 10 split ratios.
-DEFAULT_SPLIT_RATIOS: dict[str, float] = {
-    "train": 0.8,
-    "val":   0.1,
-    "test":  0.1,
+# Default split config: val and test each get 5% of the volumes, capped at
+# 500, and train gets the rest. A fraction in [0, 1) is a share of the corpus;
+# an integer is an exact volume count (not capped).
+DEFAULT_SPLIT_CONFIG: dict[str, float | int | None] = {
+    "val":      0.05,
+    "test":     0.05,
+    "max_val":  500,
+    "max_test": 500,
 }
+
+
+def _held_out_size(
+    config: dict, split: str, n: int,
+) -> int:
+    """Return the number of volumes for the ``val`` or ``test`` split.
+
+    Args:
+        config: Split config (see ``DEFAULT_SPLIT_CONFIG``).
+        split: ``"val"`` or ``"test"``.
+        n: Total number of volumes.
+
+    Returns:
+        Volume count for *split*. A nonzero fraction always yields at least
+        one volume; ``max_<split>`` caps fractions only.
+
+    Raises:
+        ValueError: If the value is neither a fraction in [0, 1) nor a
+            non-negative integer, or the cap is not a non-negative integer.
+    """
+    value = config.get(split, DEFAULT_SPLIT_CONFIG[split])
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value < 0:
+            raise ValueError(f"Split '{split}' count must be >= 0, got {value}.")
+        return value
+    if not isinstance(value, float) or not 0.0 <= value < 1.0:
+        raise ValueError(
+            f"Split '{split}' must be a fraction in [0, 1) or a whole number "
+            f"of volumes, got {value!r}."
+        )
+    if value == 0.0:
+        return 0
+    size = max(1, int(round(n * value)))
+    cap = config.get(f"max_{split}", DEFAULT_SPLIT_CONFIG[f"max_{split}"])
+    if cap is None:
+        return size
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 0:
+        raise ValueError(
+            f"'max_{split}' must be a non-negative integer or null, got {cap!r}."
+        )
+    return min(size, cap)
+
+
+def split_targets(config: dict, n: int) -> list[tuple[str, int | None]]:
+    """Return ``(split, target_size)`` pairs in the order splits are filled.
+
+    The last pair's target is None: that split takes every remaining volume.
+
+    A legacy config (one with a ``"train"`` key, from MISFIT before split
+    caps) keeps its old meaning: train and val are fractions of the corpus,
+    filled in that order, and test takes the remainder. Otherwise val and test are sized by :func:`_held_out_size` and
+    train takes the rest. Val and test shrink (test first) if needed so that
+    train keeps at least one volume.
+
+    Args:
+        config: Split config (see ``DEFAULT_SPLIT_CONFIG``).
+        n: Total number of volumes.
+
+    Returns:
+        List of ``(split, target_size)`` pairs.
+    """
+    if "train" in config:
+        return [
+            ("train", int(round(n * config["train"]))),
+            ("val",   int(round(n * config.get("val", 0.1)))),
+            ("test",  None),
+        ]
+
+    n_val = _held_out_size(config, "val", n)
+    n_test = _held_out_size(config, "test", n)
+    excess = n_val + n_test - (n - 1)
+    if excess > 0:
+        cut = min(excess, n_test)
+        n_test -= cut
+        n_val = max(0, n_val - (excess - cut))
+    return [("val", n_val), ("test", n_test), ("train", None)]
+
+
+def _group_codes(df: pd.DataFrame) -> np.ndarray:
+    """Return an integer group code per row, numbered by first appearance.
+
+    Rows sharing a non-null ``group`` value share a code; rows with a null
+    (or no) ``group`` are their own singleton group. With no grouping the
+    codes are ``0 .. n-1`` in row order.
+    """
+    if "group" not in df.columns:
+        return np.arange(len(df))
+    seen: dict[tuple, int] = {}
+    codes = [
+        seen.setdefault(("row", i) if pd.isna(g) else ("group", g), len(seen))
+        for i, g in enumerate(df["group"])
+    ]
+    return np.asarray(codes)
 
 
 def assign_splits(
     df: pd.DataFrame,
-    ratios: dict[str, float],
+    config: dict,
     seed: int = 42,
 ) -> pd.DataFrame:
     """Assign a ``split`` column (``"train"`` / ``"val"`` / ``"test"``) to *df*.
 
-    Volumes are shuffled with *seed* and then divided according to *ratios*.
-    The test set receives any remainder after rounding.
+    Groups (see :func:`_group_codes`) are shuffled with *seed* and dealt out
+    whole, in the fill order from :func:`split_targets`: each split takes
+    groups until it holds at least its target number of volumes, so every
+    volume of a group lands in the same split. With multi-volume groups a
+    split can overshoot its target by less than one group.
 
     Args:
-        df: DataFrame of volume stats (no ``split`` column yet).
-        ratios: Mapping with keys ``"train"``, ``"val"``, and ``"test"``
-            whose values are proportions summing to 1.
+        df: DataFrame of volume stats (no ``split`` column yet), optionally
+            with a ``group`` column.
+        config: Split config (see ``DEFAULT_SPLIT_CONFIG``).
         seed: Random seed for the shuffle. Defaults to 42.
 
     Returns:
@@ -76,19 +176,20 @@ def assign_splits(
         df["split"] = pd.Series(dtype=object)
         return df
 
+    codes = _group_codes(df)
+    sizes = np.bincount(codes)
+    targets = split_targets(config, n)
+
     rng = np.random.default_rng(seed)
-    indices = rng.permutation(n)
+    group_split = np.empty(len(sizes), dtype=object)
+    k, filled = 0, 0
+    for g in rng.permutation(len(sizes)):
+        while targets[k][1] is not None and filled >= targets[k][1]:
+            k, filled = k + 1, 0
+        group_split[g] = targets[k][0]
+        filled += sizes[g]
 
-    n_train = int(round(n * ratios.get("train", 0.8)))
-    n_val = int(round(n * ratios.get("val",   0.1)))
-    # test gets the remainder so the total always equals n.
-
-    labels = np.empty(n, dtype=object)
-    labels[indices[:n_train]] = "train"
-    labels[indices[n_train:n_train + n_val]] = "val"
-    labels[indices[n_train + n_val:]] = "test"
-
-    df["split"] = labels
+    df["split"] = group_split[codes]
     return df
 
 
@@ -96,8 +197,9 @@ def build_index(
     nifti_paths: list[Path],
     output_path: Path | None = None,
     num_workers: int = 32,
-    split_ratios: dict[str, float] | None = None,
+    split_config: dict | None = None,
     split_seed: int = 42,
+    groups: list[str | None] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Build the MISFIT metadata index from a list of NIfTI files.
 
@@ -113,9 +215,12 @@ def build_index(
         num_workers: Number of parallel worker processes. For HPC nodes with
             fast parallel filesystems (Lustre/GPFS), 32 - 64 workers is a
             reasonable starting point. Defaults to 32.
-        split_ratios: Train/val/test proportions. Defaults to
-            ``DEFAULT_SPLIT_RATIOS`` (80 / 10 / 10).
+        split_config: Split sizes (see ``DEFAULT_SPLIT_CONFIG``). Defaults
+            to 5% val and 5% test, each capped at 500 volumes.
         split_seed: Random seed for the split shuffle. Defaults to 42.
+        groups: Optional grouping key per path (aligned with
+            *nifti_paths*, None for ungrouped). Volumes sharing a key are
+            kept in the same split. Defaults to None (no grouping).
 
     Returns:
         Tuple of:
@@ -138,8 +243,8 @@ def build_index(
 
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = {
-                executor.submit(compute_volume_stats, p): p
-                for p in nifti_paths
+                executor.submit(compute_volume_stats, p): i
+                for i, p in enumerate(nifti_paths)
             }
             for future in as_completed(futures):
                 result = future.result()
@@ -148,16 +253,22 @@ def build_index(
                         f"  [red]FAILED[/red] {result['path']}: {result['error']}"
                     )
                 else:
-                    records.append(result)
+                    i = futures[future]
+                    group = None if groups is None else groups[i]
+                    records.append((i, {**result, "group": group}))
                 progress.advance(task)
 
-    if split_ratios is None:
-        split_ratios = DEFAULT_SPLIT_RATIOS
+    # Restore input order: as_completed yields in completion order, which
+    # varies run to run and would make the seeded split irreproducible.
+    records = [record for _, record in sorted(records, key=lambda r: r[0])]
+
+    if split_config is None:
+        split_config = DEFAULT_SPLIT_CONFIG
 
     # Build DataFrame with a consistent column schema.
     if records:
-        index_df = pd.DataFrame(records)[_STATS_COLUMNS]
-        index_df = assign_splits(index_df, split_ratios, split_seed)
+        index_df = pd.DataFrame(records)[_STATS_COLUMNS + ["group"]]
+        index_df = assign_splits(index_df, split_config, split_seed)
         index_df = index_df[INDEX_COLUMNS]
     else:
         index_df = pd.DataFrame(columns=INDEX_COLUMNS)

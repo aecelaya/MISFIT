@@ -149,6 +149,24 @@ once at index time, stored in the Parquet index, applied on the fly at load
 time. This handles CT and MRI in the same batch without dataset-level
 statistics.
 
+### Index splits (`preprocessing/indexer.py`)
+
+Val and test default to 5% of the corpus each, capped at 500 volumes
+(`DEFAULT_SPLIT_CONFIG`); train takes the rest. Validation only tracks
+reconstruction loss and picks `best_model.pt`, and real encoder evaluation is
+downstream, so held-out sets shouldn't grow with the corpus — 80/10/10 withheld
+20k volumes from a 100k pretraining run. Integer sizes are exact counts and are
+not capped. A legacy config (has a `train` key) keeps its old ratio meaning.
+
+An optional `group` column in the `--input` file (e.g. subject ID) keeps all of
+a group's volumes in one split: `assign_splits` shuffles groups and deals them
+out whole (val, then test, then train), so a split may overshoot its target by
+less than one group. Without groups, every row is its own group. Records are
+sorted back into input order after the parallel stats pass, since `as_completed`
+order would otherwise make the seeded split vary run to run. `split_targets` is
+called before the stats pass so a bad config fails immediately rather than hours
+into indexing.
+
 ### Load-failure handling (`MISFITDataset.__getitem__`)
 
 Every path in the index was already confirmed loadable by `misfit_index` (bad

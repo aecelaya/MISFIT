@@ -134,8 +134,10 @@ misfit_index --input  /data/paths.csv \
 ```
 
 The `--input` CSV must have a `path` column with absolute paths to `.nii` or
-`.nii.gz` files. Split ratios (default 80/10/10) are controlled via the
-auto-generated `index_config.json` sidecar.
+`.nii.gz` files. Val and test each get 5% of the volumes, capped at 500, and
+train gets the rest; change this in the auto-generated `index_config.json`
+sidecar. Add an optional `group` column (e.g. a subject ID) to keep all of a
+patient's volumes in the same split.
 
 ### Stage 2 — Pretraining (`misfit_train`)
 

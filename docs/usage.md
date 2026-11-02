@@ -30,13 +30,14 @@ imaging foundation models. The core pipeline consists of four stages:
 The **indexing step** scans your NIfTI files and records the path, intensity
 statistics (p1, p99, foreground mean, foreground std), voxel spacing, image
 shape, and affine transform for each volume. It also assigns each volume a
-`split` label (`train`, `val`, or `test`) using configurable ratios. The output
+`split` label (`train`, `val`, or `test`) using configurable sizes. The output
 is a single Parquet file consumed by all downstream MISFIT commands.
 
 Run indexing with `misfit_index`:
 
 - `--input FILE` (**required**): CSV or Parquet file with a `path` column
-  listing absolute paths to NIfTI files.
+  listing absolute paths to NIfTI files, and an optional `group` column (see
+  [Grouped splits](#grouped-splits)).
 - `--output PARQUET` (**required**): Destination path for the output Parquet
   index.
 - `--num-workers-index N`: Number of parallel worker processes. _(default: 32)_
@@ -44,9 +45,50 @@ Run indexing with `misfit_index`:
 ### Split configuration
 
 On first run, `misfit_index` writes a companion `<output_stem>_config.json` file
-alongside the Parquet index. This file records the split ratios and random seed
-used to assign the `split` column. Edit it and re-run `misfit_index` to change
-the split proportions.
+alongside the Parquet index. It records the split sizes and random seed used to
+assign the `split` column:
+
+```json
+{
+  "val": 0.05,
+  "test": 0.05,
+  "max_val": 500,
+  "max_test": 500,
+  "seed": 42
+}
+```
+
+By default, val and test each get 5% of the volumes, capped at 500, and train
+gets the rest. A 1,000-volume corpus splits 900/50/50; a 100,000-volume corpus
+splits 99,000/500/500. Validation only tracks the reconstruction loss and picks
+`best_model.pt`, and the real evaluation of a pretrained encoder is on
+downstream tasks, so neither split needs to grow with the corpus.
+
+- `val` / `test`: a fraction in [0, 1) of the corpus, or a whole number of
+  volumes (e.g. `"val": 200`). Use `0` for no split. A nonzero fraction always
+  gets at least one volume.
+- `max_val` / `max_test`: caps a fractional `val` / `test`. Use `null` for no
+  cap. Whole-number sizes are not capped.
+
+Edit the file and re-run `misfit_index` to change the split. A config written by
+an older MISFIT version (with `train`/`val`/`test` ratios) is still read with
+its original meaning.
+
+### Grouped splits
+
+Splits are assigned per volume by default. If your corpus has several volumes
+per patient (multiple sequences, timepoints, or scans), add a `group` column
+(e.g. a subject ID) to the `--input` file. All volumes in a group land in the
+same split, so the same patient never appears in both training and test. Rows
+with an empty `group` are split individually. With groups, val and test may hold
+slightly more than their target size, since groups are never broken up.
+
+```csv
+path,group
+/data/sub-001_T1w.nii.gz,sub-001
+/data/sub-001_FLAIR.nii.gz,sub-001
+/data/sub-002_T1w.nii.gz,sub-002
+```
 
 ### Example
 
@@ -75,6 +117,7 @@ one NIfTI volume and contains the following columns:
 | `volume_id`                             | Unique identifier derived from the filename (no extension).               |
 | `path`                                  | Absolute path to the NIfTI file.                                          |
 | `split`                                 | Dataset split: `train`, `val`, or `test`.                                 |
+| `group`                                 | The `group` value from `--input`, or empty if none was given.             |
 | `shape_d` / `shape_h` / `shape_w`       | Voxel dimensions (depth, height, width).                                  |
 | `spacing_d` / `spacing_h` / `spacing_w` | Voxel spacing in mm.                                                      |
 | `affine`                                | JSON-encoded 4×4 affine transform matrix.                                 |
