@@ -134,3 +134,28 @@ def test_pad_to_multiple_padded_region_is_zero():
     assert padded[33:, :, :].sum() == 0
     assert padded[:, 33:, :].sum() == 0
     assert padded[:, :, 33:].sum() == 0
+
+
+def test_load_and_normalise_resamples_to_target_spacing(tmp_path):
+    p = tmp_path / "vol.nii.gz"
+    nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
+                             np.eye(4)), str(p))
+    result = load_and_normalise(
+        p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0), target_spacing=(1.0, 1.0, 1.0)
+    )
+    assert result.shape == (8, 8, 16)
+
+
+def test_load_and_normalise_without_target_spacing_ignores_spacing(tmp_path):
+    p = tmp_path / "vol.nii.gz"
+    nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
+                             np.eye(4)), str(p))
+    result = load_and_normalise(p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0))
+    assert result.shape == (16, 16, 4)
+
+
+def test_build_model_from_checkpoint_forwards_target_spacing(tmp_path):
+    ckpt = {"model": {}}
+    with patch("misfit.inference.inference_utils.get_model_from_registry") as mock_get:
+        build_model_from_checkpoint(ckpt, MODEL_CONFIG, "cpu", target_spacing=(1, 1, 2))
+    assert mock_get.call_args.kwargs["target_spacing"] == (1, 1, 2)

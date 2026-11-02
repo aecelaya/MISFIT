@@ -126,8 +126,13 @@ Run training with `misfit_train`:
 - `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
   `swinunetr-large`, or `resenc`. _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
-- `--patch-size D H W`: Spatial crop size fed to the model in voxels. Must be
-  divisible by 32. _(default: `96 96 96`)_
+- `--patch-size X Y Z`: Spatial crop size fed to the model in voxels (at
+  `--target-spacing` when set). Must be divisible by 32. Same axis order as
+  MIST's `--patch-size`. _(default: `96 96 96`)_
+- `--target-spacing X Y Z`: Resample every volume to this voxel spacing (e.g.
+  `1 1 1` for 1 mm isotropic) before cropping patches. Saved to `config.json`
+  and applied by every downstream command. _(default: off — native resolution)_
+  See [Target Spacing](advanced_topics.md#target-spacing).
 - `--mask-patch-size P`: Edge length of each masked 3D cube in voxels.
   _(default: 16)_
 - `--mask-ratio R`: Fraction of patch tokens to mask. _(default: 0.75)_

@@ -35,6 +35,7 @@ import torch
 from misfit.cli.args import ArgParser, add_encode_args
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
+from misfit.utils.resampling import get_row_spacing, get_target_spacing
 
 
 def encode_entry(args=None) -> None:
@@ -59,6 +60,7 @@ def encode_entry(args=None) -> None:
     config = read_json_file(config_path)
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
+    target_spacing = get_target_spacing(config)
 
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
@@ -72,7 +74,9 @@ def encode_entry(args=None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = load_checkpoint(ns.encoder_checkpoint, device)
-    model = build_model_from_checkpoint(checkpoint, model_config, device)
+    model = build_model_from_checkpoint(
+        checkpoint, model_config, device, target_spacing=target_spacing
+    )
     model.eval()
 
     # Load index and optionally filter to a single split.
@@ -94,7 +98,9 @@ def encode_entry(args=None) -> None:
                 continue
 
             volume = load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
+                spacing=get_row_spacing(row) if target_spacing else None,
+                target_spacing=target_spacing,
             )
             if volume is None:
                 print_error(

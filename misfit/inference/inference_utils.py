@@ -8,6 +8,7 @@ import torch.nn as nn
 
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.models.model_registry import get_model_from_registry
+from misfit.utils.resampling import resample_to_spacing
 
 
 def get_default_device() -> str:
@@ -41,6 +42,7 @@ def build_model_from_checkpoint(
     checkpoint: dict,
     model_config: dict,
     device: str | torch.device | None = None,
+    target_spacing: tuple[float, float, float] | None = None,
 ) -> nn.Module:
     """Reconstruct a model from a model config dict and load checkpoint weights.
 
@@ -50,6 +52,10 @@ def build_model_from_checkpoint(
             ``config.json``).  Must contain ``architecture``, ``patch_size``,
             ``mask_patch_size``, and ``mask_ratio``.
         device: Target device. Defaults to :func:`get_default_device`.
+        target_spacing: The run's target spacing
+            (:func:`misfit.utils.resampling.get_target_spacing`), or None for
+            native resolution. Architectures that plan their topology from the
+            spacing (ResEnc) need it to rebuild the trained network.
 
     Returns:
         Model in eval mode with checkpoint weights loaded.
@@ -62,6 +68,7 @@ def build_model_from_checkpoint(
         img_size=tuple(model_config["patch_size"]),
         mask_patch_size=model_config["mask_patch_size"],
         mask_ratio=model_config["mask_ratio"],
+        target_spacing=target_spacing,
     )
     model.load_state_dict(checkpoint["model"])
     model.to(device)
@@ -76,8 +83,10 @@ def load_and_normalise(
     fg_mean: float,
     fg_std: float,
     eps: float = 1e-8,
+    spacing: tuple[float, float, float] | None = None,
+    target_spacing: tuple[float, float, float] | None = None,
 ) -> np.ndarray | None:
-    """Load a NIfTI volume and apply clip + z-score normalisation.
+    """Load a NIfTI volume, apply clip + z-score normalisation, and resample.
 
     Args:
         nifti_path: Path to a ``.nii`` or ``.nii.gz`` file.
@@ -86,10 +95,14 @@ def load_and_normalise(
         fg_mean: Foreground mean after clipping.
         fg_std: Foreground standard deviation after clipping.
         eps: Minimum value for fg_std to avoid division by zero.
+        spacing: The volume's (x, y, z) voxel spacing (from its index row).
+            Required when target_spacing is set.
+        target_spacing: Resample the normalised volume to this spacing, as
+            training did. None (default) keeps the native resolution.
 
     Returns:
-        Float32 numpy array of shape (D, H, W), or None if the file cannot
-        be read.
+        Float32 numpy array of shape (X, Y, Z) — at target_spacing when set —
+        or None if the file cannot be read.
     """
     try:
         img = nib.load(nifti_path)
@@ -102,6 +115,8 @@ def load_and_normalise(
 
     data = np.clip(data, p1, p99)
     data = (data - fg_mean) / max(fg_std, eps)
+    if target_spacing is not None:
+        data = resample_to_spacing(data, spacing, target_spacing)
     return data
 
 

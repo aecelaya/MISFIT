@@ -49,6 +49,7 @@ from misfit.utils.console import console, print_error, print_success, print_warn
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import normalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 # Numerically-safe floor for the naive value in the lower-is-better skill ratio.
 _SKILL_EPS = 1e-12
@@ -95,6 +96,10 @@ class ReconstructionEvaluator:
             Ampere+ or AMD CDNA/RDNA3+ GPU, otherwise it falls back to FP32).
         seed: Base RNG seed. Each patch's mask is drawn from ``seed +
             patch_index`` so the whole evaluation is reproducible.
+        target_spacing: The run's target spacing
+            (:func:`misfit.utils.resampling.get_target_spacing`). Each volume
+            is resampled to it after the foreground crop, matching
+            ``MISFITDataset``. None (default) keeps the native resolution.
     """
 
     def __init__(
@@ -108,7 +113,9 @@ class ReconstructionEvaluator:
         split: str | None = "val",
         training_config: dict | None = None,
         seed: int = 42,
+        target_spacing: tuple[float, float, float] | None = None,
     ) -> None:
+        self.target_spacing = target_spacing
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
         self.output_csv_path = Path(output_csv_path)
@@ -158,6 +165,7 @@ class ReconstructionEvaluator:
             img_size=tuple(cfg["patch_size"]),
             mask_patch_size=cfg["mask_patch_size"],
             mask_ratio=cfg["mask_ratio"],
+            target_spacing=self.target_spacing,
         )
         model.load_state_dict(self.checkpoint["model"])
         model.to(self.device)
@@ -171,7 +179,7 @@ class ReconstructionEvaluator:
     def _load_and_normalise(
         self, row: pd.Series
     ) -> np.ndarray | None:
-        """Load a NIfTI volume and apply clip + z-score normalisation.
+        """Load, clip + z-score normalise, crop to foreground, and resample.
 
         Returns None (and logs a warning) if the file cannot be read.
         """
@@ -190,7 +198,10 @@ class ReconstructionEvaluator:
 
         data = np.clip(data, p1, p99)
         data = (data - fg_mean) / max(fg_std, 1e-8)
-        return self._crop_to_foreground(data, row)
+        data = self._crop_to_foreground(data, row)
+        if self.target_spacing is not None:
+            data = resample_to_spacing(data, get_row_spacing(row), self.target_spacing)
+        return data
 
     @staticmethod
     def _crop_to_foreground(volume: np.ndarray, row: pd.Series) -> np.ndarray:

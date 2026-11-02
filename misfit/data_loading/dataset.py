@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 
 from misfit.data_loading.data_loading_constants import dc
 from misfit.data_loading.transforms import build_train_transforms, build_val_transforms
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 
 class MISFITDataset(Dataset):
@@ -37,14 +38,16 @@ class MISFITDataset(Dataset):
            zero-padded back to patch_size by the transform pipeline.
            Especially useful for skull-stripped MRI and CT where a large
            fraction of the volume is air or scanner background.
+        4. (Optional) Resample to ``target_spacing`` so a patch covers the
+           same physical extent in every volume.
 
     Args:
         index_path: Path to the Parquet metadata index produced by
             misfit_index. Must contain columns: path, p1, p99, fg_mean,
-            fg_std.
-        patch_size: Spatial dimensions of the output patch (D, H, W).
-            Must be divisible by 32 (SwinUNETR-V2 requirement) and must
-            match SwinMAE.img_size. Defaults to (96, 96, 96).
+            fg_std (and spacing_d/h/w when target_spacing is set).
+        patch_size: Spatial dimensions of the output patch (X, Y, Z).
+            Must be divisible by 32 and must match the model's img_size.
+            Defaults to (96, 96, 96).
         augment: If True, apply random crop + flips + light intensity
             augmentation (training mode). If False, apply deterministic
             center crop only (validation mode). Defaults to True.
@@ -65,6 +68,9 @@ class MISFITDataset(Dataset):
             the run loudly rather than silently training on an escalating
             run of zero-filled "volumes". Resets to 0 on every successful
             load. Defaults to 3.
+        target_spacing: (x, y, z) voxel spacing to resample every volume to
+            before patch sampling, or None to keep each volume's native
+            spacing. Defaults to None.
     """
 
     def __init__(
@@ -75,6 +81,7 @@ class MISFITDataset(Dataset):
         split: str | None = None,
         crop_to_fg: bool = True,
         max_load_failures: int = 3,
+        target_spacing: tuple[float, float, float] | None = None,
     ):
         self.index_df = pd.read_parquet(index_path)
         if split is not None and "split" in self.index_df.columns:
@@ -83,6 +90,7 @@ class MISFITDataset(Dataset):
         self.patch_size = patch_size
         self.crop_to_fg = crop_to_fg
         self.max_load_failures = max_load_failures
+        self.target_spacing = target_spacing
         self._consecutive_load_failures = 0
         self.transforms = (
             build_train_transforms(patch_size)
@@ -187,7 +195,14 @@ class MISFITDataset(Dataset):
         if self.crop_to_fg:
             volume = self._crop_to_fg_bbox(volume, row)
 
-        # Add channel dim (1, D, H, W) for MONAI transforms.
+        # Resample after cropping, so only the foreground region is
+        # interpolated. Skipped at native resolution (target_spacing=None).
+        if self.target_spacing is not None:
+            volume = resample_to_spacing(
+                volume, get_row_spacing(row), self.target_spacing
+            )
+
+        # Add channel dim (1, X, Y, Z) for MONAI transforms.
         volume_t = torch.from_numpy(volume.copy()).unsqueeze(0)
 
         # Apply spatial crop and augmentation.

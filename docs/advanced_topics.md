@@ -28,6 +28,11 @@ Below is an example `config.json` produced by `misfit_train`.
     "mask_ratio": 0.75
   },
 
+  "spatial_config": {
+    "patch_size": [96, 96, 96],
+    "target_spacing": null
+  },
+
   "training": {
     "epochs": 200,
     "batch_size": 2,
@@ -126,11 +131,15 @@ GPUs.
 The following parameters are **immutable** — changing them while resuming raises
 a hard error:
 
-| Parameter               | Reason                                                    |
-| ----------------------- | --------------------------------------------------------- |
-| `model.architecture`    | Checkpoint weights are architecture-specific.             |
-| `model.patch_size`      | Determines the spatial dimension of all model tensors.    |
-| `model.mask_patch_size` | Determines the masking grid structure inside the encoder. |
+| Parameter                       | Reason                                                    |
+| ------------------------------- | --------------------------------------------------------- |
+| `model.architecture`            | Checkpoint weights are architecture-specific.             |
+| `model.patch_size`              | Determines the spatial dimension of all model tensors.    |
+| `model.mask_patch_size`         | Determines the masking grid structure inside the encoder. |
+| `spatial_config.target_spacing` | Sets the physical scale the model learned at.             |
+
+`--target-spacing` follows the same rule: pass the original value on `--resume`.
+Switching between resampled and native resolution is also an error.
 
 All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 **mutable** — changes produce a warning and training continues.
@@ -162,9 +171,11 @@ ResEnc M/L/XL presets), pretrained the way nnssl does: the full UNet, skip
 connections included, reconstructs the masked image. The skips cannot leak the
 answer because masked regions are blank at every resolution.
 
-ResEnc plans its depth from the patch size, at isotropic 1 mm spacing: one
-downsampling stage per halving, up to six stages. The patch size therefore sets
-the model size:
+ResEnc plans its stages, strides, and kernel sizes from the patch size and
+spacing, exactly as MIST does. With `--target-spacing` set it plans from that
+spacing. Without one, volumes stay at their mixed native resolutions and ResEnc
+plans isotropically: one downsampling stage per halving, up to six stages. The
+patch size then sets the model size:
 
 | `--patch-size` | Stages | Parameters (approx.) |
 | -------------- | ------ | -------------------- |
@@ -189,9 +200,10 @@ the model size:
 
 ## Patch Size Selection
 
-The `--patch-size` argument controls the spatial crop fed to the model during
-training and inference. Every dimension must be divisible by 32 (due to the
-SwinUNETR downsampling stages).
+The `--patch-size X Y Z` argument controls the spatial crop fed to the model
+during training and inference, in voxels. Every dimension must be divisible
+by 32. It uses the same axis order as MIST's `--patch-size`: both tools lay
+volumes out in (x, y, z) order.
 
 A few practical guidelines:
 
@@ -222,16 +234,49 @@ A few practical guidelines:
     [Previewing a run without training](#previewing-a-run-without-training)
     below.
 
-- **Volumes are used at their native voxel spacing.** `misfit_index` records
-  each volume's spacing in mm (`spacing_d`, `spacing_h`, `spacing_w`) in the
-  index, but the model does not use it: crops are taken at native resolution, so
-  a 96-voxel crop covers a different physical extent on thick-slice CT (e.g. 5
-  mm slices) than on 1 mm MRI. If your corpus mixes very different spacings,
-  consider resampling volumes to a common spacing before indexing.
-
 - **The patch size is fixed at inference time.** `misfit_inspect`,
-  `misfit_evaluate`, and `misfit_embed` all read `patch_size` from `config.json`
-  via `--config`. You do not need to specify it again on the command line.
+  `misfit_evaluate`, `misfit_encode`, and `misfit_embed` all read `patch_size`
+  (and `target_spacing`) from `config.json` via `--config`. You do not need to
+  specify them again on the command line.
+
+---
+
+## Target Spacing
+
+By default volumes are used at their **native voxel spacing**: a 96-voxel crop
+covers a different physical extent on thick-slice CT (e.g. 5 mm slices) than on
+1 mm MRI. `misfit_index` records each volume's spacing (`spacing_d`,
+`spacing_h`, `spacing_w`, in x, y, z order), and `--target-spacing X Y Z`
+resamples every volume to a common spacing before patches are cropped:
+
+```console
+misfit_train \
+    --index          /data/index.parquet \
+    --results        /runs/pretrain \
+    --model          resenc \
+    --patch-size     160 160 160 \
+    --target-spacing 1 1 1
+```
+
+With a target spacing, `--patch-size` is in voxels at that spacing, so
+`--patch-size 160 160 160 --target-spacing 1 1 1` is always a 16 cm cube, the
+setup nnssl uses for ResEnc pretraining.
+
+- **Resampling is on the fly.** Each volume is normalized, cropped to its
+  foreground box, then trilinearly resampled, so only the foreground is
+  interpolated. Expect somewhat higher data-loading cost than at native
+  resolution; raise `--num-cpu-workers` if the GPU waits on data.
+- **Everything downstream follows.** The value is saved in `config.json` under
+  `spatial_config.target_spacing` (`null` = native resolution), and
+  `misfit_evaluate`, `misfit_inspect`, `misfit_encode`, and `misfit_embed`
+  resample the same way. `misfit_inspect` maps its reconstructions back to each
+  volume's native grid, so they overlay on the input NIfTI.
+- **MIST reads it.** `spatial_config` uses the same keys as MIST's own
+  `config.json`, so `mist_train --pretrained-config <misfit>/config.json`
+  compares the pretraining patch size and spacing with MIST's. For the best
+  transfer, pretrain at the spacing MIST will train at.
+- **ResEnc plans its topology from it**, so an anisotropic target spacing (e.g.
+  `0.8 0.8 3`) gives the same stage layout MIST would plan for that data.
 
 ---
 

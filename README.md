@@ -161,13 +161,14 @@ misfit_train --index   /data/index.parquet \
 
 Key options:
 
-| Flag                 | Default                 | Description                                         |
-| -------------------- | ----------------------- | --------------------------------------------------- |
-| `--model`            | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
-| `--patch-size D H W` | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
-| `--epochs`           | `200`                   | Total training epochs                               |
-| `--batch-size`       | `2`                     | Per-GPU batch size                                  |
-| `--loss`             | `normalized_masked_mse` | Loss function                                       |
+| Flag                     | Default                 | Description                                         |
+| ------------------------ | ----------------------- | --------------------------------------------------- |
+| `--model`                | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
+| `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
+| `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)     |
+| `--epochs`               | `200`                   | Total training epochs                               |
+| `--batch-size`           | `2`                     | Per-GPU batch size                                  |
+| `--loss`                 | `normalized_masked_mse` | Loss function                                       |
 
 Training writes a `config.json` to `--results` that captures every architecture
 and hyperparameter decision. All downstream commands read this file — you never

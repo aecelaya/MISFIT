@@ -10,7 +10,7 @@ Typical single-node usage::
 
     loader = get_training_dataloader("index.parquet", batch_size=4)
     for batch in loader:
-        # batch: (B, 1, D, H, W) float32 tensor
+        # batch: (B, 1, X, Y, Z) float32 tensor
         ...
 
 Typical multi-node usage (inside a torchrun worker)::
@@ -62,6 +62,7 @@ def get_training_dataloader(
     num_workers: int = 8,
     distributed: bool = False,
     seed: int = 42,
+    target_spacing: tuple[float, float, float] | None = None,
 ) -> DataLoader:
     """Build a training DataLoader with augmentation enabled.
 
@@ -72,8 +73,8 @@ def get_training_dataloader(
 
     Args:
         index_path: Path to the Parquet metadata index from misfit_index.
-        patch_size: Spatial crop size (D, H, W) fed to MISFITDataset and
-            SwinMAE. All dims must be divisible by 32. Defaults to (96, 96, 96).
+        patch_size: Spatial crop size (X, Y, Z) fed to MISFITDataset and
+            the model. All dims must be divisible by 32. Defaults to (96, 96, 96).
         batch_size: Number of volumes per batch per GPU. Defaults to 2.
         num_workers: Subprocesses for data loading. 4 - 16 is typical for NFS
             or local NVMe; 16 - 32 for Lustre/GPFS HPC filesystems.
@@ -82,15 +83,18 @@ def get_training_dataloader(
             multi-GPU training under torchrun. Defaults to False.
         seed: Random seed passed to DistributedSampler for reproducibility.
             Defaults to 42.
+        target_spacing: (x, y, z) spacing to resample volumes to before
+            cropping, or None for native resolution. Defaults to None.
 
     Returns:
-        Configured PyTorch DataLoader yielding (B, 1, D, H, W) tensors.
+        Configured PyTorch DataLoader yielding (B, 1, X, Y, Z) tensors.
     """
     dataset = MISFITDataset(
         index_path=index_path,
         patch_size=patch_size,
         augment=True,
         split="train",
+        target_spacing=target_spacing,
     )
 
     sampler: DistributedSampler | None = None
@@ -121,6 +125,7 @@ def get_validation_dataloader(
     num_workers: int = 4,
     distributed: bool = False,
     seed: int = 42,
+    target_spacing: tuple[float, float, float] | None = None,
 ) -> DataLoader:
     """Build a validation DataLoader with deterministic center crop.
 
@@ -129,20 +134,23 @@ def get_validation_dataloader(
 
     Args:
         index_path: Path to the Parquet metadata index from misfit_index.
-        patch_size: Spatial crop size (D, H, W). Defaults to (96, 96, 96).
+        patch_size: Spatial crop size (X, Y, Z). Defaults to (96, 96, 96).
         batch_size: Number of volumes per batch. Defaults to 1.
         num_workers: Subprocesses for data loading. Defaults to 4.
         distributed: If True, attach a DistributedSampler. Defaults to False.
         seed: Random seed for DistributedSampler. Defaults to 42.
+        target_spacing: (x, y, z) spacing to resample volumes to before
+            cropping, or None for native resolution. Defaults to None.
 
     Returns:
-        Configured PyTorch DataLoader yielding (B, 1, D, H, W) tensors.
+        Configured PyTorch DataLoader yielding (B, 1, X, Y, Z) tensors.
     """
     dataset = MISFITDataset(
         index_path=index_path,
         patch_size=patch_size,
         augment=False,
         split="val",
+        target_spacing=target_spacing,
     )
 
     sampler: DistributedSampler | None = None

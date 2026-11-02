@@ -17,11 +17,14 @@ the target because masked regions are blank at every resolution.
 
 Topology:
     MIST's ResEnc derives its stages, strides, and kernel sizes from the patch
-    size and target spacing. MISFIT pretrains on mixed data with no single
-    target spacing, so it uses isotropic 1 mm spacing; the topology then
-    depends only on img_size. Fine-tuning a MIST resenc whose planned patch
-    size or spacing differs still transfers every shared stage exactly (MIST
-    warns about the mismatch rather than failing).
+    size and target spacing. With ``--target-spacing`` set, MISFIT plans from
+    that spacing, exactly as MIST would for data preprocessed to it. Without
+    one, volumes stay at their native (mixed) resolutions and the topology is
+    planned isotropically (equal spacing on every axis), so it depends only on
+    img_size. Only the ratios between axes matter for planning. Fine-tuning a
+    MIST resenc whose planned patch size or spacing differs still transfers
+    every shared stage exactly (MIST warns about the mismatch rather than
+    failing).
 
 Transfer learning compatibility:
     The encoder is MIST's ResidualEncoder held as ``self.encoder``, so
@@ -40,8 +43,9 @@ from mist.models.resenc.mist_resenc import ResEncUNet
 from misfit.models.base_model import MISFITModel
 from misfit.models.masking import apply_mask, generate_patch_mask
 
-# Isotropic spacing used to plan the ResEnc topology (see module docstring).
-PRETRAINING_SPACING = (1.0, 1.0, 1.0)
+# Spacing used to plan the ResEnc topology when no target spacing is set
+# (native resolution): equal on every axis, i.e. an isotropic topology.
+ISOTROPIC_PLANNING_SPACING = (1.0, 1.0, 1.0)
 
 
 class ResEncMAE(MISFITModel):
@@ -60,6 +64,10 @@ class ResEncMAE(MISFITModel):
             Must evenly divide all dimensions of img_size. Defaults to 16.
         mask_ratio: Fraction of patches to randomly mask during training.
             Defaults to 0.75 (standard MAE setting).
+        target_spacing: (x, y, z) spacing the data is resampled to
+            (``--target-spacing``), used to plan the topology as MIST does.
+            None (native resolution) plans an isotropic topology. Defaults to
+            None.
 
     Raises:
         ValueError: If any img_size dimension is not divisible by 32 or by
@@ -72,6 +80,7 @@ class ResEncMAE(MISFITModel):
         img_size: tuple[int, int, int] = (96, 96, 96),
         mask_patch_size: int = 16,
         mask_ratio: float = 0.75,
+        target_spacing: tuple[float, float, float] | None = None,
         **kwargs: Any,
     ):
         super().__init__()
@@ -103,7 +112,10 @@ class ResEncMAE(MISFITModel):
             in_channels=in_channels,
             out_channels=in_channels,
             patch_size=img_size,
-            target_spacing=PRETRAINING_SPACING,
+            target_spacing=(
+                ISOTROPIC_PLANNING_SPACING if target_spacing is None
+                else tuple(target_spacing)
+            ),
             use_deep_supervision=False,
         )
         self.encoder = _mist_resenc.encoder

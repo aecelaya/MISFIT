@@ -8,7 +8,7 @@ import misfit.models  # noqa — trigger registrations
 from misfit.models.masking import generate_patch_mask
 from misfit.models.model_registry import get_model_from_registry
 from misfit.models.resenc import misfit_resenc_mae
-from misfit.models.resenc.misfit_resenc_mae import PRETRAINING_SPACING, ResEncMAE
+from misfit.models.resenc.misfit_resenc_mae import ISOTROPIC_PLANNING_SPACING, ResEncMAE
 
 IMG_SIZE = (32, 32, 32)
 MASK_PATCH_SIZE = 16
@@ -40,7 +40,7 @@ def test_resencmae_invalid_img_size_not_div_mask_patch():
 
 
 def test_resencmae_built_from_mist_resenc_with_isotropic_spacing():
-    """The network is MIST's ResEncUNet, planned at isotropic spacing."""
+    """Native resolution (no target spacing) plans MIST's ResEncUNet isotropically."""
     with patch.object(
         misfit_resenc_mae, "ResEncUNet", wraps=misfit_resenc_mae.ResEncUNet
     ) as spy:
@@ -50,16 +50,44 @@ def test_resencmae_built_from_mist_resenc_with_isotropic_spacing():
         in_channels=1,
         out_channels=1,
         patch_size=IMG_SIZE,
-        target_spacing=PRETRAINING_SPACING,
+        target_spacing=ISOTROPIC_PLANNING_SPACING,
         use_deep_supervision=False,
     )
-    assert PRETRAINING_SPACING == (1.0, 1.0, 1.0)
+    assert ISOTROPIC_PLANNING_SPACING == (1.0, 1.0, 1.0)
 
 
 def test_resencmae_topology_follows_img_size():
     """Isotropic planning: one stride-2 stage per halving down to < 8 voxels."""
     model = ResEncMAE(img_size=(64, 64, 32), mask_patch_size=16)
     assert model.encoder.strides == [[1, 1, 1], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 1]]
+
+
+def test_resencmae_plans_topology_from_target_spacing():
+    """An anisotropic target spacing plans the same topology MIST would."""
+    from mist.models.nnunet.nnunet_utils import get_unet_params
+
+    spacing = (0.8, 0.8, 3.0)
+    model = ResEncMAE(img_size=(64, 64, 32), mask_patch_size=16, target_spacing=spacing)
+    kernels, strides, _ = get_unet_params((64, 64, 32), spacing)
+
+    assert model.encoder.strides == [list(s) for s in strides]
+    assert model.encoder.kernel_sizes == [list(k) for k in kernels]
+    # The coarse z axis is not downsampled until in-plane resolution catches up.
+    assert model.encoder.strides[1] == [2, 2, 1]
+
+
+def test_resenc_registry_forwards_target_spacing():
+    """The trainer/evaluator pass target_spacing through the registry."""
+    spacing = (0.8, 0.8, 3.0)
+    with patch.object(
+        misfit_resenc_mae, "ResEncUNet", wraps=misfit_resenc_mae.ResEncUNet
+    ) as spy:
+        get_model_from_registry(
+            "resenc", in_channels=1, img_size=IMG_SIZE,
+            mask_patch_size=MASK_PATCH_SIZE, mask_ratio=0.75,
+            target_spacing=spacing,
+        )
+    assert spy.call_args.kwargs["target_spacing"] == spacing
 
 
 def test_resencmae_drops_deep_supervision_layers(tiny_model):
@@ -158,7 +186,7 @@ def test_misfit_resenc_encoder_matches_mist_resenc_exactly(tmp_path):
     )
     mist_model = get_mist_model(
         "resenc", in_channels=1, out_channels=3,
-        patch_size=list(IMG_SIZE), target_spacing=list(PRETRAINING_SPACING),
+        patch_size=list(IMG_SIZE), target_spacing=list(ISOTROPIC_PLANNING_SPACING),
     )
 
     misfit_sd = misfit_model.get_encoder_state_dict()

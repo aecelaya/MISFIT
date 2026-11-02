@@ -56,6 +56,17 @@ from misfit.utils import (
     resolve_amp,
     write_json_file,
 )
+from misfit.utils.resampling import get_target_spacing
+
+
+def _spacing_list(spacing: tuple[float, ...] | None) -> list[float] | None:
+    """JSON form of a target spacing: a list, or None for native resolution."""
+    return None if spacing is None else list(spacing)
+
+
+def _spacing_repr(spacing: tuple[float, ...] | None) -> str:
+    """Human-readable target spacing for error messages."""
+    return "native resolution (none)" if spacing is None else repr(list(spacing))
 
 
 class MAETrainer:
@@ -152,6 +163,11 @@ class MAETrainer:
     # Component builders
     # ------------------------------------------------------------------
 
+    def _target_spacing(self) -> tuple[float, float, float] | None:
+        """``--target-spacing`` as a tuple, or None for native resolution."""
+        spacing = getattr(self.args, "target_spacing", None)
+        return None if spacing is None else tuple(float(s) for s in spacing)
+
     def _build_model(self) -> nn.Module:
         model = get_model_from_registry(
             self.args.model,
@@ -159,6 +175,7 @@ class MAETrainer:
             img_size=tuple(self.args.patch_size),
             mask_patch_size=self.args.mask_patch_size,
             mask_ratio=self.args.mask_ratio,
+            target_spacing=self._target_spacing(),
         )
         model = model.to(self.device)
         if self.is_distributed:
@@ -380,6 +397,13 @@ class MAETrainer:
                 "mask_patch_size": self.args.mask_patch_size,
                 "mask_ratio":      self.args.mask_ratio,
             },
+            # Same section and keys as MIST's config.json, so MIST reads them
+            # directly from --pretrained-config. target_spacing is null for
+            # native-resolution (non-resampled) pretraining.
+            "spatial_config": {
+                "patch_size":     list(self.args.patch_size),
+                "target_spacing": _spacing_list(self._target_spacing()),
+            },
             "training": {
                 "epochs":        self.args.epochs,
                 "batch_size":    self.args.batch_size,
@@ -435,6 +459,20 @@ class MAETrainer:
                     f"{saved!r} to {current!r}.  "
                     "Use --overwrite to start fresh."
                 )
+
+        # The target spacing is None (null) for native-resolution runs, so a
+        # missing value is meaningful here, unlike the fields above. Configs
+        # without a spatial_config section predate --target-spacing and ran at
+        # native resolution.
+        saved_spacing = get_target_spacing(saved_config)
+        current_spacing = self._target_spacing()
+        if saved_spacing != current_spacing:
+            raise ValueError(
+                "Cannot resume: 'spatial_config.target_spacing' changed from "
+                f"{_spacing_repr(saved_spacing)} to "
+                f"{_spacing_repr(current_spacing)}.  Pass the original "
+                "--target-spacing, or use --overwrite to start fresh."
+            )
 
         # Fields that are allowed to change but deserve a warning.
         soft = [
@@ -543,6 +581,7 @@ class MAETrainer:
             num_workers=self.args.num_cpu_workers,
             distributed=self.is_distributed,
             seed=self.args.seed,
+            target_spacing=self._target_spacing(),
         )
         val_loader = get_validation_dataloader(
             index_path=self.args.index,
@@ -551,6 +590,7 @@ class MAETrainer:
             num_workers=max(self.args.num_cpu_workers // 2, 1),
             distributed=self.is_distributed,
             seed=self.args.seed,
+            target_spacing=self._target_spacing(),
         )
 
         # --- Output directories (rank 0 creates, then barrier) ---

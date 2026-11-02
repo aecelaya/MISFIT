@@ -34,6 +34,7 @@ from misfit.evaluation.evaluator import ReconstructionEvaluator
 from misfit.metrics.metrics_registry import DEFAULT_METRICS
 from misfit.utils.console import print_error, print_warning
 from misfit.utils.io import read_json_file
+from misfit.utils.resampling import get_target_spacing
 
 
 def _parse_args(args=None):
@@ -83,6 +84,7 @@ def evaluate_entry(args=None) -> None:
         split=ns.split or None,
         training_config=training_config,
         seed=ns.seed,
+        target_spacing=get_target_spacing(config),
     )
     evaluator.run()
 

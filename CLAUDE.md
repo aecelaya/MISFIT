@@ -128,7 +128,8 @@ misfit/
                         ValidationProgressBar — mirror mist.utils.progress_bar),
                         hardware (get_accelerator_type / bf16_supported /
                         resolve_amp / autocast_context),
-                        normalization (normalize_patchwise / denormalize_patchwise)
+                        normalization (normalize_patchwise / denormalize_patchwise),
+                        resampling (--target-spacing helpers)
 ```
 
 ## Key design decisions
@@ -235,20 +236,49 @@ turns the decoder's full-resolution seg layer into the reconstruction head
 deleted because they'd never get gradients. `self.encoder` is MIST's
 `ResidualEncoder`, so `get_encoder_state_dict()` returns MIST's `encoder.*` keys
 unchanged (no remap). Topology (stages/strides/kernels) comes from
-`get_unet_params(img_size, PRETRAINING_SPACING)` with isotropic
-`PRETRAINING_SPACING = (1, 1, 1)` — pretraining data has no single target
-spacing. The patch size therefore sets depth: 96³ → 5 stages (~63M params),
-≥128³ → 6 stages (~102M; nnssl uses 160³). A MIST `resenc` planned with more
-stages or anisotropic kernels still loads every matching tensor; MIST skips the
-rest and warns. Same `img_size` constraints as SwinMAE (÷32,
-÷`mask_patch_size`).
+`get_unet_params(img_size, spacing)`: the run's `--target-spacing` when set,
+otherwise `ISOTROPIC_PLANNING_SPACING = (1, 1, 1)` (native, mixed-resolution
+data has no single spacing; only axis ratios matter, so this just means
+"isotropic topology"). Every builder (trainer, evaluator,
+`build_model_from_checkpoint`) passes `target_spacing` through the registry;
+SwinMAE ignores it via `**kwargs`. Isotropically, the patch size sets depth: 96³
+→ 5 stages (~63M params), ≥128³ → 6 stages (~102M; nnssl uses 160³). A MIST
+`resenc` planned with more stages or anisotropic kernels still loads every
+matching tensor; MIST skips the rest and warns. Same `img_size` constraints as
+SwinMAE (÷32, ÷`mask_patch_size`).
 
 ### `config.json` as source of truth
 
 `misfit_train` writes `config.json` to the results directory. All downstream
 commands (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`)
 require `--config` and load architecture from it — no re-specifying model flags.
-Resume validation checks model name and patch size (hard error on mismatch).
+Resume validation checks model name, patch size, mask patch size, and target
+spacing (hard error on mismatch). The target spacing is compared even when one
+side is `None` (native ↔ resampled is a change), and a config without
+`spatial_config` (pre-`--target-spacing`) counts as native.
+
+`spatial_config: {patch_size, target_spacing}` duplicates `model.patch_size` on
+purpose: it is MIST's own section/key layout, so MIST's
+`validate_encoder_compatibility` reads a MISFIT config passed as
+`mist_train --pretrained-config` directly. Keep `model.patch_size` too (older
+configs and every MISFIT reader use it). MIST (≥ 2.4.0) treats a null
+`target_spacing`, or a missing `spatial_config`, as "pretrained without
+resampling": it warns that spacing can't be checked instead of raising.
+
+### Target spacing (`--target-spacing X Y Z`, `utils/resampling.py`)
+
+Off by default (native resolution, the original behavior). When set, every path
+from NIfTI to model input resamples with the same helpers in
+`misfit.utils.resampling` (trilinear `F.interpolate`, shape =
+`round(n * spacing / target)` per axis): `MISFITDataset` (normalize → fg crop →
+resample → pad/crop/augment, so only the foreground is interpolated), the
+evaluator (same order), and `inference_utils.load_and_normalise` (no fg crop)
+for inspect/encode/embed. Spacing comes from the index's `spacing_d/h/w` columns
+(x, y, z — nibabel and MIST's transposed SimpleITK arrays share (x, y, z) order,
+which is why `--patch-size` is labelled `X Y Z` like MIST's). Downstream
+commands read it with `get_target_spacing(config)`. `misfit_inspect` resamples
+reconstructions and masks back to the native grid (re-binarising the mask at
+0.5) so outputs keep the input affine.
 
 ### Distributed training
 

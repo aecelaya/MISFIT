@@ -164,8 +164,22 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     )
     model.add_argument(
         "--patch-size", type=positive_int, nargs=3, default=[96, 96, 96],
-        metavar=("D", "H", "W"),
-        help="Spatial crop size fed to the model. Must be divisible by 32.",
+        metavar=("X", "Y", "Z"),
+        help=(
+            "Spatial crop size fed to the model, in voxels (at --target-spacing "
+            "when set). Must be divisible by 32. Same axis order and meaning "
+            "as MIST's --patch-size."
+        ),
+    )
+    model.add_argument(
+        "--target-spacing", type=positive_float, nargs=3, default=None,
+        metavar=("X", "Y", "Z"),
+        help=(
+            "Resample every volume to this voxel spacing (e.g. 1 1 1 for 1 mm "
+            "isotropic) before cropping patches. Off by default: volumes stay "
+            "at their native resolution. Saved to config.json (spatial_config) "
+            "and applied by evaluate/inspect/encode/embed and read by MIST."
+        ),
     )
     model.add_argument(
         "--mask-patch-size", type=positive_int, default=16, metavar="P",

@@ -12,6 +12,7 @@ import torch
 from misfit.cli.args import ArgParser, add_embed_args
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
+from misfit.utils.resampling import get_row_spacing, get_target_spacing
 
 
 def embed_entry(args=None) -> None:
@@ -37,6 +38,7 @@ def embed_entry(args=None) -> None:
     config = read_json_file(config_path)
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
+    target_spacing = get_target_spacing(config)
 
     # Lazy imports so CLI startup is fast.
     import misfit.embedding  # noqa: F401 — trigger registrations
@@ -55,7 +57,9 @@ def embed_entry(args=None) -> None:
 
     # Build encoder.
     checkpoint = load_checkpoint(ns.encoder_checkpoint, device)
-    model = build_model_from_checkpoint(checkpoint, model_config, device)
+    model = build_model_from_checkpoint(
+        checkpoint, model_config, device, target_spacing=target_spacing
+    )
     model.eval()
 
     def encoder_fn(x: torch.Tensor) -> torch.Tensor:
@@ -110,7 +114,9 @@ def embed_entry(args=None) -> None:
                 continue
 
             volume = load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
+                spacing=get_row_spacing(row) if target_spacing else None,
+                target_spacing=target_spacing,
             )
             if volume is None:
                 print_error(

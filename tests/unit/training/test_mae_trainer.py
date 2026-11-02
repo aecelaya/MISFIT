@@ -152,6 +152,7 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         seed=42,
         no_amp=False,
         init_only=False,
+        target_spacing=None,
         resume=False,
         overwrite=False,
         results=str(tmp_path / "results"),
@@ -794,7 +795,9 @@ def test_build_config_structure(tmp_path):
     trainer = MAETrainer(args)
     config = trainer._build_config()
 
-    assert set(config.keys()) == {"misfit_version", "data", "model", "training", "evaluation"}
+    assert set(config.keys()) == {
+        "misfit_version", "data", "model", "spatial_config", "training", "evaluation",
+    }
     assert "index" in config["data"]
     assert config["model"]["architecture"] == "swinunetr-small"
     assert config["model"]["patch_size"] == [32, 32, 32]
@@ -805,6 +808,67 @@ def test_build_config_structure(tmp_path):
     assert all(isinstance(v, dict) for v in config["evaluation"].values())
     # Default eval set: the 3 masked metrics, no ssim.
     assert list(config["evaluation"]) == ["masked_mae", "masked_mse", "masked_psnr"]
+    # MIST-format spatial section; null spacing = native resolution.
+    assert config["spatial_config"] == {"patch_size": [32, 32, 32], "target_spacing": None}
+
+
+def test_build_config_records_target_spacing(tmp_path):
+    """--target-spacing is saved under spatial_config, where MIST reads it."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = [1, 1, 2.5]
+    config = MAETrainer(args)._build_config()
+
+    assert config["spatial_config"] == {
+        "patch_size": [32, 32, 32], "target_spacing": [1.0, 1.0, 2.5],
+    }
+    json.dumps(config)  # stays JSON-serialisable
+
+
+def test_build_model_passes_target_spacing(tmp_path):
+    """The model is built with the run's target spacing (ResEnc plans from it)."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = [0.8, 0.8, 3.0]
+    trainer = MAETrainer(args)
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=nn.Linear(1, 1)) as mock_get:
+        trainer._build_model()
+    assert mock_get.call_args.kwargs["target_spacing"] == (0.8, 0.8, 3.0)
+
+
+@pytest.mark.parametrize("saved,current", [
+    (None, [1, 1, 1]),          # native run resumed with resampling
+    ([1.0, 1.0, 1.0], None),    # resampled run resumed without it
+    ([1.0, 1.0, 1.0], [2, 2, 2]),
+])
+def test_validate_resume_rejects_target_spacing_change(tmp_path, saved, current):
+    """Changing the target spacing on resume is a hard error, including to/from none."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = saved
+    saved_config = MAETrainer(args)._build_config()
+
+    args.target_spacing = current
+    with pytest.raises(ValueError, match="target_spacing"):
+        MAETrainer(args)._validate_resume(saved_config)
+
+
+def test_validate_resume_legacy_config_means_native_resolution(tmp_path):
+    """A config from before --target-spacing (no spatial_config) is native resolution."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    legacy = MAETrainer(args)._build_config()
+    del legacy["spatial_config"]
+
+    MAETrainer(args)._validate_resume(legacy)  # native → native: fine
+    args.target_spacing = [1, 1, 1]
+    with pytest.raises(ValueError, match="native resolution"):
+        MAETrainer(args)._validate_resume(legacy)
 
 
 def test_bf16_optimizer_uses_standard_epsilon(tmp_path):
