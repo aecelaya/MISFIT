@@ -461,6 +461,12 @@ whenever the validation loss improves. This file contains encoder weights with
 keys remapped from `encoder.*` to `model.swinViT.*` — the format MIST's
 SwinUNETR expects — so no manual export step is required.
 
+MISFIT depends on MIST (`mist-medical`, installed automatically) and builds its
+encoder from MIST's own SwinUNETR-V2 model, so the pretrained encoder is the
+exact module MIST fine-tunes. MISFIT's test suite checks that every
+`swinunetr-*` encoder's keys and shapes match MIST's and load with nothing
+skipped.
+
 ```text
 results/
     models/

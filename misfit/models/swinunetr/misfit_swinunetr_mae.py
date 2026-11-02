@@ -4,8 +4,9 @@ Architecture overview:
 
   1. Masking  — randomly replace mask_ratio of 3D patch blocks (size
                mask_patch_size^3) with a learnable scalar mask token.
-  2. Encoder  — SwinUNETR-V2 swinViT backbone processes the masked image and
-               returns 5 hidden states at spatial resolutions D/2 … D/32.
+  2. Encoder  — SwinUNETR-V2 swinViT backbone (taken from MIST's
+               MistSwinUNETR) processes the masked image and returns 5 hidden
+               states at spatial resolutions D/2 … D/32.
   3. Decoder  — lightweight convolutional decoder upsamples from the D/32
                bottleneck back to the original resolution in 5 steps.
   4. Loss     — MSE between reconstruction and original, computed only over
@@ -29,9 +30,10 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from monai.networks.nets import SwinUNETR
+from mist.models.swinunetr.mist_swinunetr import MistSwinUNETR
 
 from misfit.models.base_model import MISFITModel
+from misfit.models.masking import apply_mask, generate_patch_mask
 
 
 class MAEDecoder(nn.Module):
@@ -157,28 +159,15 @@ class SwinMAE(MISFITModel):
         self.mask_patch_size = mask_patch_size
         self.mask_ratio = mask_ratio
 
-        # Build SwinUNETR-V2 and extract the swinViT backbone. The UNet
-        # decoder is discarded; out_channels=2 is a placeholder.
-        # MONAI >= 1.5 removed img_size from SwinUNETR; older versions require
-        # it. Try without first, fall back to passing it for compatibility.
-        try:
-            _swinunetr = SwinUNETR(
-                in_channels=in_channels,
-                out_channels=2,
-                feature_size=feature_size,
-                use_v2=True,
-                spatial_dims=3,
-            )
-        except TypeError:
-            _swinunetr = SwinUNETR(
-                img_size=img_size,
-                in_channels=in_channels,
-                out_channels=2,
-                feature_size=feature_size,
-                use_v2=True,
-                spatial_dims=3,
-            )
-        self.encoder = _swinunetr.swinViT
+        # Build MIST's SwinUNETR-V2 and keep only its swinViT backbone, so the
+        # encoder is the exact module MIST fine-tunes. The UNet decoder is
+        # discarded; out_channels=2 is a placeholder.
+        _mist_swinunetr = MistSwinUNETR(
+            in_channels=in_channels,
+            out_channels=2,
+            feature_size=feature_size,
+        )
+        self.encoder = _mist_swinunetr.model.swinViT
 
         # Learnable mask token: scalar per channel, broadcast over spatial dims.
         self.mask_token = nn.Parameter(torch.zeros(1, in_channels, 1, 1, 1))
@@ -222,24 +211,7 @@ class SwinMAE(MISFITModel):
         """
         if mask_ratio is None:
             mask_ratio = self.mask_ratio
-        B, _, D, H, W = x.shape
-        p = self.mask_patch_size
-        gd, gh, gw = D // p, H // p, W // p
-        num_patches = gd * gh * gw
-        num_masked = int(mask_ratio * num_patches)
-
-        # Rank patches by random noise; take the top num_masked as masked.
-        noise = torch.rand(B, num_patches, device=x.device)
-        ids_sorted = torch.argsort(noise, dim=1)
-        mask_flat = torch.zeros(B, num_patches, device=x.device)
-        mask_flat.scatter_(1, ids_sorted[:, :num_masked], 1.0)
-
-        # Reshape from flat patch index → patch grid → voxel resolution.
-        mask = mask_flat.view(B, 1, gd, gh, gw)
-        mask = mask.repeat_interleave(p, dim=2)
-        mask = mask.repeat_interleave(p, dim=3)
-        mask = mask.repeat_interleave(p, dim=4)
-        return mask  # (B, 1, D, H, W)
+        return generate_patch_mask(x, self.mask_patch_size, mask_ratio)
 
     def forward(
         self,
@@ -264,7 +236,7 @@ class SwinMAE(MISFITModel):
         """
         # 1. Generate mask and replace masked voxels with the mask token.
         mask = self.generate_mask(x, mask_ratio=mask_ratio)
-        masked_x = x * (1.0 - mask) + self.mask_token * mask
+        masked_x = apply_mask(x, mask, self.mask_token)
 
         # 2. Encode. swinViT returns a list of 5 hidden states at spatial
         #    resolutions D/2, D/4, D/8, D/16, D/32.

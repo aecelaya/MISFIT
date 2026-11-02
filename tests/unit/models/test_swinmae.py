@@ -184,48 +184,24 @@ def test_get_encoder_state_dict_not_empty(tiny_model):
 
 
 # ---------------------------------------------------------------------------
-# MONAI version compatibility — SwinUNETR img_size fallback
+# Backbone source — the encoder is MIST's SwinUNETR-V2 swinViT
 # ---------------------------------------------------------------------------
 
-def test_swinmae_init_without_img_size_succeeds():
-    """MONAI >= 1.5: SwinUNETR constructed without img_size (normal path)."""
-    # The real SwinUNETR in the test environment should work without img_size.
-    model = SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
-    assert model is not None
+def test_swinmae_encoder_built_from_mist_swinunetr():
+    """SwinMAE takes its encoder from MIST's MistSwinUNETR, not MONAI directly."""
+    from mist.models.swinunetr import mist_swinunetr
 
+    with patch.object(
+        mist_swinunetr.MistSwinUNETR, "__init__", autospec=True,
+        side_effect=mist_swinunetr.MistSwinUNETR.__init__,
+    ) as spy:
+        model = SwinMAE(in_channels=1, feature_size=12, img_size=IMG_SIZE,
+                        mask_patch_size=MASK_PATCH_SIZE)
 
-def test_swinmae_init_falls_back_to_img_size_on_type_error():
-    """MONAI < 1.5: TypeError on first call triggers fallback with img_size."""
-    calls = []
-
-    # Build a realistic mock encoder: returns 5 hidden states with the right
-    # channel shapes so the bottleneck probe and forward pass don't crash.
-    mock_encoder = MagicMock()
-    # _hidden[4] must have .shape[1] accessible (bottleneck channel count)
-    hidden = [MagicMock() for _ in range(5)]
-    hidden[4].shape = (1, 192, 1, 1, 1)
-    mock_encoder.return_value = hidden
-
-    mock_swinunetr = MagicMock()
-    mock_swinunetr.swinViT = mock_encoder
-
-    def patched_swinunetr(*args, **kwargs):
-        calls.append(kwargs.copy())
-        if len(calls) == 1:
-            # Simulate MONAI < 1.5: first call without img_size fails.
-            raise TypeError("missing a required argument: 'img_size'")
-        # Second call (fallback with img_size) succeeds.
-        return mock_swinunetr
-
-    with patch(
-        "misfit.models.swinunetr.misfit_swinunetr_mae.SwinUNETR",
-        side_effect=patched_swinunetr,
-    ):
-        SwinMAE(feature_size=12, img_size=IMG_SIZE, mask_patch_size=MASK_PATCH_SIZE)
-
-    assert len(calls) == 2
-    assert "img_size" not in calls[0]
-    assert calls[1]["img_size"] == IMG_SIZE
+    spy.assert_called_once()
+    assert spy.call_args.kwargs["feature_size"] == 12
+    assert spy.call_args.kwargs["in_channels"] == 1
+    assert type(model.encoder).__name__ == "SwinTransformer"
 
 
 # ---------------------------------------------------------------------------
@@ -288,42 +264,44 @@ def test_registry_builder_forwards_feature_size(model_name, expected_feature_siz
 # Transfer learning integration — MIST swinunetr-small accepts MISFIT encoder
 # ---------------------------------------------------------------------------
 
-def test_mist_swinunetr_small_accepts_misfit_encoder(tmp_path):
-    """MISFIT SwinMAE (swinunetr-small) encoder weights load into MIST swinunetr-small.
+@pytest.mark.parametrize(
+    "model_name", ["swinunetr-small", "swinunetr-base", "swinunetr-large"]
+)
+def test_misfit_encoder_matches_mist_encoder_exactly(model_name, tmp_path):
+    """Each MISFIT swinunetr-* encoder is a drop-in for MIST's same-named model.
 
-    Requires MIST to be installed in the test environment; skipped otherwise.
-    Both models use feature_size=24 so encoder shapes are identical.
+    The exported keys and shapes must equal MIST's own encoder state dict
+    exactly, and MIST's pretrained-encoder loader must transfer every tensor
+    with nothing skipped. This is the compatibility guarantee behind
+    ``mist_train --pretrained-weights models/encoder_weights.pt``.
     """
-    model_loader = pytest.importorskip("mist.models.model_loader")
-    pytest.importorskip("mist.models")  # trigger MIST model registrations
-    from mist.models.model_registry import get_model_from_registry
+    import mist.models  # noqa: F401 — trigger MIST model registrations
+    from mist.models import model_loader
+    from mist.models.model_registry import get_model_from_registry as get_mist_model
 
-    # Build MISFIT swinunetr-small and export encoder in MIST-compatible format.
-    misfit_model = SwinMAE(
-        in_channels=1,
-        feature_size=24,
-        img_size=(32, 32, 32),
-        mask_patch_size=16,
-        mask_ratio=0.75,
+    from misfit.models.model_registry import get_model_from_registry
+
+    misfit_model = get_model_from_registry(
+        model_name, in_channels=1, img_size=IMG_SIZE,
+        mask_patch_size=MASK_PATCH_SIZE, mask_ratio=0.75,
     )
-    encoder_sd = misfit_model.get_encoder_state_dict()
+    mist_model = get_mist_model(model_name, in_channels=1, out_channels=2)
+
+    misfit_sd = misfit_model.get_encoder_state_dict()
+    mist_sd = mist_model.get_encoder_state_dict()
+    assert list(misfit_sd) == list(mist_sd)
+    for key, tensor in misfit_sd.items():
+        assert tensor.shape == mist_sd[key].shape, key
+
     weights_path = tmp_path / "misfit_encoder.pt"
-    torch.save(encoder_sd, weights_path)
-
-    # Build MIST swinunetr-small and load the MISFIT encoder weights.
-    mist_model = get_model_from_registry(
-        "swinunetr-small",
-        in_channels=1,
-        out_channels=2,
-    )
+    torch.save(misfit_sd, weights_path)
     mist_model, summary = model_loader.load_pretrained_encoder(
         mist_model, str(weights_path)
     )
-
-    assert len(summary["loaded"]) > 0, "No encoder weights were transferred."
-    assert len(summary["skipped"]) == 0, (
-        f"Encoder weights were skipped (key mismatch): {summary['skipped'][:5]}"
-    )
+    assert len(summary["loaded"]) == len(mist_sd)
+    assert not summary["skipped"]
+    for key, tensor in misfit_sd.items():
+        assert torch.equal(mist_model.state_dict()[key], tensor), key
 
 
 def test_load_state_dict_ignores_legacy_spacing_embedding(tiny_model):

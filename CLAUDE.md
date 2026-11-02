@@ -112,7 +112,8 @@ misfit/
   cli/                  Entry points + shared ArgParser / add_*_args
   preprocessing/        NIfTI indexer → Parquet (parallel, ProcessPoolExecutor)
   data_loading/         MISFITDataset + DataLoader; on-the-fly clip+z-score normalization
-  models/               MISFITModel base class; SwinMAE (SwinUNETR-V2 + MAE head)
+  models/               MISFITModel base class; SwinMAE (MIST SwinUNETR-V2 + MAE head);
+                        masking (shared image-level patch masking)
   training/             MAETrainer; optimizer/LR-scheduler registries; training_utils
   loss_functions/       ReconstructionLoss base; masked_mse, masked_l1, normalized_mse
   metrics/              ReconstructionMetric base; masked_mae/mse/psnr (defaults) + ssim (opt-in)
@@ -191,11 +192,20 @@ use `misfit_inspect` for a viewer-space read.
 
 ### Model architecture (`models/swinunetr/misfit_swinunetr_mae.py`)
 
-`SwinMAE(MISFITModel)` wraps `SwinUNETR.swinViT` as `self.encoder` (UNet decoder
-discarded). The MAE decoder is a lightweight `ConvTranspose3d` stack
-(`MAEDecoder`). Masking is applied at the image level before encoding
-(SimMIM-style) — required because Swin windowed attention breaks with irregular
-token counts.
+MISFIT depends on MIST (`mist-medical>=2.3.0` in `pyproject.toml`) for model
+architectures: encoders are built from `mist.models`, never reimplemented, so a
+pretrained encoder is the exact module MIST fine-tunes. MISFIT adds only the
+MAE-specific parts (masking, decoder, masked loss).
+
+`SwinMAE(MISFITModel)` builds MIST's `MistSwinUNETR` and keeps its
+`.model.swinViT` as `self.encoder` (UNet decoder discarded). The MAE decoder is
+a lightweight `ConvTranspose3d` stack (`MAEDecoder`). Masking is applied at the
+image level before encoding (SimMIM-style) — required because Swin windowed
+attention breaks with irregular token counts. The masking lives in
+`models/masking.py` (`generate_patch_mask`, `apply_mask`), not in `SwinMAE`, so
+CNN backbones (which have no tokens to drop) reuse the same scheme;
+`SwinMAE.generate_mask` delegates to it with identical RNG calls, so seeded
+masks (e.g. `misfit_evaluate --seed`) are unchanged.
 
 Constraints:
 
@@ -291,6 +301,10 @@ with `--pretrained-config <misfit results>/config.json` (MIST uses the source
 config to validate encoder compatibility; omitting it only warns and skips that
 check). Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled
 by MIST's `--input-channel-strategy` (default: average).
+`test_misfit_encoder_matches_mist_encoder_exactly` guards this for every
+`swinunetr-*` variant: keys and shapes must equal MIST's own
+`get_encoder_state_dict()`, and MIST's `load_pretrained_encoder` must transfer
+every tensor with nothing skipped.
 
 ## Adding new components
 
