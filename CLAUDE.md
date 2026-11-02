@@ -112,7 +112,8 @@ guards both the guard block and the `-m` path.
 misfit/
   cli/                  Entry points + shared ArgParser / add_*_args
   preprocessing/        NIfTI indexer → Parquet (parallel, ProcessPoolExecutor)
-  data_loading/         MISFITDataset + DataLoader; on-the-fly clip+z-score normalization
+  data_loading/         MISFITDataset + DataLoader; on-the-fly clip+z-score normalization;
+                        EpochSampler (fixed samples per epoch for step-based training)
   models/               MISFITModel base class; SwinMAE (MIST SwinUNETR-V2 + MAE head);
                         ResEncMAE (MIST ResEnc UNet as the MAE network);
                         masking (shared image-level patch masking)
@@ -271,9 +272,11 @@ SwinMAE (÷32, ÷`mask_patch_size`).
 commands (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`)
 require `--config` and load architecture from it — no re-specifying model flags.
 Resume validation checks model name, patch size, mask patch size, and target
-spacing (hard error on mismatch). The target spacing is compared even when one
-side is `None` (native ↔ resampled is a change), and a config without
-`spatial_config` (pre-`--target-spacing`) counts as native.
+spacing (hard error on mismatch), and rejects configs without
+`training.steps_per_epoch` (pre-step-based runs, whose scheduler state counted
+epochs). The target spacing is compared even when one side is `None` (native ↔
+resampled is a change), and a config without `spatial_config`
+(pre-`--target-spacing`) counts as native.
 
 `spatial_config: {patch_size, target_spacing}` duplicates `model.patch_size` on
 purpose: it is MIST's own section/key layout, so MIST's
@@ -282,6 +285,38 @@ purpose: it is MIST's own section/key layout, so MIST's
 configs and every MISFIT reader use it). MIST (≥ 2.4.0) treats a null
 `target_spacing`, or a missing `spatial_config`, as "pretrained without
 resampling": it warns that spacing can't be checked instead of raising.
+
+### Step-based training (`mae_trainer.py`, `data_loading/samplers.py`)
+
+An epoch is `--steps-per-epoch` optimizer steps (default 1000 × 250), not a pass
+over the data: with 100k+ volumes a data pass takes hours, and validation,
+checkpoints, logging, and the LR schedule would all run that rarely and scale
+with corpus size. `EpochSampler` draws exactly `steps × accum × batch_size`
+samples per rank per epoch from a seeded stream of back-to-back permutations
+(seeded by `seed + epoch`, identical on every rank; each rank takes a strided,
+disjoint slice). Being deterministic, `set_epoch(epoch, start=k)` skips the
+samples a preempted epoch already consumed, so mid-epoch resume continues the
+same sequence. The scheduler is stepped per optimizer step
+(`total_steps = epochs × steps_per_epoch`, warmup = `warmup_epochs × steps`).
+
+Validation runs every `--val-every` epochs and after the last, on the first
+`--val-volumes` val rows (`Subset`), inside `_fixed_validation_rng`
+(`fork_rng` + reseed): every pass scores the same masks on the same volumes, so
+the curve is comparable, and the training RNG is restored afterwards.
+
+Checkpoints store `(epoch, step_in_epoch)`: `(e + 1, 0)` at epoch end, `(e, s)`
+mid-epoch. Rank 0 alone saves mid-epoch when `--checkpoint-minutes` have passed
+(no collective needed — other ranks just continue). TensorBoard scalars are all
+logged against `global_step`: per step `loss/train_step`, `lr` (the LR the step
+used, read before `scheduler.step()`), `grad_norm` (pre-clip total norm from
+`clip_grad_norm_`); per epoch `loss/train`, `loss/val`,
+`throughput/{steps,samples}_per_sec` (samples counts all ranks).
+
+Optimizer defaults are the same for every model (AdamW 1e-4, wd 0.05, cosine, 50
+warmup epochs). nnssl's ResEnc recipe uses SGD (Nesterov 0.99, 1e-2, PolyLR),
+but its paper (Wald et al. 2025, "Revisiting MAE pre-training") takes that from
+nnU-Net without ablating optimizers, so it isn't evidence SGD beats AdamW; one
+shared recipe also keeps architecture comparisons clean.
 
 ### Target spacing (`--target-spacing X Y Z`, `utils/resampling.py`)
 

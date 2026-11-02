@@ -1,8 +1,9 @@
 """DataLoader factory functions for MISFIT training.
 
-Provides get_training_dataloader and get_validation_dataloader. Both support
-distributed training via PyTorch's DistributedSampler — pass distributed=True
-when running under torchrun for multi-node jobs.
+Provides get_training_dataloader and get_validation_dataloader. Training
+draws a fixed number of samples per epoch from an :class:`EpochSampler`, with
+each rank taking a disjoint share; validation uses a DistributedSampler when
+distributed=True.
 
 Typical single-node usage::
 
@@ -19,16 +20,19 @@ Typical multi-node usage (inside a torchrun worker)::
         "index.parquet",
         batch_size=4,
         num_workers=8,
-        distributed=True,
+        samples_per_epoch=1000,
+        rank=dist.get_rank(),
+        world_size=dist.get_world_size(),
     )
 """
 import os
 from multiprocessing import resource_tracker
 from pathlib import Path
 
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, Subset
 
 from misfit.data_loading.dataset import MISFITDataset
+from misfit.data_loading.samplers import EpochSampler
 
 
 def seal_resource_tracker_fd(worker_id: int) -> None:
@@ -60,16 +64,18 @@ def get_training_dataloader(
     patch_size: tuple[int, int, int] = (96, 96, 96),
     batch_size: int = 2,
     num_workers: int = 8,
-    distributed: bool = False,
+    samples_per_epoch: int | None = None,
+    rank: int = 0,
+    world_size: int = 1,
     seed: int = 42,
     target_spacing: tuple[float, float, float] | None = None,
 ) -> DataLoader:
     """Build a training DataLoader with augmentation enabled.
 
-    When distributed=True, a DistributedSampler is attached so that each
-    rank in a torchrun job sees a non-overlapping shard of the dataset. Call
-    ``loader.sampler.set_epoch(epoch)`` at the start of each epoch to ensure
-    proper shuffling across ranks.
+    Each epoch draws ``samples_per_epoch`` samples for this rank from an
+    :class:`EpochSampler`, independent of how many volumes the index holds;
+    ranks draw disjoint samples. Call ``loader.sampler.set_epoch(epoch)`` at
+    the start of each epoch (with ``start=`` to resume mid-epoch).
 
     Args:
         index_path: Path to the Parquet metadata index from misfit_index.
@@ -79,10 +85,12 @@ def get_training_dataloader(
         num_workers: Subprocesses for data loading. 4 - 16 is typical for NFS
             or local NVMe; 16 - 32 for Lustre/GPFS HPC filesystems.
             Defaults to 8.
-        distributed: If True, attach a DistributedSampler for multi-node /
-            multi-GPU training under torchrun. Defaults to False.
-        seed: Random seed passed to DistributedSampler for reproducibility.
-            Defaults to 42.
+        samples_per_epoch: Samples this rank draws per epoch (a multiple of
+            batch_size). None draws one pass over the train split, shared
+            across ranks. Defaults to None.
+        rank: This process's rank under torchrun. Defaults to 0.
+        world_size: Number of torchrun processes. Defaults to 1.
+        seed: Random seed for the sampler. Defaults to 42.
         target_spacing: (x, y, z) spacing to resample volumes to before
             cropping, or None for native resolution. Defaults to None.
 
@@ -96,17 +104,18 @@ def get_training_dataloader(
         split="train",
         target_spacing=target_spacing,
     )
-
-    sampler: DistributedSampler | None = None
-    if distributed:
-        sampler = DistributedSampler(dataset, shuffle=True, seed=seed)
+    sampler = EpochSampler(
+        len(dataset),
+        samples_per_epoch=samples_per_epoch,
+        rank=rank,
+        world_size=world_size,
+        seed=seed,
+    )
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
-        # Shuffle only when not using DistributedSampler (which owns shuffling).
-        shuffle=(sampler is None),
         num_workers=num_workers,
         pin_memory=True,
         # Keep worker processes alive across epochs to amortize NIfTI import
@@ -126,11 +135,15 @@ def get_validation_dataloader(
     distributed: bool = False,
     seed: int = 42,
     target_spacing: tuple[float, float, float] | None = None,
+    max_volumes: int | None = None,
 ) -> DataLoader:
     """Build a validation DataLoader with deterministic center crop.
 
     No augmentation is applied. Volumes are center-cropped to patch_size
-    for consistent evaluation across epochs.
+    for consistent evaluation across epochs. With ``max_volumes``, only the
+    first ``max_volumes`` val volumes (in index order) are used, so the val
+    loss is computed on the same fixed subset every time and stays
+    comparable across runs on corpora of different sizes.
 
     Args:
         index_path: Path to the Parquet metadata index from misfit_index.
@@ -141,6 +154,8 @@ def get_validation_dataloader(
         seed: Random seed for DistributedSampler. Defaults to 42.
         target_spacing: (x, y, z) spacing to resample volumes to before
             cropping, or None for native resolution. Defaults to None.
+        max_volumes: Use at most this many val volumes, or None for all.
+            Defaults to None.
 
     Returns:
         Configured PyTorch DataLoader yielding (B, 1, X, Y, Z) tensors.
@@ -152,6 +167,8 @@ def get_validation_dataloader(
         split="val",
         target_spacing=target_spacing,
     )
+    if max_volumes is not None and max_volumes < len(dataset):
+        dataset = Subset(dataset, range(max_volumes))
 
     sampler: DistributedSampler | None = None
     if distributed:

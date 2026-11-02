@@ -103,7 +103,7 @@ def test_add_train_args_defaults():
         "--results", "/runs/exp1",
     ])
     assert ns.model == "swinunetr-base"
-    assert ns.epochs == 200
+    assert ns.epochs == 1000
     assert ns.batch_size == 2
 
 

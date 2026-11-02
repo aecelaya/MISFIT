@@ -168,7 +168,8 @@ Key options:
 | `--model`                | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
 | `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
 | `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)     |
-| `--epochs`               | `200`                   | Total training epochs                               |
+| `--epochs`               | `1000`                  | Training epochs of `--steps-per-epoch` steps each   |
+| `--steps-per-epoch`      | `250`                   | Optimizer steps per epoch                           |
 | `--batch-size`           | `2`                     | Per-GPU batch size                                  |
 | `--loss`                 | `normalized_masked_mse` | Loss function                                       |
 
@@ -297,7 +298,7 @@ each encoder fine-tunes into.
 ```text
 results/
     checkpoints/
-        checkpoint.pt       Latest checkpoint (overwritten each epoch)
+        checkpoint.pt       Latest checkpoint (each epoch, and every 30 min)
     models/
         best_model.pt       Checkpoint with the lowest validation loss
     logs/                   TensorBoard event files

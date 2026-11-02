@@ -34,18 +34,22 @@ Below is an example `config.json` produced by `misfit_train`.
   },
 
   "training": {
-    "epochs": 200,
+    "epochs": 1000,
+    "steps_per_epoch": 250,
     "batch_size": 2,
     "optimizer": "adamw",
     "learning_rate": 0.0001,
     "weight_decay": 0.05,
     "lr_scheduler": "cosine",
-    "warmup_epochs": 20,
+    "warmup_epochs": 50,
     "loss": "normalized_masked_mse",
     "amp": true,
     "seed": 42,
     "gradient_accumulation_steps": 1,
-    "bucket_cap_mb": 200
+    "bucket_cap_mb": 200,
+    "val_every": 1,
+    "val_volumes": 128,
+    "checkpoint_minutes": 30.0
   },
 
   "evaluation": {
@@ -70,6 +74,12 @@ silently producing an incompatible checkpoint.
 
 Changes to other hyperparameters (learning rate, epochs, optimizer, etc.) are
 allowed and emit a warning so you are aware of the discrepancy.
+
+The checkpoint is saved at the end of every epoch and, mid-epoch, at most every
+`--checkpoint-minutes` (default 30). A resume from a mid-epoch checkpoint
+continues the same epoch at the step it reached, with the same remaining
+samples, so a preempted job loses at most that many minutes of training. Runs
+from MISFIT versions before step-based training can't be resumed.
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -326,10 +336,12 @@ very different intensity distributions.
 | Polynomial | `polynomial`     | Polynomial decay.                                      |
 | Constant   | `constant`       | No decay; learning rate stays at `--learning-rate`.    |
 
-All schedulers support a **linear warmup** phase controlled by
-`--warmup-epochs`. During warmup the learning rate increases linearly from 0 to
-`--learning-rate`. A warmup of 20 epochs is recommended for SwinMAE — skipping
-warmup can cause instability in the early stages of training.
+Schedulers are updated every optimizer step, over the whole run of `--epochs` ×
+`--steps-per-epoch` steps. All schedulers support a **linear warmup** phase
+controlled by `--warmup-epochs` (default 50). During warmup the learning rate
+increases linearly from 1% of `--learning-rate` to `--learning-rate`. Skipping
+warmup can cause instability in the early stages of training, especially for
+SwinMAE.
 
 ---
 

@@ -188,13 +188,31 @@ Run training with `misfit_train`:
 
 ### Optimisation
 
-- `--epochs N`: Total training epochs. _(default: 200)_
+- `--epochs N`: Training epochs. _(default: 1000)_
+- `--steps-per-epoch N`: Optimizer steps per epoch. _(default: 250)_
 - `--batch-size N`: Batch size per GPU. _(default: 2)_
 - `--optimizer NAME`: Optimizer. _(default: `adamw`)_
 - `--learning-rate LR`: Initial learning rate. _(default: 1e-4)_
 - `--weight-decay WD`: L2 weight decay. _(default: 0.05)_
 - `--lr-scheduler NAME`: Learning rate schedule. _(default: `cosine`)_
-- `--warmup-epochs N`: Linear warmup epochs before cosine decay. _(default: 20)_
+- `--warmup-epochs N`: Linear warmup epochs before the decay. _(default: 50)_
+
+An epoch is a fixed `--steps-per-epoch` optimizer steps, not a pass over the
+data, so the default run is 250,000 steps whatever the size of your corpus. Each
+step draws `--batch-size` × GPUs × `--gradient-accumulation-steps` volumes; over
+training, every volume is drawn about equally often. The learning rate is
+updated every step, so warmup and decay are smooth.
+
+### Validation & checkpointing
+
+- `--val-every N`: Validate every N epochs, and always after the last epoch.
+  _(default: 1)_
+- `--val-volumes N`: Validate on the first N volumes of the val split.
+  _(default: 128)_ The same volumes are scored with the same masks every time,
+  so the val loss is comparable across epochs and across runs.
+- `--checkpoint-minutes M`: Also save the resumable checkpoint mid-epoch at most
+  every M minutes, so a preempted job loses at most M minutes. A checkpoint is
+  always saved at the end of each epoch. _(default: 30)_
 
 ### Miscellaneous
 
@@ -220,7 +238,7 @@ Run training with `misfit_train`:
 
 ### Example
 
-Train a base SwinMAE for 200 epochs.
+Train a base SwinMAE with the default schedule (1000 epochs × 250 steps).
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -259,7 +277,7 @@ misfit_train --index   /data/index.parquet \
 ```text
 results/
     checkpoints/
-        checkpoint.pt       Latest checkpoint (overwritten each epoch).
+        checkpoint.pt       Latest checkpoint (each epoch, and every --checkpoint-minutes).
     models/
         best_model.pt       Checkpoint with the lowest validation loss.
     logs/                   TensorBoard event files.

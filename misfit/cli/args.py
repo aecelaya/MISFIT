@@ -203,7 +203,22 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
 
     # --- Optimisation ---
     opt = parser.add_argument_group("Optimisation")
-    opt.add_argument("--epochs",        type=non_negative_int, default=200)
+    opt.add_argument(
+        "--epochs", type=non_negative_int, default=1000, metavar="N",
+        help=(
+            "Training epochs. An epoch is a fixed --steps-per-epoch optimizer "
+            "steps, not a pass over the data, so training length and the LR "
+            "schedule don't depend on corpus size."
+        ),
+    )
+    opt.add_argument(
+        "--steps-per-epoch", type=positive_int, default=250, metavar="N",
+        dest="steps_per_epoch",
+        help=(
+            "Optimizer steps per epoch. Validation, logging, and the "
+            "end-of-epoch checkpoint happen once per epoch."
+        ),
+    )
     opt.add_argument(
         "--batch-size", type=positive_int, default=2, metavar="N",
         help="Batch size per GPU.",
@@ -223,8 +238,11 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         choices=list_lr_schedulers(),
     )
     opt.add_argument(
-        "--warmup-epochs", type=non_negative_int, default=20, metavar="N",
-        help="Linear warmup epochs (recommended ≥10 for SwinUNETR-V2).",
+        "--warmup-epochs", type=non_negative_int, default=50, metavar="N",
+        help=(
+            "Linear LR warmup, in epochs. The LR is updated every optimizer "
+            "step, so warmup and decay are smooth."
+        ),
     )
     opt.add_argument(
         "--gradient-accumulation-steps", type=positive_int, default=1, metavar="N",
@@ -242,6 +260,32 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
             "all-reduce calls at multi-node scale. Defaults to 200 (vs PyTorch default 25)."
         ),
     )
+    # --- Validation & checkpointing ---
+    val = parser.add_argument_group("Validation & checkpointing")
+    val.add_argument(
+        "--val-every", type=positive_int, default=1, metavar="N",
+        dest="val_every",
+        help="Run validation every N epochs (and always after the last one).",
+    )
+    val.add_argument(
+        "--val-volumes", type=positive_int, default=128, metavar="N",
+        dest="val_volumes",
+        help=(
+            "Validate on the first N volumes of the val split (all of them if "
+            "it has fewer). A fixed subset with fixed masks keeps the val loss "
+            "comparable across epochs and runs."
+        ),
+    )
+    val.add_argument(
+        "--checkpoint-minutes", type=positive_float, default=30.0, metavar="M",
+        dest="checkpoint_minutes",
+        help=(
+            "Also save the resumable checkpoint mid-epoch at most every M "
+            "minutes, so a preempted job loses at most M minutes of work. "
+            "A checkpoint is always saved at the end of each epoch."
+        ),
+    )
+
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
