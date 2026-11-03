@@ -22,11 +22,12 @@ import pandas as pd
 import torch
 
 from misfit.inference import inference_utils
+from misfit.normalization.normalization_registry import DEFAULT_NORMALIZATION_POLICY
 from misfit.utils.console import print_section_header, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import denormalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
-from misfit.utils.resampling import get_row_spacing, resample_to_shape
+from misfit.utils.resampling import resample_to_shape
 
 _NORMALIZED_MSE_LOSS = "normalized_masked_mse"
 
@@ -108,6 +109,7 @@ def reconstruct(
     device: str | torch.device | None = None,
     split: str | None = None,
     target_spacing: tuple[float, float, float] | None = None,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
 ) -> None:
     """Reconstruct every volume in *index_path* and save as NIfTI.
 
@@ -123,7 +125,9 @@ def reconstruct(
     5. Trims padding to restore the original voxel dimensions, resampling back
        to the volume's native grid if step 1 resampled it, so outputs overlay
        on the input NIfTI with its own affine.
-    6. Denormalizes reconstruction intensities (``recon × fg_std + fg_mean``).
+    6. Denormalizes reconstruction intensities by inverting the normalization
+       policy (``recon × scale + shift``; for ``clip_and_z_score``,
+       ``recon × fg_std + fg_mean``).
        When ``training_config["loss"]`` is ``"normalized_masked_mse"``, the
        per-patch normalization applied by the loss is first undone (step 4a)
        before the volume-level denormalization so that saved intensities are
@@ -156,6 +160,9 @@ def reconstruct(
         target_spacing: The run's target spacing
             (:func:`misfit.utils.resampling.get_target_spacing`), or None for
             native resolution. Defaults to None.
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``). Defaults to
+            ``clip_and_z_score``.
     """
     tcfg = training_config or {}
     loss_name = tcfg.get("loss", "")
@@ -197,16 +204,18 @@ def reconstruct(
             recon_path = recon_dir / f"{volume_id}.nii.gz"
             mask_path = mask_dir / f"{volume_id}.nii.gz"
 
-            volume = inference_utils.load_and_normalize(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
-                spacing=get_row_spacing(row) if target_spacing else None,
+            loaded = inference_utils.load_and_normalize(
+                row,
+                normalization_policy=normalization_policy,
                 target_spacing=target_spacing,
+                return_scale=True,
             )
-            if volume is None:
+            if loaded is None:
                 errors.append(f"Could not load: {row['path']}")
                 progress.advance(task)
                 continue
 
+            volume, intensity_scale = loaded
             try:
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
 
@@ -230,10 +239,9 @@ def reconstruct(
                     recon_np = resample_to_shape(recon_np, native_shape)
                     mask_np = (resample_to_shape(mask_np, native_shape) >= 0.5)
 
-                # Denormalize reconstruction to original intensity space.
-                fg_std = float(row["fg_std"])
-                fg_mean = float(row["fg_mean"])
-                recon_np = recon_np * fg_std + fg_mean
+                # Denormalize reconstruction to original intensity space by
+                # inverting the normalization policy's affine map.
+                recon_np = recon_np * intensity_scale.scale + intensity_scale.shift
 
                 nib.save(
                     nib.Nifti1Image(recon_np.astype(np.float32), affine=affine),

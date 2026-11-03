@@ -73,19 +73,30 @@ def test_build_model_default_device(tmp_path):
     assert model is not None
 
 
+def _row(path, spacing=(1.0, 1.0, 1.0), **stats):
+    """An index row for *path* with clip_and_z_score statistics."""
+    return {
+        "path": str(path),
+        "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
+        "spacing_d": spacing[0], "spacing_h": spacing[1], "spacing_w": spacing[2],
+        **stats,
+    }
+
+
 def test_load_and_normalize_success(tmp_path):
     data = np.random.randn(16, 16, 16).astype(np.float32)
     img = nib.Nifti1Image(data, np.eye(4))
     p = tmp_path / "vol.nii.gz"
     nib.save(img, str(p))
 
-    result = load_and_normalize(p, p1=-2, p99=2, fg_mean=0.0, fg_std=1.0)
+    result = load_and_normalize(_row(p))
     assert result is not None
     assert result.shape == (16, 16, 16)
+    assert result.min() >= -2.0 and result.max() <= 2.0  # clipped by default
 
 
 def test_load_and_normalize_missing_file(tmp_path):
-    result = load_and_normalize(tmp_path / "missing.nii.gz", -1, 1, 0, 1)
+    result = load_and_normalize(_row(tmp_path / "missing.nii.gz"))
     assert result is None
 
 
@@ -94,8 +105,20 @@ def test_load_and_normalize_4d(tmp_path):
     img = nib.Nifti1Image(data, np.eye(4))
     p = tmp_path / "vol4d.nii.gz"
     nib.save(img, str(p))
-    result = load_and_normalize(p, -2, 2, 0.0, 1.0)
+    result = load_and_normalize(_row(p))
     assert result.shape == (16, 16, 16)
+
+
+def test_load_and_normalize_applies_the_policy_and_returns_its_scale(tmp_path):
+    data = np.random.default_rng(0).normal(100, 30, (16, 16, 16)).astype(np.float32)
+    p = tmp_path / "vol.nii.gz"
+    nib.save(nib.Nifti1Image(data, np.eye(4)), str(p))
+
+    result, scale = load_and_normalize(
+        _row(p), normalization_policy="z_score_only", return_scale=True
+    )
+    assert abs(result.mean()) < 1e-4 and abs(result.std() - 1.0) < 1e-4
+    np.testing.assert_allclose(result * scale.scale + scale.shift, data, atol=1e-3)
 
 
 @pytest.mark.parametrize("vol_shape,target", [
@@ -141,7 +164,7 @@ def test_load_and_normalize_resamples_to_target_spacing(tmp_path):
     nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
                              np.eye(4)), str(p))
     result = load_and_normalize(
-        p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0), target_spacing=(1.0, 1.0, 1.0)
+        _row(p, spacing=(0.5, 0.5, 4.0)), target_spacing=(1.0, 1.0, 1.0)
     )
     assert result.shape == (8, 8, 16)
 
@@ -150,7 +173,7 @@ def test_load_and_normalize_without_target_spacing_ignores_spacing(tmp_path):
     p = tmp_path / "vol.nii.gz"
     nib.save(nib.Nifti1Image(np.random.randn(16, 16, 4).astype(np.float32),
                              np.eye(4)), str(p))
-    result = load_and_normalize(p, -2, 2, 0.0, 1.0, spacing=(0.5, 0.5, 4.0))
+    result = load_and_normalize(_row(p, spacing=(0.5, 0.5, 4.0)))
     assert result.shape == (16, 16, 4)
 
 

@@ -46,6 +46,10 @@ from misfit.metrics.metrics_registry import (
 )
 from misfit.models.model_registry import get_model_from_registry
 from misfit.models.pretrained import load_model_weights
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy,
+)
 from misfit.utils.console import console, print_error, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import normalize_patchwise
@@ -61,8 +65,8 @@ class ReconstructionEvaluator:
 
     For each volume in a Parquet index the evaluator:
 
-    1. Loads, z-score normalizes, and crops to the index's foreground bounding
-       box (matching ``MISFITDataset``).
+    1. Loads, normalizes with the run's normalization policy, and crops to the
+       index's foreground bounding box (matching ``MISFITDataset``).
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension and
        tiles into non-overlapping patches.
     3. Runs a full MAE forward pass on each patch with a deterministic mask
@@ -101,6 +105,9 @@ class ReconstructionEvaluator:
             (:func:`misfit.utils.resampling.get_target_spacing`). Each volume
             is resampled to it after the foreground crop, matching
             ``MISFITDataset``. None (default) keeps the native resolution.
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``), applied as in
+            ``MISFITDataset``. Defaults to ``clip_and_z_score``.
     """
 
     def __init__(
@@ -115,8 +122,10 @@ class ReconstructionEvaluator:
         training_config: dict | None = None,
         seed: int = 42,
         target_spacing: tuple[float, float, float] | None = None,
+        normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
     ) -> None:
         self.target_spacing = target_spacing
+        self.normalization_policy = get_normalization_policy(normalization_policy)
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
         self.output_csv_path = Path(output_csv_path)
@@ -194,11 +203,7 @@ class ReconstructionEvaluator:
         if data.ndim == 4:
             data = data[..., 0]
 
-        p1, p99 = float(row["p1"]), float(row["p99"])
-        fg_mean, fg_std = float(row["fg_mean"]), float(row["fg_std"])
-
-        data = np.clip(data, p1, p99)
-        data = (data - fg_mean) / max(fg_std, 1e-8)
+        data, _ = self.normalization_policy.normalize(data, row)
         data = self._crop_to_foreground(data, row)
         if self.target_spacing is not None:
             data = resample_to_spacing(data, get_row_spacing(row), self.target_spacing)

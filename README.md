@@ -172,6 +172,7 @@ Key options:
 | `--steps-per-epoch`      | `250`                   | Optimizer steps per epoch                           |
 | `--batch-size`           | `2`                     | Per-GPU batch size                                  |
 | `--loss`                 | `normalized_masked_mse` | Loss function                                       |
+| `--normalization-policy` | `clip_and_z_score`      | Intensity normalization (`z_score_only` for nnssl)  |
 
 Training writes a `config.json` to `--results` that captures every architecture
 and hyperparameter decision. All downstream commands read this file — you never

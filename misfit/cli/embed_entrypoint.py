@@ -10,9 +10,10 @@ import pandas as pd
 import torch
 
 from misfit.cli.args import ArgParser, add_embed_args
+from misfit.normalization.normalization_registry import get_normalization_policy_name
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
-from misfit.utils.resampling import get_row_spacing, get_target_spacing
+from misfit.utils.resampling import get_target_spacing
 
 
 def embed_entry(args=None) -> None:
@@ -39,6 +40,7 @@ def embed_entry(args=None) -> None:
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
     target_spacing = get_target_spacing(config)
+    normalization_policy = get_normalization_policy_name(config)
 
     # Lazy imports so CLI startup is fast.
     import misfit.embedding  # noqa: F401 — trigger registrations
@@ -114,8 +116,8 @@ def embed_entry(args=None) -> None:
                 continue
 
             volume = load_and_normalize(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"],
-                spacing=get_row_spacing(row) if target_spacing else None,
+                row,
+                normalization_policy=normalization_policy,
                 target_spacing=target_spacing,
             )
             if volume is None:

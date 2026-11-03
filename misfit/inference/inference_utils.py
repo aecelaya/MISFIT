@@ -3,13 +3,19 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.models.model_registry import get_model_from_registry
 from misfit.models.pretrained import load_model_weights
-from misfit.utils.resampling import resample_to_spacing
+from misfit.normalization.base import IntensityScale
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy,
+)
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 
 def get_default_device() -> str:
@@ -80,35 +86,31 @@ def build_model_from_checkpoint(
 
 
 def load_and_normalize(
-    nifti_path: str | Path,
-    p1: float,
-    p99: float,
-    fg_mean: float,
-    fg_std: float,
-    eps: float = 1e-8,
-    spacing: tuple[float, float, float] | None = None,
+    row: pd.Series,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
     target_spacing: tuple[float, float, float] | None = None,
-) -> np.ndarray | None:
-    """Load a NIfTI volume, apply clip + z-score normalization, and resample.
+    return_scale: bool = False,
+) -> np.ndarray | tuple[np.ndarray, IntensityScale] | None:
+    """Load an indexed NIfTI volume, normalize it, and resample it.
 
     Args:
-        nifti_path: Path to a ``.nii`` or ``.nii.gz`` file.
-        p1: 1st-percentile foreground intensity (lower clip bound).
-        p99: 99th-percentile foreground intensity (upper clip bound).
-        fg_mean: Foreground mean after clipping.
-        fg_std: Foreground standard deviation after clipping.
-        eps: Minimum value for fg_std to avoid division by zero.
-        spacing: The volume's (x, y, z) voxel spacing (from its index row).
-            Required when target_spacing is set.
+        row: The volume's row from the misfit_index Parquet index (its
+            ``path``, normalization statistics, and spacing).
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``). Defaults to
+            ``clip_and_z_score``.
         target_spacing: Resample the normalized volume to this spacing, as
             training did. None (default) keeps the native resolution.
+        return_scale: Also return the :class:`IntensityScale` applied, to
+            map outputs back to raw intensities. Defaults to False.
 
     Returns:
         Float32 numpy array of shape (X, Y, Z) — at target_spacing when set —
-        or None if the file cannot be read.
+        plus its IntensityScale when ``return_scale`` is True; or None if the
+        file cannot be read.
     """
     try:
-        img = nib.load(nifti_path)
+        img = nib.load(row["path"])
         data = np.asarray(img.dataobj, dtype=np.float32)
     except Exception:  # pylint: disable=broad-except
         return None
@@ -116,11 +118,10 @@ def load_and_normalize(
     if data.ndim == 4:
         data = data[..., 0]
 
-    data = np.clip(data, p1, p99)
-    data = (data - fg_mean) / max(fg_std, eps)
+    data, scale = get_normalization_policy(normalization_policy).normalize(data, row)
     if target_spacing is not None:
-        data = resample_to_spacing(data, spacing, target_spacing)
-    return data
+        data = resample_to_spacing(data, get_row_spacing(row), target_spacing)
+    return (data, scale) if return_scale else data
 
 
 def pad_to_multiple(

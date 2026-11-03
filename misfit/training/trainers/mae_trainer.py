@@ -45,6 +45,10 @@ from misfit.data_loading.dataloader import (
 from misfit.loss_functions.loss_registry import get_loss
 from misfit.models.model_registry import get_model_from_registry
 from misfit.models.pretrained import load_pretrained_weights
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy_name,
+)
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
@@ -175,6 +179,10 @@ class MAETrainer:
         """``--target-spacing`` as a tuple, or None for native resolution."""
         spacing = getattr(self.args, "target_spacing", None)
         return None if spacing is None else tuple(float(s) for s in spacing)
+
+    def _normalization_policy(self) -> str:
+        """``--normalization-policy``, defaulting for hand-built args."""
+        return getattr(self.args, "normalization_policy", DEFAULT_NORMALIZATION_POLICY)
 
     def _build_model(self) -> nn.Module:
         model = get_model_from_registry(
@@ -436,6 +444,7 @@ class MAETrainer:
             "misfit_version": misfit.__version__,
             "data": {
                 "index": str(self.args.index),
+                "normalization_policy": self._normalization_policy(),
             },
             "model": {
                 "architecture":    self.args.model,
@@ -534,6 +543,17 @@ class MAETrainer:
                 f"{_spacing_repr(saved_spacing)} to "
                 f"{_spacing_repr(current_spacing)}.  Pass the original "
                 "--target-spacing, or use --overwrite to start fresh."
+            )
+
+        # The policy changes the input distribution the model learns, so it is
+        # fixed for a run. Configs without one used clip_and_z_score.
+        saved_policy = get_normalization_policy_name(saved_config)
+        if saved_policy != self._normalization_policy():
+            raise ValueError(
+                "Cannot resume: 'data.normalization_policy' changed from "
+                f"{saved_policy!r} to {self._normalization_policy()!r}.  Pass "
+                "the original --normalization-policy, or use --overwrite to "
+                "start fresh."
             )
 
         # Fields that are allowed to change but deserve a warning.
@@ -655,6 +675,7 @@ class MAETrainer:
             world_size=self.world_size,
             seed=self.args.seed,
             target_spacing=self._target_spacing(),
+            normalization_policy=self._normalization_policy(),
         )
         val_loader = get_validation_dataloader(
             index_path=self.args.index,
@@ -665,6 +686,7 @@ class MAETrainer:
             seed=self.args.seed,
             target_spacing=self._target_spacing(),
             max_volumes=self.args.val_volumes,
+            normalization_policy=self._normalization_policy(),
         )
 
         # --- Output directories (rank 0 creates, then barrier) ---

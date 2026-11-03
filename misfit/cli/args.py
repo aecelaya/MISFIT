@@ -13,6 +13,10 @@ import misfit.models  # noqa: F401 — trigger registrations
 from misfit.loss_functions.loss_registry import list_registered_losses
 from misfit.metrics.metrics_registry import list_registered_metrics
 from misfit.models.model_registry import list_registered_models
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    list_normalization_policies,
+)
 from misfit.training.lr_schedulers.lr_scheduler_registry import list_lr_schedulers
 from misfit.training.optimizers.optimizer_registry import list_optimizers
 
@@ -199,6 +203,21 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     model.add_argument(
         "--mask-ratio", type=float_0_1, default=0.75, metavar="R",
         help="Fraction of patches to mask during pretraining.",
+    )
+
+    # --- Normalization ---
+    norm = parser.add_argument_group("Normalization")
+    norm.add_argument(
+        "--normalization-policy", default=DEFAULT_NORMALIZATION_POLICY,
+        choices=list_normalization_policies(), dest="normalization_policy",
+        help=(
+            "How each volume's intensities are normalized. clip_and_z_score "
+            "clips to the foreground's 1st-99th percentiles and z-scores with "
+            "foreground statistics (handles mixed CT/MRI). z_score_only "
+            "z-scores with the volume's nonzero region, as nnssl does; use it "
+            "with nnFoundation weights. Saved to config.json and applied by "
+            "every downstream command."
+        ),
     )
 
     # --- Loss ---

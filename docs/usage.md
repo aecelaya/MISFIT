@@ -186,6 +186,14 @@ Run training with `misfit_train`:
   _(default: 16)_
 - `--mask-ratio R`: Fraction of patch tokens to mask. _(default: 0.75)_
 
+### Normalization
+
+- `--normalization-policy NAME`: How each volume's intensities are normalized:
+  `clip_and_z_score` or `z_score_only` (nnssl's, for nnFoundation weights).
+  Saved to `config.json` and applied by every downstream command. _(default:
+  `clip_and_z_score`)_ See
+  [Normalization Policies](advanced_topics.md#normalization-policies).
+
 ### Loss
 
 - `--loss NAME`: Reconstruction loss function. _(default:

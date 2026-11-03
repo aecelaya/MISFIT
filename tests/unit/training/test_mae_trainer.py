@@ -1821,3 +1821,53 @@ def test_build_config_records_init_weights(tmp_path):
     args.init_weights = "/models/checkpoint_final.pth"
     config = MAETrainer(args)._build_config()
     assert config["training"]["init_weights"] == "/models/checkpoint_final.pth"
+
+
+# ---------------------------------------------------------------------------
+# --normalization-policy
+# ---------------------------------------------------------------------------
+
+def test_build_config_records_normalization_policy(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    assert MAETrainer(args)._build_config()["data"]["normalization_policy"] == (
+        "clip_and_z_score"
+    )
+    args.normalization_policy = "z_score_only"
+    assert MAETrainer(args)._build_config()["data"]["normalization_policy"] == "z_score_only"
+
+
+def test_train_passes_normalization_policy_to_both_loaders(tmp_path):
+    args = _make_args(tmp_path)
+    args.normalization_policy = "z_score_only"
+    _, train_mock, val_mock = _run_train(args, _batches(1))
+    assert train_mock.call_args.kwargs["normalization_policy"] == "z_score_only"
+    assert val_mock.call_args.kwargs["normalization_policy"] == "z_score_only"
+
+
+@pytest.mark.parametrize("saved,current", [
+    ("clip_and_z_score", "z_score_only"),
+    ("z_score_only", "clip_and_z_score"),
+])
+def test_validate_resume_rejects_normalization_policy_change(tmp_path, saved, current):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.normalization_policy = saved
+    saved_config = MAETrainer(args)._build_config()
+    args.normalization_policy = current
+    with pytest.raises(ValueError, match="normalization_policy"):
+        MAETrainer(args)._validate_resume(saved_config)
+
+
+def test_validate_resume_legacy_config_means_clip_and_z_score(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    legacy = MAETrainer(args)._build_config()
+    del legacy["data"]["normalization_policy"]
+    MAETrainer(args)._validate_resume(legacy)  # clip → clip: fine
+    args.normalization_policy = "z_score_only"
+    with pytest.raises(ValueError, match="'clip_and_z_score' to 'z_score_only'"):
+        MAETrainer(args)._validate_resume(legacy)

@@ -112,7 +112,7 @@ guards both the guard block and the `-m` path.
 misfit/
   cli/                  Entry points + shared ArgParser / add_*_args
   preprocessing/        NIfTI indexer → Parquet (parallel, ProcessPoolExecutor)
-  data_loading/         MISFITDataset + DataLoader; on-the-fly clip+z-score normalization;
+  data_loading/         MISFITDataset + DataLoader; on-the-fly normalization (policy);
                         EpochSampler (fixed samples per epoch for step-based training)
   models/               MISFITModel base class; SwinMAE (MIST SwinUNETR-V2 + MAE head);
                         ResEncMAE (MIST ResEnc UNet as the MAE network);
@@ -124,6 +124,7 @@ misfit/
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
+  normalization/        NormalizationPolicy registry: clip_and_z_score (default), z_score_only
   utils/                console (Rich), io (read/write JSON),
                         progress_bar (get_progress_bar; TrainProgressBar /
                         ValidationProgressBar — mirror mist.utils.progress_bar),
@@ -317,6 +318,27 @@ warmup epochs). nnssl's ResEnc recipe uses SGD (Nesterov 0.99, 1e-2, PolyLR),
 but its paper (Wald et al. 2025, "Revisiting MAE pre-training") takes that from
 nnU-Net without ablating optimizers, so it isn't evidence SGD beats AdamW; one
 shared recipe also keeps architecture comparisons clean.
+
+### Normalization policies (`normalization/`, `--normalization-policy`)
+
+Registry like losses/optimizers:
+`NormalizationPolicy.normalize(volume, row) -> (normalized, IntensityScale(shift, scale))`.
+Every input path calls the run's policy: `MISFITDataset._normalize`,
+`inference_utils.load_and_normalize(row, normalization_policy, target_spacing, return_scale)`
+(encode, embed, inspect), and `ReconstructionEvaluator._load_and_normalize`.
+Inspect inverts the returned `IntensityScale` (`recon × scale + shift`), so a
+new policy needs no inspect changes. Stored as
+`config["data"]["normalization_policy"]`; `get_normalization_policy_name`
+defaults missing entries to `clip_and_z_score` (pre-option configs), and resume
+rejects a change.
+
+`z_score_only` reproduces nnssl: z-score over the bounding box of nonzero voxels
+(nnssl fills holes first, which can't change the box), no clipping,
+`use_mask_for_norm` false. Stats are computed at load time from the volume, so
+no index columns. For nnFoundation also use `--loss masked_mse` (nnssl's
+`MAEMSELoss`): `normalized_masked_mse` standardizes each target cube, which
+nnFoundation's head never learned — with it, `misfit_evaluate` reports
+nnFoundation as worse than the naive baseline.
 
 ### Pretrained weights (`models/pretrained.py`, `--init-weights`)
 

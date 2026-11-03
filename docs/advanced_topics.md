@@ -18,7 +18,8 @@ Below is an example `config.json` produced by `misfit_train`.
   "misfit_version": "0.1.0-alpha",
 
   "data": {
-    "index": "/data/index.parquet"
+    "index": "/data/index.parquet",
+    "normalization_policy": "clip_and_z_score"
   },
 
   "model": {
@@ -147,9 +148,11 @@ a hard error:
 | `model.patch_size`              | Determines the spatial dimension of all model tensors.    |
 | `model.mask_patch_size`         | Determines the masking grid structure inside the encoder. |
 | `spatial_config.target_spacing` | Sets the physical scale the model learned at.             |
+| `data.normalization_policy`     | Sets the intensity distribution the model learned on.     |
 
-`--target-spacing` follows the same rule: pass the original value on `--resume`.
-Switching between resampled and native resolution is also an error.
+`--target-spacing` and `--normalization-policy` follow the same rule: pass the
+original value on `--resume`. Switching between resampled and native resolution
+is also an error.
 
 All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 **mutable** — changes produce a warning and training continues.
@@ -214,7 +217,9 @@ objective, at 192³ and 1 mm. MISFIT's `resenc` at 1 mm with a patch of at least
 128³ is the same network, decoder and reconstruction head included: loaded with
 nnFoundationCNN's weights, it produces exactly the output of nnU-Net's own
 `ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB, CC-BY-SA-4.0)
-and use it two ways.
+and use it two ways. In both, match nnssl's preprocessing and objective with
+`--normalization-policy z_score_only` and `--loss masked_mse` (see the note
+below).
 
 **As a ready-made encoder.** Every command that takes a checkpoint
 (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
@@ -227,6 +232,8 @@ misfit_train --index          /data/index.parquet \
              --model          resenc \
              --patch-size     192 192 192 \
              --target-spacing 1 1 1 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
              --init-only
 
 misfit_embed --encoder-checkpoint /models/checkpoint_final.pth \
@@ -247,6 +254,8 @@ misfit_train --index          /data/index.parquet \
              --model          resenc \
              --patch-size     192 192 192 \
              --target-spacing 1 1 1 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
              --init-weights   /models/checkpoint_final.pth
 ```
 
@@ -256,12 +265,15 @@ listing the mismatched weights rather than mixing pretrained and random weights.
 
 <!-- prettier-ignore -->
 !!! note
-    nnFoundation was pretrained on images z-scored over the whole volume,
-    while MISFIT clips each volume to its 1st–99th foreground percentiles and
-    z-scores the foreground. The weights still work (in a smoke test on
-    synthetic data, nnFoundation's masked reconstruction error under MISFIT's
-    normalization was about 9× lower than a random network's), but the
-    mismatch may cost some of the benefit.
+    nnssl z-scores each volume over its nonzero region (`z_score_only`) and
+    trains with plain masked MSE (`masked_mse`), not MISFIT's defaults. Both
+    matter: MISFIT's default `normalized_masked_mse` standardizes each masked
+    cube of the target, so `misfit_evaluate` would score nnFoundation's
+    outputs against targets it was never trained to produce, and continued
+    pretraining would first have to relearn the reconstruction head. In a
+    smoke test on synthetic phantoms, nnFoundation's masked-MSE skill over the
+    naive baseline was 0.84 with `z_score_only` and 0.80 with
+    `clip_and_z_score` (a random network's was negative).
 
 ---
 
@@ -356,6 +368,33 @@ paper and works well for 3D medical images.
 Higher mask ratios force the model to learn longer-range spatial dependencies;
 lower ratios make the reconstruction task easier and may be preferable for
 datasets with complex, fine-grained anatomy where local context is important.
+
+---
+
+## Normalization Policies
+
+`--normalization-policy` sets how each volume's intensities are normalized
+before it reaches the model. It is saved to `config.json`
+(`data.normalization_policy`), applied by every command that reads volumes
+(training, `misfit_evaluate`, `misfit_inspect`, `misfit_encode`,
+`misfit_embed`), and cannot change on `--resume`.
+
+| Policy           | `--normalization-policy` | Description                                                                                                                                              |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clip and z-score | `clip_and_z_score`       | Clip to the foreground's 1st–99th percentiles, then z-score with the foreground mean and std (precomputed by `misfit_index`). Default.                   |
+| Z-score only     | `z_score_only`           | Z-score with the mean and std of the volume's nonzero bounding box, without clipping or a foreground mask. nnssl's normalization, used for nnFoundation. |
+
+`clip_and_z_score` suits mixed CT and MRI corpora: clipping removes outliers
+(metal, bias, hotspots) without modality-specific rules, and foreground
+statistics keep background from dominating. Use `z_score_only` with nnssl
+checkpoints such as nnFoundation, so they see the input distribution they were
+pretrained on; see [Starting from nnFoundation](#starting-from-nnfoundation).
+Configs from before this option count as `clip_and_z_score`.
+
+To add a policy, subclass `NormalizationPolicy` in
+`misfit/normalization/policies.py` and register it with
+`@register_normalization_policy("name")`. `normalize` returns the normalized
+volume and the affine map it applied, which `misfit_inspect` inverts.
 
 ---
 

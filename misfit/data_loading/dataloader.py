@@ -33,6 +33,7 @@ from torch.utils.data import DataLoader, DistributedSampler, Subset
 
 from misfit.data_loading.dataset import MISFITDataset
 from misfit.data_loading.samplers import EpochSampler
+from misfit.normalization.normalization_registry import DEFAULT_NORMALIZATION_POLICY
 
 
 def seal_resource_tracker_fd(worker_id: int) -> None:
@@ -69,6 +70,7 @@ def get_training_dataloader(
     world_size: int = 1,
     seed: int = 42,
     target_spacing: tuple[float, float, float] | None = None,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
 ) -> DataLoader:
     """Build a training DataLoader with augmentation enabled.
 
@@ -93,6 +95,8 @@ def get_training_dataloader(
         seed: Random seed for the sampler. Defaults to 42.
         target_spacing: (x, y, z) spacing to resample volumes to before
             cropping, or None for native resolution. Defaults to None.
+        normalization_policy: Registered normalization policy name.
+            Defaults to ``clip_and_z_score``.
 
     Returns:
         Configured PyTorch DataLoader yielding (B, 1, X, Y, Z) tensors.
@@ -103,6 +107,7 @@ def get_training_dataloader(
         augment=True,
         split="train",
         target_spacing=target_spacing,
+        normalization_policy=normalization_policy,
     )
     sampler = EpochSampler(
         len(dataset),
@@ -136,6 +141,7 @@ def get_validation_dataloader(
     seed: int = 42,
     target_spacing: tuple[float, float, float] | None = None,
     max_volumes: int | None = None,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
 ) -> DataLoader:
     """Build a validation DataLoader with deterministic center crop.
 
@@ -156,6 +162,8 @@ def get_validation_dataloader(
             cropping, or None for native resolution. Defaults to None.
         max_volumes: Use at most this many val volumes, or None for all.
             Defaults to None.
+        normalization_policy: Registered normalization policy name.
+            Defaults to ``clip_and_z_score``.
 
     Returns:
         Configured PyTorch DataLoader yielding (B, 1, X, Y, Z) tensors.
@@ -166,6 +174,7 @@ def get_validation_dataloader(
         augment=False,
         split="val",
         target_spacing=target_spacing,
+        normalization_policy=normalization_policy,
     )
     if max_volumes is not None and max_volumes < len(dataset):
         dataset = Subset(dataset, range(max_volumes))

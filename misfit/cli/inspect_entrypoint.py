@@ -23,6 +23,7 @@ from pathlib import Path
 
 from misfit.cli.args import ArgParser, add_inspect_args
 from misfit.inference.inference_runners import reconstruct
+from misfit.normalization.normalization_registry import get_normalization_policy_name
 from misfit.utils.console import print_error
 from misfit.utils.io import read_json_file
 from misfit.utils.resampling import get_target_spacing
@@ -64,6 +65,7 @@ def inspect_entry(args=None) -> None:
         device=ns.device,
         split=ns.split or None,
         target_spacing=get_target_spacing(config),
+        normalization_policy=get_normalization_policy_name(config),
     )
 
 
