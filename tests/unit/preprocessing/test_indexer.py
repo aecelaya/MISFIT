@@ -270,7 +270,8 @@ def test_build_index_records_groups_and_keeps_input_order(tmp_path):
     )
 
     assert list(df["volume_id"]) == [f"vol{i}" for i in range(6)]
-    assert list(df["group"]) == groups
+    # pandas 3 stores a missing string as NaN rather than None.
+    assert [None if pd.isna(g) else g for g in df["group"]] == groups
     assert df[df["group"] == "a"]["split"].nunique() == 1
     assert df[df["group"] == "b"]["split"].nunique() == 1
 

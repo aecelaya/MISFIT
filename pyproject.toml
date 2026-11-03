@@ -34,7 +34,7 @@ keywords = [
 dependencies = [
     # Model architectures (encoders) come from MIST, so pretrained encoders
     # load straight into the matching MIST model for fine-tuning.
-    "mist-medical>=2.3.0",
+    "mist-medical>=2.4.0",
     "torch",
     "monai",
     "nibabel",

@@ -215,10 +215,11 @@ use `misfit_inspect` for a viewer-space read.
 
 ### Model architectures (`models/swinunetr/`, `models/resenc/`)
 
-MISFIT depends on MIST (`mist-medical>=2.3.0` in `pyproject.toml`) for model
-architectures: encoders are built from `mist.models`, never reimplemented, so a
-pretrained encoder is the exact module MIST fine-tunes. MISFIT adds only the
-MAE-specific parts (masking, decoder, masked loss).
+MISFIT depends on MIST (`mist-medical>=2.4.0` in `pyproject.toml`; ResEnc first
+shipped in 2.4.0) for model architectures: encoders are built from
+`mist.models`, never reimplemented, so a pretrained encoder is the exact module
+MIST fine-tunes. MISFIT adds only the MAE-specific parts (masking, decoder,
+masked loss).
 
 `SwinMAE(MISFITModel)` builds MIST's `MistSwinUNETR` and keeps its
 `.model.swinViT` as `self.encoder` (UNet decoder discarded). The MAE decoder is
