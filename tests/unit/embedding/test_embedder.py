@@ -105,7 +105,7 @@ def test_extract_crop_features_positions_on_device():
     assert positions.device == torch.device("cpu")
 
 
-def test_embedder_int_patch_size_normalised_to_triple():
+def test_embedder_int_patch_size_normalized_to_triple():
     """An int patch_size is stored internally as a (D, H, W) triple."""
     aggregator = MeanPoolAggregator(embed_dim=16)
     emb = Embedder(

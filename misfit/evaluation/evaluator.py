@@ -5,9 +5,9 @@ and computes per-volume masked reconstruction metrics (MAE, MSE, PSNR)
 averaged across all non-overlapping patches.
 
 Metrics are computed in the **training loss's space**: when the run used
-``normalized_masked_mse`` the target is normalised per ``mask_patch_size`` cube
+``normalized_masked_mse`` the target is normalized per ``mask_patch_size`` cube
 (zero mean, unit variance) — exactly as the loss does — so ``masked_mse`` is
-directly comparable to ``best_val_loss``. Because a per-region-normalised MSE is
+directly comparable to ``best_val_loss``. Because a per-region-normalized MSE is
 ~1.0 for *any* constant predictor, every metric is also reported for a **naive
 baseline** (impute masked voxels with the visible-region mean) plus a ``_skill``
 column so "did pretraining beat trivial?" is a single readable number.
@@ -39,16 +39,22 @@ import torch.nn as nn
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.evaluation import evaluation_utils
 from misfit.inference.inference_runners import _NORMALIZED_MSE_LOSS
-from misfit.inference.inference_utils import get_row_spacing, pad_to_multiple
+from misfit.inference.inference_utils import pad_to_multiple
 from misfit.metrics.metrics_registry import (
     DEFAULT_METRICS,
     get_metric,
 )
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_model_weights
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy,
+)
 from misfit.utils.console import console, print_error, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import normalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 # Numerically-safe floor for the naive value in the lower-is-better skill ratio.
 _SKILL_EPS = 1e-12
@@ -59,8 +65,8 @@ class ReconstructionEvaluator:
 
     For each volume in a Parquet index the evaluator:
 
-    1. Loads, z-score normalises, and crops to the index's foreground bounding
-       box (matching ``MISFITDataset``).
+    1. Loads, normalizes with the run's normalization policy, and crops to the
+       index's foreground bounding box (matching ``MISFITDataset``).
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension and
        tiles into non-overlapping patches.
     3. Runs a full MAE forward pass on each patch with a deterministic mask
@@ -88,13 +94,20 @@ class ReconstructionEvaluator:
             value are evaluated. Defaults to ``"val"``.
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects the metric space
-            (per-``mask_patch_size``-cube normalisation for
+            (per-``mask_patch_size``-cube normalization for
             ``normalized_masked_mse``, whole-volume z-score otherwise) and the
             ``amp`` flag toggles autocast (defaults to enabled when absent, then
             resolved against the current hardware — BF16 needs an NVIDIA
             Ampere+ or AMD CDNA/RDNA3+ GPU, otherwise it falls back to FP32).
         seed: Base RNG seed. Each patch's mask is drawn from ``seed +
             patch_index`` so the whole evaluation is reproducible.
+        target_spacing: The run's target spacing
+            (:func:`misfit.utils.resampling.get_target_spacing`). Each volume
+            is resampled to it after the foreground crop, matching
+            ``MISFITDataset``. None (default) keeps the native resolution.
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``), applied as in
+            ``MISFITDataset``. Defaults to ``clip_and_z_score``.
     """
 
     def __init__(
@@ -108,7 +121,11 @@ class ReconstructionEvaluator:
         split: str | None = "val",
         training_config: dict | None = None,
         seed: int = 42,
+        target_spacing: tuple[float, float, float] | None = None,
+        normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
     ) -> None:
+        self.target_spacing = target_spacing
+        self.normalization_policy = get_normalization_policy(normalization_policy)
         self.checkpoint_path = Path(checkpoint_path)
         self.index_path = Path(index_path)
         self.output_csv_path = Path(output_csv_path)
@@ -143,10 +160,6 @@ class ReconstructionEvaluator:
         )
         self.patch_size: tuple[int, int, int] = tuple(model_config["patch_size"])
 
-        # Voxel spacing for the volume currently being evaluated. Set per-volume
-        # in run() so the decoder is conditioned exactly as it was in training.
-        self._current_spacing: torch.Tensor | None = None
-
         self.model: nn.Module = self._build_model()
 
     # ------------------------------------------------------------------
@@ -162,8 +175,9 @@ class ReconstructionEvaluator:
             img_size=tuple(cfg["patch_size"]),
             mask_patch_size=cfg["mask_patch_size"],
             mask_ratio=cfg["mask_ratio"],
+            target_spacing=self.target_spacing,
         )
-        model.load_state_dict(self.checkpoint["model"])
+        load_model_weights(model, self.checkpoint)
         model.to(self.device)
         model.eval()
         return model
@@ -172,10 +186,10 @@ class ReconstructionEvaluator:
     # Per-volume helpers
     # ------------------------------------------------------------------
 
-    def _load_and_normalise(
+    def _load_and_normalize(
         self, row: pd.Series
     ) -> np.ndarray | None:
-        """Load a NIfTI volume and apply clip + z-score normalisation.
+        """Load, clip + z-score normalize, crop to foreground, and resample.
 
         Returns None (and logs a warning) if the file cannot be read.
         """
@@ -189,12 +203,11 @@ class ReconstructionEvaluator:
         if data.ndim == 4:
             data = data[..., 0]
 
-        p1, p99 = float(row["p1"]), float(row["p99"])
-        fg_mean, fg_std = float(row["fg_mean"]), float(row["fg_std"])
-
-        data = np.clip(data, p1, p99)
-        data = (data - fg_mean) / max(fg_std, 1e-8)
-        return self._crop_to_foreground(data, row)
+        data, _ = self.normalization_policy.normalize(data, row)
+        data = self._crop_to_foreground(data, row)
+        if self.target_spacing is not None:
+            data = resample_to_spacing(data, get_row_spacing(row), self.target_spacing)
+        return data
 
     @staticmethod
     def _crop_to_foreground(volume: np.ndarray, row: pd.Series) -> np.ndarray:
@@ -220,7 +233,7 @@ class ReconstructionEvaluator:
         """Run one forward pass on a single patch and return (reconstruction, mask).
 
         Args:
-            patch: Normalised patch of shape ``patch_size``.
+            patch: Normalized patch of shape ``patch_size``.
 
         Returns:
             Tuple of ``(reconstruction, mask)``, each shape ``patch_size``.
@@ -230,7 +243,7 @@ class ReconstructionEvaluator:
 
         amp_ctx = autocast_context(self.amp)
         with torch.no_grad(), amp_ctx:
-            output = self.model(tensor, spacing=self._current_spacing)
+            output = self.model(tensor)
 
         recon = output["reconstruction"].squeeze().cpu().numpy()  # (D,H,W)
         mask = output["mask"].squeeze().cpu().numpy()              # (D,H,W)
@@ -247,17 +260,17 @@ class ReconstructionEvaluator:
         obtain its reconstruction and mask.
 
         When the model was trained with ``normalized_masked_mse`` the target
-        patch is normalised **per ``mask_patch_size`` cube** (via
+        patch is normalized **per ``mask_patch_size`` cube** (via
         :func:`misfit.utils.normalization.normalize_patchwise`) — the exact
         transform the loss applies — so ``masked_mse`` is measured in the space
-        the model was optimised in. Other losses keep the whole-volume z-score
+        the model was optimized in. Other losses keep the whole-volume z-score
         target.
 
         The mask for tile *i* is drawn from ``seed + i`` so results are
         reproducible.
 
         Args:
-            volume: Normalised volume of shape (D, H, W).
+            volume: Normalized volume of shape (D, H, W).
 
         Returns:
             List of ``(reconstruction, target, mask)`` tuples — one per patch
@@ -407,16 +420,12 @@ class ReconstructionEvaluator:
             for _, row in self.index_df.iterrows():
                 volume_id = row["volume_id"]
 
-                # 1. Load + normalise.
-                volume = self._load_and_normalise(row)
+                # 1. Load + normalize.
+                volume = self._load_and_normalize(row)
                 if volume is None:
                     n_errors += 1
                     progress.advance(task)
                     continue
-
-                # Condition the decoder on this volume's voxel spacing, exactly
-                # as during training (no-op for indexes without spacing columns).
-                self._current_spacing = get_row_spacing(row, self.device)
 
                 # 2. Tile + inference (per-patch masked forward pass).
                 try:

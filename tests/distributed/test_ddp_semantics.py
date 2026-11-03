@@ -1,9 +1,9 @@
 """Multi-process DDP integration tests using the CPU ``gloo`` backend.
 
 These spawn real torch.distributed process groups (no GPU needed) to exercise
-behaviour that single-process, ``world_size==1`` unit tests cannot reach:
+behavior that single-process, ``world_size==1`` unit tests cannot reach:
 
-* gradient synchronisation semantics that the gradient-accumulation fix relies
+* gradient synchronization semantics that the gradient-accumulation fix relies
   on (the trailing-window ``no_sync()`` divergence bug);
 * the config precondition guard failing fast on *every* rank instead of
   leaving worker ranks hung on rendezvous.
@@ -43,10 +43,24 @@ def _free_port() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _grad_sync_worker(rank: int, world_size: int, port: int, is_last_accum: bool) -> None:
+def _build_tiny_model(model_name: str) -> torch.nn.Module:
+    """Smallest instance of each MAE architecture for CPU DDP tests."""
+    import misfit.models  # noqa: F401 — trigger registrations
+    from misfit.models.model_registry import get_model_from_registry
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+
+    if model_name == "swinunetr":
+        return SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                       mask_patch_size=16, mask_ratio=0.75)
+    return get_model_from_registry(model_name, in_channels=1, img_size=(32, 32, 32),
+                                   mask_patch_size=16, mask_ratio=0.75)
+
+
+def _grad_sync_worker(
+    rank: int, world_size: int, port: int, is_last_accum: bool, model_name: str
+) -> None:
     """Run one _training_step under DDP and compare gradients across ranks."""
     from misfit.loss_functions.reconstruction.masked_mse import MaskedMSELoss
-    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
     from misfit.training.trainers.mae_trainer import MAETrainer
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -54,8 +68,7 @@ def _grad_sync_worker(rank: int, world_size: int, port: int, is_last_accum: bool
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
     torch.manual_seed(0)  # identical parameter init on every rank
-    model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
-                    mask_patch_size=16, mask_ratio=0.75)
+    model = _build_tiny_model(model_name)
     ddp = DDP(model)
 
     trainer = MAETrainer.__new__(MAETrainer)
@@ -66,16 +79,19 @@ def _grad_sync_worker(rank: int, world_size: int, port: int, is_last_accum: bool
     criterion = MaskedMSELoss()
     optimizer = torch.optim.SGD(ddp.parameters(), lr=0.0)  # inspect grads, don't move params
 
-    # Rank-specific data so that, without synchronisation, gradients differ.
+    # Rank-specific data so that, without synchronization, gradients differ.
     torch.manual_seed(100 + rank)
-    batch = {"image": torch.randn(1, 1, 32, 32, 32) * (rank + 1),
-             "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32) * (rank + 1)}
     optimizer.zero_grad()
     trainer._training_step(ddp, batch, criterion, optimizer,
                            window_size=1, is_last_accum=is_last_accum)
 
-    checksum = float(sum(p.grad.double().sum() for p in ddp.parameters()
-                         if p.grad is not None))
+    # DDP (find_unused_parameters=False, as in MAETrainer) rejects parameters
+    # that never receive a gradient, so every parameter must be used.
+    unused = [n for n, p in ddp.named_parameters() if p.grad is None]
+    assert not unused, f"parameters without gradients: {unused[:5]}"
+
+    checksum = float(sum(p.grad.double().sum() for p in ddp.parameters()))
     gathered: list = [None] * world_size
     dist.all_gather_object(gathered, checksum)
     dist.destroy_process_group()
@@ -83,7 +99,7 @@ def _grad_sync_worker(rank: int, world_size: int, port: int, is_last_accum: bool
     spread = max(gathered) - min(gathered)
     if is_last_accum:
         # Window end → gradients are all-reduced → identical on every rank.
-        assert spread < 1e-6, f"gradients not synchronised across ranks: {gathered}"
+        assert spread < 1e-6, f"gradients not synchronized across ranks: {gathered}"
     else:
         # no_sync() → each rank keeps its own (different) gradients.
         assert spread > 1e-9, f"gradients unexpectedly identical under no_sync: {gathered}"
@@ -111,9 +127,11 @@ def _guard_worker(rank: int, world_size: int, results_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ddp_synchronises_gradients_on_window_end():
+@pytest.mark.parametrize("model_name", ["swinunetr", "resenc"])
+def test_ddp_synchronizes_gradients_on_window_end(model_name):
     """is_last_accum=True → DDP all-reduces, so gradients match across ranks."""
-    mp.spawn(_grad_sync_worker, args=(2, _free_port(), True), nprocs=2, join=True)
+    mp.spawn(_grad_sync_worker, args=(2, _free_port(), True, model_name),
+             nprocs=2, join=True)
 
 
 def test_ddp_keeps_gradients_local_under_no_sync():
@@ -122,7 +140,8 @@ def test_ddp_keeps_gradients_local_under_no_sync():
     This is the exact semantic the trailing-flush bug violated: stepping after
     a no_sync() backward let ranks diverge silently.
     """
-    mp.spawn(_grad_sync_worker, args=(2, _free_port(), False), nprocs=2, join=True)
+    mp.spawn(_grad_sync_worker, args=(2, _free_port(), False, "swinunetr"),
+             nprocs=2, join=True)
 
 
 def test_config_guard_fails_fast_on_all_ranks_without_hanging(tmp_path):

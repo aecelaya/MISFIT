@@ -104,6 +104,11 @@ def patch_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True, raising=False)
     # .to(device) returns self — model stays on CPU
     monkeypatch.setattr(nn.Module, "to", lambda self, *a, **k: self, raising=False)
+    # Validation forks the (faked) CUDA RNG of the trainer's device.
+    monkeypatch.setattr(
+        torch.cuda, "get_rng_state", lambda *a, **k: torch.get_rng_state(), raising=False
+    )
+    monkeypatch.setattr(torch.cuda, "set_rng_state", lambda *a, **k: None, raising=False)
 
 
 def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
@@ -152,13 +157,26 @@ def _make_args(tmp_path: Path, patch_size=(32, 32, 32)) -> argparse.Namespace:
         seed=42,
         no_amp=False,
         init_only=False,
+        target_spacing=None,
         resume=False,
         overwrite=False,
         results=str(tmp_path / "results"),
         index=str(idx),
         gradient_accumulation_steps=1,
         bucket_cap_mb=200,
+        steps_per_epoch=1,
+        val_every=1,
+        val_volumes=4,
+        checkpoint_minutes=30.0,
     )
+
+
+class _FakeLoader(list):
+    """A list of batches with a mock sampler, standing in for a DataLoader."""
+
+    def __init__(self, batches):
+        super().__init__(batches)
+        self.sampler = MagicMock()
 
 
 @pytest.fixture(autouse=True)
@@ -243,13 +261,14 @@ def test_trainer_save_and_load_checkpoint(tmp_path):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
     ckpt_path = tmp_path / "test_ckpt.pt"
 
-    trainer._save_checkpoint(model, opt, sched, 1, 10, 0.5, ckpt_path)
+    trainer._save_checkpoint(model, opt, sched, 1, 10, 0.5, ckpt_path, step_in_epoch=3)
     assert ckpt_path.exists()
 
-    start_epoch, global_step, best_val_loss = trainer._load_checkpoint(
+    start_epoch, step_in_epoch, global_step, best_val_loss = trainer._load_checkpoint(
         model, opt, sched, ckpt_path
     )
     assert start_epoch == 1
+    assert step_in_epoch == 3
     assert global_step == 10
     assert best_val_loss == pytest.approx(0.5)
 
@@ -266,10 +285,11 @@ def test_trainer_load_checkpoint_nonexistent(tmp_path):
     opt = torch.optim.Adam(model.parameters())
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
 
-    start, step, best = trainer._load_checkpoint(
+    start, step_in_epoch, step, best = trainer._load_checkpoint(
         model, opt, sched, tmp_path / "nonexistent.pt"
     )
     assert start == 0
+    assert step_in_epoch == 0
     assert step == 0
     assert best == float("inf")
 
@@ -298,10 +318,11 @@ def test_trainer_training_step(tmp_path):
     criterion = MaskedMSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    loss_val = trainer._training_step(model, batch, criterion, optimizer)
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
+    loss_val, grad_norm = trainer._training_step(model, batch, criterion, optimizer)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
+    assert isinstance(grad_norm, float) and grad_norm > 0
 
 
 def test_trainer_validation_step(tmp_path):
@@ -318,18 +339,18 @@ def test_trainer_validation_step(tmp_path):
     model.eval()
     criterion = MaskedMSELoss()
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     loss_val = trainer._validation_step(model, batch, criterion)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
 
 
-def test_trainer_enable_cudnn_optimisations(tmp_path):
-    """_enable_cudnn_optimisations sets cuda flags (no-op on CPU, just no error)."""
+def test_trainer_enable_cudnn_optimizations(tmp_path):
+    """_enable_cudnn_optimizations sets cuda flags (no-op on CPU, just no error)."""
     from misfit.training.trainers.mae_trainer import MAETrainer
     args = _make_args(tmp_path)
     trainer = MAETrainer(args)
-    trainer._enable_cudnn_optimisations()  # should not raise
+    trainer._enable_cudnn_optimizations()  # should not raise
 
 
 def test_trainer_train_runs_single_epoch(tmp_path):
@@ -346,8 +367,8 @@ def test_trainer_train_runs_single_epoch(tmp_path):
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("torch.cuda.set_device"), \
          patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -376,8 +397,8 @@ def test_trainer_train_with_resume(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
     tiny_model.to(torch.device("cpu"))
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("torch.cuda.set_device"), \
          patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
@@ -473,7 +494,7 @@ def test_train_distributed_barriers_and_cleanup(tmp_path, monkeypatch, fake_dist
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
 
     # Mock loader needs a sampler with set_epoch (DistributedSampler contract)
     mock_sampler = MagicMock()
@@ -515,7 +536,7 @@ def test_train_writes_config_json(tmp_path):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -585,7 +606,7 @@ def test_init_only_prints_a_confirmation(tmp_path):
         MAETrainer(args).train()
 
     mock_print.assert_called_once()
-    assert "Initialised" in mock_print.call_args[0][0]
+    assert "Initialized" in mock_print.call_args[0][0]
 
 
 def test_init_only_reflects_no_amp_in_written_config(tmp_path):
@@ -699,7 +720,7 @@ def test_train_overwrite_ignores_existing_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -730,7 +751,7 @@ def test_validate_resume_raises_on_model_change(tmp_path):
     saved_config = {
         "model": {"architecture": "swinunetr-base", "patch_size": [32, 32, 32],
                   "mask_patch_size": 16},
-        "training": {},
+        "training": {"steps_per_epoch": 1},
     }
     with pytest.raises(ValueError, match="model.architecture"):
         trainer._validate_resume(saved_config)
@@ -746,7 +767,7 @@ def test_validate_resume_raises_on_patch_size_change(tmp_path):
     saved_config = {
         "model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],
                   "mask_patch_size": 16},
-        "training": {},
+        "training": {"steps_per_epoch": 1},
     }
     with pytest.raises(ValueError, match="model.patch_size"):
         trainer._validate_resume(saved_config)
@@ -762,7 +783,7 @@ def test_validate_resume_warns_on_lr_change(tmp_path):
     saved_config = {
         "model": {"architecture": "swinunetr-small", "patch_size": [32, 32, 32],
                   "mask_patch_size": 16},
-        "training": {"learning_rate": 9e-4},  # different from args (1e-4)
+        "training": {"steps_per_epoch": 1, "learning_rate": 9e-4},  # args: 1e-4
     }
     with patch("misfit.training.trainers.mae_trainer.print_warning") as mock_warn:
         trainer._validate_resume(saved_config)  # must not raise
@@ -794,7 +815,9 @@ def test_build_config_structure(tmp_path):
     trainer = MAETrainer(args)
     config = trainer._build_config()
 
-    assert set(config.keys()) == {"misfit_version", "data", "model", "training", "evaluation"}
+    assert set(config.keys()) == {
+        "misfit_version", "data", "model", "spatial_config", "training", "evaluation",
+    }
     assert "index" in config["data"]
     assert config["model"]["architecture"] == "swinunetr-small"
     assert config["model"]["patch_size"] == [32, 32, 32]
@@ -805,6 +828,67 @@ def test_build_config_structure(tmp_path):
     assert all(isinstance(v, dict) for v in config["evaluation"].values())
     # Default eval set: the 3 masked metrics, no ssim.
     assert list(config["evaluation"]) == ["masked_mae", "masked_mse", "masked_psnr"]
+    # MIST-format spatial section; null spacing = native resolution.
+    assert config["spatial_config"] == {"patch_size": [32, 32, 32], "target_spacing": None}
+
+
+def test_build_config_records_target_spacing(tmp_path):
+    """--target-spacing is saved under spatial_config, where MIST reads it."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = [1, 1, 2.5]
+    config = MAETrainer(args)._build_config()
+
+    assert config["spatial_config"] == {
+        "patch_size": [32, 32, 32], "target_spacing": [1.0, 1.0, 2.5],
+    }
+    json.dumps(config)  # stays JSON-serializable
+
+
+def test_build_model_passes_target_spacing(tmp_path):
+    """The model is built with the run's target spacing (ResEnc plans from it)."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = [0.8, 0.8, 3.0]
+    trainer = MAETrainer(args)
+    with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
+               return_value=nn.Linear(1, 1)) as mock_get:
+        trainer._build_model()
+    assert mock_get.call_args.kwargs["target_spacing"] == (0.8, 0.8, 3.0)
+
+
+@pytest.mark.parametrize("saved,current", [
+    (None, [1, 1, 1]),          # native run resumed with resampling
+    ([1.0, 1.0, 1.0], None),    # resampled run resumed without it
+    ([1.0, 1.0, 1.0], [2, 2, 2]),
+])
+def test_validate_resume_rejects_target_spacing_change(tmp_path, saved, current):
+    """Changing the target spacing on resume is a hard error, including to/from none."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.target_spacing = saved
+    saved_config = MAETrainer(args)._build_config()
+
+    args.target_spacing = current
+    with pytest.raises(ValueError, match="target_spacing"):
+        MAETrainer(args)._validate_resume(saved_config)
+
+
+def test_validate_resume_legacy_config_means_native_resolution(tmp_path):
+    """A config from before --target-spacing (no spatial_config) is native resolution."""
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    legacy = MAETrainer(args)._build_config()
+    del legacy["spatial_config"]
+
+    MAETrainer(args)._validate_resume(legacy)  # native → native: fine
+    args.target_spacing = [1, 1, 1]
+    with pytest.raises(ValueError, match="native resolution"):
+        MAETrainer(args)._validate_resume(legacy)
 
 
 def test_bf16_optimizer_uses_standard_epsilon(tmp_path):
@@ -836,7 +920,7 @@ def test_train_resume_reads_and_validates_config(tmp_path):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
     mock_loader = MagicMock()
     mock_loader.__iter__ = MagicMock(return_value=iter([dummy_batch]))
     mock_loader.__len__ = MagicMock(return_value=1)
@@ -906,7 +990,7 @@ def test_training_step_skips_optimizer_on_non_last_accum(tmp_path):
     criterion = MaskedMSELoss()
     optimizer = MagicMock(wraps=torch.optim.Adam(model.parameters(), lr=1e-4))
 
-    batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     optimizer.zero_grad()  # caller's responsibility
     trainer._training_step(model, batch, criterion, optimizer,
                            window_size=2, is_last_accum=False)
@@ -930,7 +1014,7 @@ def test_training_step_scales_loss_by_window_size(tmp_path):
                         mask_patch_size=16, mask_ratio=0.75)
         criterion = MaskedMSELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+        batch = {"image": torch.randn(1, 1, 32, 32, 32)}
         optimizer.zero_grad()
         trainer._training_step(model, batch, criterion, optimizer,
                                window_size=window_size, is_last_accum=False)
@@ -972,10 +1056,10 @@ def test_train_partial_trailing_window_steps_once(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
     # 3 micro-batches, accum=2 → one full window (batches 0-1) + a trailing
     # partial window (batch 2). Both must produce an optimizer step.
-    mock_loader = [dummy_batch, dummy_batch, dummy_batch]
+    mock_loader = _FakeLoader([dummy_batch, dummy_batch, dummy_batch])
 
     step_calls = {"n": 0}
     original_step = torch.optim.Adam.step
@@ -1011,8 +1095,8 @@ def test_train_gradient_accumulation_two_steps(tmp_path):
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
 
-    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch, dummy_batch]  # exactly 2 micro-batches
+    dummy_batch = {"image": torch.randn(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch, dummy_batch])  # exactly 2 micro-batches
 
     step_count = {"n": 0}
     original_step = torch.optim.Adam.step
@@ -1036,7 +1120,7 @@ def test_train_gradient_accumulation_two_steps(tmp_path):
     assert step_count["n"] == 1
 
 
-def test_warn_if_underutilising_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, monkeypatch):
+def test_warn_if_underutilizing_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, monkeypatch):
     """Warns when >1 GPU is visible but WORLD_SIZE==1 (no torchrun)."""
     import misfit.training.trainers.mae_trainer as mt
 
@@ -1047,14 +1131,14 @@ def test_warn_if_underutilising_gpus_fires_for_multi_gpu_no_torchrun(tmp_path, m
 
     warn = MagicMock()
     monkeypatch.setattr(mt, "print_warning", warn)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     warn.assert_called_once()
     msg = warn.call_args.args[0]
     assert "torchrun" in msg and "--nproc_per_node=4" in msg
 
 
-def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypatch):
+def test_warn_if_underutilizing_gpus_silent_when_distributed(tmp_path, monkeypatch):
     """No warning under torchrun (is_distributed) or with a single visible GPU."""
     import misfit.training.trainers.mae_trainer as mt
 
@@ -1066,12 +1150,12 @@ def test_warn_if_underutilising_gpus_silent_when_distributed(tmp_path, monkeypat
     trainer.is_distributed = True
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 8)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     # Single visible GPU: nothing to warn about.
     trainer.is_distributed = False
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
-    trainer._warn_if_underutilising_gpus()
+    trainer._warn_if_underutilizing_gpus()
 
     warn.assert_not_called()
 
@@ -1097,19 +1181,19 @@ def test_trainer_falls_back_to_cpu_when_cuda_unavailable(tmp_path, monkeypatch):
     assert trainer.device == torch.device("cpu")
 
 
-def test_enable_cudnn_optimisations_noop_on_cpu(tmp_path, monkeypatch):
-    """_enable_cudnn_optimisations returns early on CPU without flipping cudnn flags."""
+def test_enable_cudnn_optimizations_noop_on_cpu(tmp_path, monkeypatch):
+    """_enable_cudnn_optimizations returns early on CPU without flipping cudnn flags."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     from misfit.training.trainers.mae_trainer import MAETrainer
     trainer = MAETrainer(_make_args(tmp_path))
 
     monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
-    trainer._enable_cudnn_optimisations()  # must not raise
+    trainer._enable_cudnn_optimizations()  # must not raise
     assert torch.backends.cudnn.benchmark is False  # untouched on the CPU path
 
 
 def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_dist):
-    """Multi-process GPU run initialises the process group with NCCL."""
+    """Multi-process GPU run initializes the process group with NCCL."""
     monkeypatch.setenv("WORLD_SIZE", "2")
     from misfit.training.trainers.mae_trainer import MAETrainer
     trainer = MAETrainer(_make_args(tmp_path))
@@ -1118,7 +1202,7 @@ def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_
 
 
 def test_setup_distributed_uses_gloo_backend_on_cpu(tmp_path, monkeypatch, fake_dist):
-    """Multi-process CPU run initialises the process group with gloo."""
+    """Multi-process CPU run initializes the process group with gloo."""
     monkeypatch.setenv("WORLD_SIZE", "2")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     from misfit.training.trainers.mae_trainer import MAETrainer
@@ -1200,8 +1284,8 @@ def test_train_resolves_amp_to_false_on_cpu(tmp_path, monkeypatch):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
@@ -1225,8 +1309,8 @@ def test_train_keeps_amp_true_on_ampere(tmp_path):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
@@ -1280,8 +1364,8 @@ def test_no_amp_flag_resolves_to_fp32_even_on_ampere(tmp_path):
     args.no_amp = True
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
@@ -1314,15 +1398,15 @@ def test_no_amp_flag_ignored_on_resume_saved_config_wins(tmp_path):
             "patch_size": list(args.patch_size),
             "mask_patch_size": args.mask_patch_size,
         },
-        "training": {"amp": True},
+        "training": {"steps_per_epoch": 1, "amp": True},
     }))
 
     args.resume = True
     args.no_amp = True  # ignored: the saved config says amp=true
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     with patch("misfit.training.trainers.mae_trainer.get_model_from_registry",
                return_value=tiny_model), \
@@ -1350,8 +1434,8 @@ def test_train_resume_reresolves_amp_from_saved_config(tmp_path, monkeypatch):
 
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     # Saved config requests AMP on; resuming on a CPU must downgrade it.
     trainer_for_config = MAETrainer(args)
@@ -1384,8 +1468,8 @@ def test_train_warns_once_on_cpu(tmp_path, monkeypatch):
     args = _make_args(tmp_path)
     tiny_model = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                          mask_patch_size=16, mask_ratio=0.75)
-    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32), "spacing": torch.ones(1, 3)}
-    mock_loader = [dummy_batch]
+    dummy_batch = {"image": torch.zeros(1, 1, 32, 32, 32)}
+    mock_loader = _FakeLoader([dummy_batch])
 
     warn = MagicMock()
     monkeypatch.setattr(mt, "print_warning", warn)
@@ -1401,3 +1485,389 @@ def test_train_warns_once_on_cpu(tmp_path, monkeypatch):
 
     cpu_warnings = [c for c in warn.call_args_list if "CPU" in c.args[0]]
     assert len(cpu_warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# Step-based training: schedule, validation cadence, checkpoints, logging
+# ---------------------------------------------------------------------------
+
+def _tiny_swinmae():
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+    return SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                   mask_patch_size=16, mask_ratio=0.75)
+
+
+def _run_train(args, train_loader, val_loader=None, extra_patches=()):
+    """Run MAETrainer.train() with a tiny model and fake loaders.
+
+    Returns (trainer, get_training_dataloader mock, get_validation_dataloader
+    mock).
+    """
+    from contextlib import ExitStack
+
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    val_loader = val_loader if val_loader is not None else _FakeLoader(
+        [{"image": torch.randn(1, 1, 32, 32, 32)}]
+    )
+    with ExitStack() as stack:
+        stack.enter_context(patch(
+            "misfit.training.trainers.mae_trainer.get_model_from_registry",
+            return_value=_tiny_swinmae(),
+        ))
+        train_mock = stack.enter_context(patch(
+            "misfit.training.trainers.mae_trainer.get_training_dataloader",
+            autospec=True, return_value=train_loader,
+        ))
+        val_mock = stack.enter_context(patch(
+            "misfit.training.trainers.mae_trainer.get_validation_dataloader",
+            autospec=True, return_value=val_loader,
+        ))
+        for p in extra_patches:
+            stack.enter_context(p)
+        trainer = MAETrainer(args)
+        trainer.device = torch.device("cpu")
+        trainer.train()
+    return trainer, train_mock, val_mock
+
+
+def _batches(n):
+    return _FakeLoader([{"image": torch.randn(1, 1, 32, 32, 32)} for _ in range(n)])
+
+
+def test_build_scheduler_counts_optimizer_steps(tmp_path):
+    """The schedule spans epochs × steps_per_epoch steps; warmup is in epochs."""
+    from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.epochs, args.steps_per_epoch, args.warmup_epochs = 4, 5, 1
+    trainer = MAETrainer(args)
+    opt = torch.optim.SGD(nn.Linear(2, 2).parameters(), lr=1.0)
+    sched = trainer._build_scheduler(opt)
+
+    assert isinstance(sched, SequentialLR)
+    warmup, main = sched._schedulers
+    assert isinstance(warmup, LinearLR) and warmup.total_iters == 5
+    assert isinstance(main, CosineAnnealingLR) and main.T_max == 15
+
+
+def test_train_loader_draws_one_epoch_of_samples_per_rank(tmp_path):
+    args = _make_args(tmp_path)
+    args.steps_per_epoch, args.gradient_accumulation_steps, args.batch_size = 2, 3, 1
+    args.val_volumes = 7
+    _, train_mock, val_mock = _run_train(args, _batches(6))
+
+    kwargs = train_mock.call_args.kwargs
+    assert kwargs["samples_per_epoch"] == 2 * 3 * 1
+    assert (kwargs["rank"], kwargs["world_size"]) == (0, 1)
+    assert val_mock.call_args.kwargs["max_volumes"] == 7
+
+
+def test_train_steps_scheduler_every_optimizer_step(tmp_path):
+    args = _make_args(tmp_path)
+    args.steps_per_epoch = 3
+    args.optimizer, args.learning_rate = "sgd", 1.0
+    args.lr_scheduler = "polynomial"
+
+    lrs = []
+    original = torch.optim.lr_scheduler.PolynomialLR.step
+
+    def recording_step(self_sched, *a, **kw):
+        lrs.append(self_sched.optimizer.param_groups[0]["lr"])
+        return original(self_sched, *a, **kw)
+
+    trainer, _, _ = _run_train(args, _batches(3), extra_patches=[
+        patch.object(torch.optim.lr_scheduler.PolynomialLR, "step", recording_step),
+    ])
+    # One call from the constructor, then one per optimizer step (3) — the LR
+    # strictly decays within the single epoch.
+    assert len(lrs) == 4
+    assert lrs[1] > lrs[2] > lrs[3]
+
+
+def test_train_validates_every_n_epochs_and_after_the_last(tmp_path):
+    import misfit.training.trainers.mae_trainer as mt
+
+    args = _make_args(tmp_path)
+    args.epochs, args.val_every = 3, 2
+    calls = {"n": 0}
+    original = mt.MAETrainer._validation_step
+
+    def counting(self, *a, **kw):
+        calls["n"] += 1
+        return original(self, *a, **kw)
+
+    printed = []
+    _run_train(args, _batches(1), extra_patches=[
+        patch.object(mt.MAETrainer, "_validation_step", counting),
+        patch.object(mt.console, "print", side_effect=lambda m, *a, **k: printed.append(m)),
+    ])
+    # Epoch 2 (every 2nd) and epoch 3 (last); not epoch 1.
+    assert calls["n"] == 2
+    epoch_lines = [m for m in printed if "train_loss=" in m]
+    assert "val_loss=—" in epoch_lines[0]
+    assert "val_loss=—" not in epoch_lines[1]
+
+
+def test_fixed_validation_rng_repeats_masks_and_restores_training_rng(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    trainer = MAETrainer(_make_args(tmp_path))
+    trainer.device = torch.device("cpu")
+
+    torch.manual_seed(123)
+    expected_next = torch.rand(3)
+    torch.manual_seed(123)
+    with trainer._fixed_validation_rng():
+        first = torch.rand(5)
+    with trainer._fixed_validation_rng():
+        second = torch.rand(5)
+    assert torch.equal(first, second)
+    # Training's RNG stream is untouched by validation.
+    assert torch.equal(torch.rand(3), expected_next)
+
+
+def test_fixed_validation_rng_forks_the_cuda_device(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    trainer = MAETrainer(_make_args(tmp_path))  # device: cuda:0 (faked)
+    with patch("torch.random.fork_rng") as fork:
+        with trainer._fixed_validation_rng():
+            pass
+    assert fork.call_args.kwargs["devices"] == [trainer.device]
+
+
+def test_train_saves_mid_epoch_checkpoint_after_interval(tmp_path):
+    import misfit.training.trainers.mae_trainer as mt
+
+    args = _make_args(tmp_path)
+    args.steps_per_epoch = 3
+    clock = {"t": 0.0}
+
+    def fake_monotonic():
+        clock["t"] += 3600.0  # every check is "an hour later"
+        return clock["t"]
+
+    saves = []
+    original = mt.MAETrainer._save_checkpoint
+
+    def recording_save(self, model, opt, sched, epoch, global_step, best, path,
+                       step_in_epoch=0):
+        saves.append((path.name, epoch, step_in_epoch, global_step))
+        return original(self, model, opt, sched, epoch, global_step, best, path,
+                        step_in_epoch=step_in_epoch)
+
+    _run_train(args, _batches(3), extra_patches=[
+        patch.object(mt.time, "monotonic", fake_monotonic),
+        patch.object(mt.MAETrainer, "_save_checkpoint", recording_save),
+    ])
+    rolling = [s for s in saves if s[0] == "checkpoint.pt"]
+    # Mid-epoch after steps 1 and 2 (not after 3: the epoch-end save covers
+    # it), then the end-of-epoch save that resumes at epoch 1, step 0.
+    assert rolling == [
+        ("checkpoint.pt", 0, 1, 1),
+        ("checkpoint.pt", 0, 2, 2),
+        ("checkpoint.pt", 1, 0, 3),
+    ]
+
+
+def test_train_skips_mid_epoch_checkpoint_within_interval(tmp_path):
+    import misfit.training.trainers.mae_trainer as mt
+
+    args = _make_args(tmp_path)
+    args.steps_per_epoch = 3
+    saves = []
+    original = mt.MAETrainer._save_checkpoint
+
+    def recording_save(self, *a, step_in_epoch=0, **kw):
+        saves.append(step_in_epoch)
+        return original(self, *a, step_in_epoch=step_in_epoch, **kw)
+
+    _run_train(args, _batches(3), extra_patches=[
+        patch.object(mt.MAETrainer, "_save_checkpoint", recording_save),
+    ])
+    assert 1 not in saves and 2 not in saves
+
+
+def test_train_resumes_mid_epoch_from_the_saved_step(tmp_path):
+    """A mid-epoch checkpoint resumes in the same epoch, skipping done samples."""
+    import misfit.training.trainers.mae_trainer as mt
+
+    args = _make_args(tmp_path)
+    args.epochs, args.steps_per_epoch = 1, 3
+    args.gradient_accumulation_steps, args.batch_size = 2, 1
+    results = Path(args.results)
+    (results / "checkpoints").mkdir(parents=True)
+    trainer = mt.MAETrainer(args)
+    mt.write_json_file(results / "config.json", trainer._build_config())
+
+    model = _tiny_swinmae()
+    opt = trainer._build_optimizer(model)
+    sched = trainer._build_scheduler(opt)
+    trainer.device = torch.device("cpu")
+    trainer._save_checkpoint(model, opt, sched, 0, 2, 0.7,
+                             results / "checkpoints" / "checkpoint.pt",
+                             step_in_epoch=2)
+
+    args.resume = True
+    loader = _batches(2)  # the remaining step: one window of 2 micro-batches
+    _run_train(args, loader)
+
+    loader.sampler.set_epoch.assert_called_once_with(0, start=2 * 2 * 1)
+    final = torch.load(results / "checkpoints" / "checkpoint.pt", weights_only=True)
+    assert (final["epoch"], final["step_in_epoch"], final["global_step"]) == (1, 0, 3)
+
+
+def test_validate_resume_rejects_pre_step_based_runs(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    trainer = MAETrainer(_make_args(tmp_path))
+    legacy = trainer._build_config()
+    del legacy["training"]["steps_per_epoch"]
+    with pytest.raises(ValueError, match="predates step-based training"):
+        trainer._validate_resume(legacy)
+
+
+def test_train_logs_step_and_throughput_scalars(tmp_path):
+    args = _make_args(tmp_path)
+    args.steps_per_epoch = 2
+    writer = MagicMock()
+    _run_train(args, _batches(2), extra_patches=[
+        patch("misfit.training.trainers.mae_trainer.SummaryWriter", return_value=writer),
+    ])
+    logged = {}
+    for call in writer.add_scalar.call_args_list:
+        tag, value, step = call.args
+        logged.setdefault(tag, []).append((value, step))
+
+    assert [s for _, s in logged["loss/train_step"]] == [1, 2]
+    assert [s for _, s in logged["grad_norm"]] == [1, 2]
+    assert all(v > 0 for v, _ in logged["grad_norm"])
+    assert [s for _, s in logged["lr"]] == [1, 2]
+    for tag in ("loss/train", "loss/val", "throughput/steps_per_sec",
+                "throughput/samples_per_sec"):
+        assert [s for _, s in logged[tag]] == [2], tag
+    assert logged["throughput/samples_per_sec"][0][0] > 0
+
+
+def test_build_config_records_step_and_validation_fields(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.steps_per_epoch, args.val_every, args.val_volumes = 250, 5, 64
+    args.checkpoint_minutes = 15.0
+    training = MAETrainer(args)._build_config()["training"]
+    assert training["steps_per_epoch"] == 250
+    assert training["val_every"] == 5
+    assert training["val_volumes"] == 64
+    assert training["checkpoint_minutes"] == 15.0
+
+
+# ---------------------------------------------------------------------------
+# --init-weights
+# ---------------------------------------------------------------------------
+
+def _saved_tiny_resenc(tmp_path):
+    from misfit.models.resenc.misfit_resenc_mae import ResEncMAE
+    torch.manual_seed(1)
+    source = ResEncMAE(in_channels=1, img_size=(32, 32, 32), mask_patch_size=16)
+    path = tmp_path / "init.pth"
+    torch.save({"network_weights": source.state_dict()}, path)
+    return source, path
+
+
+def test_build_model_loads_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    source, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights = "resenc", str(path)
+    with patch("misfit.training.trainers.mae_trainer.console") as mock_console:
+        model = MAETrainer(args)._build_model()
+
+    assert torch.equal(model.state_dict()["head.weight"], source.state_dict()["head.weight"])
+    assert "Initialized" in mock_console.print.call_args[0][0]
+
+
+def test_build_model_ignores_init_weights_on_resume(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    _, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights, args.resume = "resenc", str(path), True
+    with patch("misfit.training.trainers.mae_trainer.load_pretrained_weights") as load:
+        MAETrainer(args)._build_model()
+    load.assert_not_called()
+
+
+def test_build_model_rejects_mismatched_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    _, path = _saved_tiny_resenc(tmp_path)
+    args = _make_args(tmp_path)
+    args.model, args.init_weights = "resenc", str(path)
+    args.patch_size = [64, 64, 64]  # a deeper network than the saved one
+    with pytest.raises(ValueError, match="don't match"):
+        MAETrainer(args)._build_model()
+
+
+def test_build_config_records_init_weights(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    assert MAETrainer(args)._build_config()["training"]["init_weights"] is None
+    args.init_weights = "/models/checkpoint_final.pth"
+    config = MAETrainer(args)._build_config()
+    assert config["training"]["init_weights"] == "/models/checkpoint_final.pth"
+
+
+# ---------------------------------------------------------------------------
+# --normalization-policy
+# ---------------------------------------------------------------------------
+
+def test_build_config_records_normalization_policy(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    assert MAETrainer(args)._build_config()["data"]["normalization_policy"] == (
+        "clip_and_z_score"
+    )
+    args.normalization_policy = "z_score_only"
+    assert MAETrainer(args)._build_config()["data"]["normalization_policy"] == "z_score_only"
+
+
+def test_train_passes_normalization_policy_to_both_loaders(tmp_path):
+    args = _make_args(tmp_path)
+    args.normalization_policy = "z_score_only"
+    _, train_mock, val_mock = _run_train(args, _batches(1))
+    assert train_mock.call_args.kwargs["normalization_policy"] == "z_score_only"
+    assert val_mock.call_args.kwargs["normalization_policy"] == "z_score_only"
+
+
+@pytest.mark.parametrize("saved,current", [
+    ("clip_and_z_score", "z_score_only"),
+    ("z_score_only", "clip_and_z_score"),
+])
+def test_validate_resume_rejects_normalization_policy_change(tmp_path, saved, current):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.normalization_policy = saved
+    saved_config = MAETrainer(args)._build_config()
+    args.normalization_policy = current
+    with pytest.raises(ValueError, match="normalization_policy"):
+        MAETrainer(args)._validate_resume(saved_config)
+
+
+def test_validate_resume_legacy_config_means_clip_and_z_score(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    legacy = MAETrainer(args)._build_config()
+    del legacy["data"]["normalization_policy"]
+    MAETrainer(args)._validate_resume(legacy)  # clip → clip: fine
+    args.normalization_policy = "z_score_only"
+    with pytest.raises(ValueError, match="'clip_and_z_score' to 'z_score_only'"):
+        MAETrainer(args)._validate_resume(legacy)

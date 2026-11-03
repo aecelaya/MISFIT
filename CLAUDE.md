@@ -6,8 +6,9 @@ Guidance for Claude Code when working in this repository.
 
 MISFIT (Medical Imaging Semantic Foundation Toolkit) trains 3D medical imaging
 foundation models using masked autoencoders (MAE). It reads unlabeled NIfTI
-files and produces a pretrained SwinUNETR-V2 encoder that transfers directly to
-MIST for segmentation fine-tuning. No labels required.
+files and produces a pretrained encoder (SwinUNETR-V2 or ResEnc, built from
+MIST's own models) that transfers directly to MIST for segmentation fine-tuning.
+No labels required.
 
 ## Running tests
 
@@ -111,8 +112,11 @@ guards both the guard block and the `-m` path.
 misfit/
   cli/                  Entry points + shared ArgParser / add_*_args
   preprocessing/        NIfTI indexer → Parquet (parallel, ProcessPoolExecutor)
-  data_loading/         MISFITDataset + DataLoader; on-the-fly clip+z-score normalization
-  models/               MISFITModel base class; SwinMAE (SwinUNETR-V2 + MAE head)
+  data_loading/         MISFITDataset + DataLoader; on-the-fly normalization (policy);
+                        EpochSampler (fixed samples per epoch for step-based training)
+  models/               MISFITModel base class; SwinMAE (MIST SwinUNETR-V2 + MAE head);
+                        ResEncMAE (MIST ResEnc UNet as the MAE network);
+                        masking (shared image-level patch masking)
   training/             MAETrainer; optimizer/LR-scheduler registries; training_utils
   loss_functions/       ReconstructionLoss base; masked_mse, masked_l1, normalized_mse
   metrics/              ReconstructionMetric base; masked_mae/mse/psnr (defaults) + ssim (opt-in)
@@ -120,12 +124,14 @@ misfit/
   inference/            InferenceRunners; tiled reconstruct pipeline (pad→tile→stitch)
   embedding/            Embedder; EmbedTrainer; aggregators (mean_pool, attention_pool);
                         objectives (classification, contrastive)
+  normalization/        NormalizationPolicy registry: clip_and_z_score (default), z_score_only
   utils/                console (Rich), io (read/write JSON),
                         progress_bar (get_progress_bar; TrainProgressBar /
                         ValidationProgressBar — mirror mist.utils.progress_bar),
                         hardware (get_accelerator_type / bf16_supported /
                         resolve_amp / autocast_context),
-                        normalization (normalize_patchwise / denormalize_patchwise)
+                        normalization (normalize_patchwise / denormalize_patchwise),
+                        resampling (--target-spacing helpers)
 ```
 
 ## Key design decisions
@@ -144,6 +150,24 @@ Per-volume clip to [p1, p99] then z-score with foreground mean/std — computed
 once at index time, stored in the Parquet index, applied on the fly at load
 time. This handles CT and MRI in the same batch without dataset-level
 statistics.
+
+### Index splits (`preprocessing/indexer.py`)
+
+Val and test default to 5% of the corpus each, capped at 500 volumes
+(`DEFAULT_SPLIT_CONFIG`); train takes the rest. Validation only tracks
+reconstruction loss and picks `best_model.pt`, and real encoder evaluation is
+downstream, so held-out sets shouldn't grow with the corpus — 80/10/10 withheld
+20k volumes from a 100k pretraining run. Integer sizes are exact counts and are
+not capped. A legacy config (has a `train` key) keeps its old ratio meaning.
+
+An optional `group` column in the `--input` file (e.g. subject ID) keeps all of
+a group's volumes in one split: `assign_splits` shuffles groups and deals them
+out whole (val, then test, then train), so a split may overshoot its target by
+less than one group. Without groups, every row is its own group. Records are
+sorted back into input order after the parallel stats pass, since `as_completed`
+order would otherwise make the seeded split vary run to run. `split_targets` is
+called before the stats pass so a bad config fails immediately rather than hours
+into indexing.
 
 ### Load-failure handling (`MISFITDataset.__getitem__`)
 
@@ -189,13 +213,23 @@ Defaults: `masked_mae`, `masked_mse`, `masked_psnr` (`DEFAULT_METRICS`). `ssim`
 is registered but opt-in via `--metrics ssim` — it has no consistent space here;
 use `misfit_inspect` for a viewer-space read.
 
-### Model architecture (`models/swinunetr/misfit_swinunetr_mae.py`)
+### Model architectures (`models/swinunetr/`, `models/resenc/`)
 
-`SwinMAE(MISFITModel)` wraps `SwinUNETR.swinViT` as `self.encoder` (UNet decoder
-discarded). The MAE decoder is a lightweight `ConvTranspose3d` stack
-(`MAEDecoder`). Masking is applied at the image level before encoding
-(SimMIM-style) — required because Swin windowed attention breaks with irregular
-token counts.
+MISFIT depends on MIST (`mist-medical>=2.4.0` in `pyproject.toml`; ResEnc first
+shipped in 2.4.0) for model architectures: encoders are built from
+`mist.models`, never reimplemented, so a pretrained encoder is the exact module
+MIST fine-tunes. MISFIT adds only the MAE-specific parts (masking, decoder,
+masked loss).
+
+`SwinMAE(MISFITModel)` builds MIST's `MistSwinUNETR` and keeps its
+`.model.swinViT` as `self.encoder` (UNet decoder discarded). The MAE decoder is
+a lightweight `ConvTranspose3d` stack (`MAEDecoder`). Masking is applied at the
+image level before encoding (SimMIM-style) — required because Swin windowed
+attention breaks with irregular token counts. The masking lives in
+`models/masking.py` (`generate_patch_mask`, `apply_mask`), not in `SwinMAE`, so
+CNN backbones (which have no tokens to drop) reuse the same scheme;
+`SwinMAE.generate_mask` delegates to it with identical RNG calls, so seeded
+masks (e.g. `misfit_evaluate --seed`) are unchanged.
 
 Constraints:
 
@@ -206,12 +240,149 @@ Constraints:
 
 Model sizes (`feature_size`): small=24, base=48 (default), large=96.
 
+Every model's contract with the rest of the pipeline is the same, so the
+trainer, evaluator, inference, and encode/embed code are architecture-agnostic:
+`forward(x, mask_ratio=None)` returns `{"reconstruction", "mask"}` in both train
+and eval mode, `model.encoder(x)[-1]` is the bottleneck (`misfit_encode` /
+`misfit_embed`), and every parameter must receive a gradient (DDP runs with
+`find_unused_parameters=False`; `test_ddp_synchronizes_gradients_on_window_end`
+is parametrized over architectures and asserts it).
+
+`ResEncMAE(MISFITModel)` (`--model resenc`, the same name as MIST's model) is
+MIST's full `ResEncUNet` used as the MAE network, the nnssl recipe: dense
+masking, then encoder + UNet decoder with skips; masked regions are blank at
+every level, so the skips can't leak the target. `out_channels=in_channels`
+turns the decoder's full-resolution seg layer into the reconstruction head
+(`self.head`); the lower-resolution seg layers (deep supervision only) are
+deleted because they'd never get gradients. `self.encoder` is MIST's
+`ResidualEncoder`, so `get_encoder_state_dict()` returns MIST's `encoder.*` keys
+unchanged (no remap). Topology (stages/strides/kernels) comes from
+`get_unet_params(img_size, spacing)`: the run's `--target-spacing` when set,
+otherwise `ISOTROPIC_PLANNING_SPACING = (1, 1, 1)` (native, mixed-resolution
+data has no single spacing; only axis ratios matter, so this just means
+"isotropic topology"). Every builder (trainer, evaluator,
+`build_model_from_checkpoint`) passes `target_spacing` through the registry;
+SwinMAE ignores it via `**kwargs`. Isotropically, the patch size sets depth: 96³
+→ 5 stages (~63M params), ≥128³ → 6 stages (~102M; nnssl's default MAE trainer
+uses 160³, nnFoundationCNN used 192³). A MIST `resenc` planned with more stages
+or anisotropic kernels still loads every matching tensor; MIST skips the rest
+and warns. Same `img_size` constraints as SwinMAE (÷32, ÷`mask_patch_size`).
+
 ### `config.json` as source of truth
 
 `misfit_train` writes `config.json` to the results directory. All downstream
 commands (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`)
 require `--config` and load architecture from it — no re-specifying model flags.
-Resume validation checks model name and patch size (hard error on mismatch).
+Resume validation checks model name, patch size, mask patch size, and target
+spacing (hard error on mismatch), and rejects configs without
+`training.steps_per_epoch` (pre-step-based runs, whose scheduler state counted
+epochs). The target spacing is compared even when one side is `None` (native ↔
+resampled is a change), and a config without `spatial_config`
+(pre-`--target-spacing`) counts as native.
+
+`spatial_config: {patch_size, target_spacing}` duplicates `model.patch_size` on
+purpose: it is MIST's own section/key layout, so MIST's
+`validate_encoder_compatibility` reads a MISFIT config passed as
+`mist_train --pretrained-config` directly. Keep `model.patch_size` too (older
+configs and every MISFIT reader use it). MIST (≥ 2.4.0) treats a null
+`target_spacing`, or a missing `spatial_config`, as "pretrained without
+resampling": it warns that spacing can't be checked instead of raising.
+
+### Step-based training (`mae_trainer.py`, `data_loading/samplers.py`)
+
+An epoch is `--steps-per-epoch` optimizer steps (default 1000 × 250), not a pass
+over the data: with 100k+ volumes a data pass takes hours, and validation,
+checkpoints, logging, and the LR schedule would all run that rarely and scale
+with corpus size. `EpochSampler` draws exactly `steps × accum × batch_size`
+samples per rank per epoch from a seeded stream of back-to-back permutations
+(seeded by `seed + epoch`, identical on every rank; each rank takes a strided,
+disjoint slice). Being deterministic, `set_epoch(epoch, start=k)` skips the
+samples a preempted epoch already consumed, so mid-epoch resume continues the
+same sequence. The scheduler is stepped per optimizer step
+(`total_steps = epochs × steps_per_epoch`, warmup = `warmup_epochs × steps`).
+
+Validation runs every `--val-every` epochs and after the last, on the first
+`--val-volumes` val rows (`Subset`), inside `_fixed_validation_rng`
+(`fork_rng` + reseed): every pass scores the same masks on the same volumes, so
+the curve is comparable, and the training RNG is restored afterwards.
+
+Checkpoints store `(epoch, step_in_epoch)`: `(e + 1, 0)` at epoch end, `(e, s)`
+mid-epoch. Rank 0 alone saves mid-epoch when `--checkpoint-minutes` have passed
+(no collective needed — other ranks just continue). TensorBoard scalars are all
+logged against `global_step`: per step `loss/train_step`, `lr` (the LR the step
+used, read before `scheduler.step()`), `grad_norm` (pre-clip total norm from
+`clip_grad_norm_`); per epoch `loss/train`, `loss/val`,
+`throughput/{steps,samples}_per_sec` (samples counts all ranks).
+
+Optimizer defaults are the same for every model (AdamW 1e-4, wd 0.05, cosine, 50
+warmup epochs). nnssl's ResEnc recipe uses SGD (Nesterov 0.99, 1e-2, PolyLR),
+but its paper (Wald et al. 2025, "Revisiting MAE pre-training") takes that from
+nnU-Net without ablating optimizers, so it isn't evidence SGD beats AdamW; one
+shared recipe also keeps architecture comparisons clean.
+
+### Normalization policies (`normalization/`, `--normalization-policy`)
+
+Registry like losses/optimizers:
+`NormalizationPolicy.normalize(volume, row) -> (normalized, IntensityScale(shift, scale))`.
+Every input path calls the run's policy: `MISFITDataset._normalize`,
+`inference_utils.load_and_normalize(row, normalization_policy, target_spacing, return_scale)`
+(encode, embed, inspect), and `ReconstructionEvaluator._load_and_normalize`.
+Inspect inverts the returned `IntensityScale` (`recon × scale + shift`), so a
+new policy needs no inspect changes. Stored as
+`config["data"]["normalization_policy"]`; `get_normalization_policy_name`
+defaults missing entries to `clip_and_z_score` (pre-option configs), and resume
+rejects a change.
+
+`z_score_only` reproduces nnssl: z-score over the bounding box of nonzero voxels
+(nnssl fills holes first, which can't change the box), no clipping,
+`use_mask_for_norm` false. Stats are computed at load time from the volume, so
+no index columns. For nnFoundation also use `--loss masked_mse` (nnssl's
+`MAEMSELoss`): `normalized_masked_mse` standardizes each target cube, which
+nnFoundation's head never learned — with it, `misfit_evaluate` reports
+nnFoundation as worse than the naive baseline.
+
+### Pretrained weights (`models/pretrained.py`, `--init-weights`)
+
+`load_model_weights` is the one loader for full-network weights: the trainer's
+`--init-weights` and every inference path (`build_model_from_checkpoint`,
+`ReconstructionEvaluator`) use it, so all commands accept a MISFIT checkpoint
+(`"model"`), an nnssl checkpoint (`"network_weights"`, e.g. nnFoundationCNN), or
+a plain state dict. Each model maps foreign names in
+`adapt_pretrained_state_dict` (ResEncMAE: last `decoder.seg_layers.N` → `head`,
+drop `decoder.encoder.*` aliases and deep-supervision layers; SwinMAE: drop the
+legacy `spacing_embed.*`). Loading is strict — only `mask_token` may be absent
+(nnssl masks with zeros, the token's init) — because a partial load would
+silently mix pretrained and random weights.
+
+nnFoundation facts (verified from the checkpoints' `nnssl_adaptation_plan`,
+nnssl's trainer source, and Harsy et al. 2026): MAE (16³ blocks, 75% masked,
+zero-filled, `MAEMSELoss`), 192³ patches, 2.1M CT/MRI/PET volumes, nnssl's
+`noresample` config (native resolution, median spacing 1 mm; NOT resampled to 1
+mm), crop to nonzero (holes filled), z-score without mask or clipping. So the
+closest MISFIT match is
+`--model resenc --patch-size 192 192 192 --normalization-policy z_score_only --loss masked_mse`
+with NO `--target-spacing` (native, isotropic planning = nnFoundationCNN's
+topology); `--target-spacing 1 1 1` builds the same network but resamples.
+
+nnFoundationCNN equals `resenc` with an isotropic topology and a patch ≥128³;
+verified against nnU-Net's `ResidualEncoderUNet` with the real checkpoint (max
+output difference 0). MIST pins the same layout with a name/shape fingerprint
+test (`test_resenc_layout_matches_nnfoundation_cnn_checkpoint`).
+
+### Target spacing (`--target-spacing X Y Z`, `utils/resampling.py`)
+
+Off by default (native resolution, the original behavior). When set, every path
+from NIfTI to model input resamples with the same helpers in
+`misfit.utils.resampling` (trilinear `F.interpolate`, shape =
+`round(n * spacing / target)` per axis): `MISFITDataset` (normalize → fg crop →
+resample → pad/crop/augment, so only the foreground is interpolated), the
+evaluator (same order), and `inference_utils.load_and_normalize` (no fg crop)
+for inspect/encode/embed. Spacing comes from the index's `spacing_d/h/w` columns
+(x, y, z — nibabel and MIST's transposed SimpleITK arrays share (x, y, z) order,
+which is why `--patch-size` is labelled `X Y Z` like MIST's). Downstream
+commands read it with `get_target_spacing(config)`. `misfit_inspect` resamples
+reconstructions and masks back to the native grid (re-binarising the mask at
+0.5) so outputs keep the input affine.
 
 ### Distributed training
 
@@ -282,15 +453,21 @@ all-reduced per-step loss (`train_meter.value`), refreshed every step.
 
 ### Transfer learning to MIST
 
-`get_encoder_state_dict()` remaps keys `encoder.<name>` → `model.swinViT.<name>`
-to match MIST's `MistSwinUNETR` checkpoint format. Its output is saved to
-`models/encoder_weights.pt` whenever validation loss improves (alongside
-`best_model.pt`), so the MIST-ready encoder is always available after training.
-Pass it to `mist_train --pretrained-weights models/encoder_weights.pt` along
-with `--pretrained-config <misfit results>/config.json` (MIST uses the source
-config to validate encoder compatibility; omitting it only warns and skips that
-check). Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled
-by MIST's `--input-channel-strategy` (default: average).
+`get_encoder_state_dict()` returns keys in the matching MIST model's format:
+`SwinMAE` remaps `encoder.<name>` → `model.swinViT.<name>` (MIST's
+`MistSwinUNETR`), and `ResEncMAE` keeps `encoder.<name>` as is (MIST's
+`ResEncUNet`). Its output is saved to `models/encoder_weights.pt` whenever
+validation loss improves (alongside `best_model.pt`), so the MIST-ready encoder
+is always available after training. Pass it to
+`mist_train --pretrained-weights models/encoder_weights.pt` along with
+`--pretrained-config <misfit results>/config.json` (MIST uses the source config
+to validate encoder compatibility; omitting it only warns and skips that check).
+Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled by
+MIST's `--input-channel-strategy` (default: average).
+`test_misfit_encoder_matches_mist_encoder_exactly` (every `swinunetr-*` variant)
+and `test_misfit_resenc_encoder_matches_mist_resenc_exactly` guard this: keys
+and shapes must equal MIST's own `get_encoder_state_dict()`, and MIST's
+`load_pretrained_encoder` must transfer every tensor with nothing skipped.
 
 ## Adding new components
 
@@ -302,9 +479,13 @@ place under `loss_functions/reconstruction/`. Import in
 `@register_metric(name="...")`, place under `metrics/`. Import in
 `metrics/__init__.py` (or `metrics_registry.py`).
 
-**New model:** subclass `MISFITModel`, implement `get_encoder_state_dict()`,
-apply `@register_model(name="...")`, place under `models/<name>/`. Import in
-`models/__init__.py`.
+**New model:** build the network from `mist.models` (don't reimplement it),
+subclass `MISFITModel`, implement `get_encoder_state_dict()` in the MIST model's
+key format, apply `@register_model(name="<MIST model name>")`, place under
+`models/<name>/`. Import in `models/__init__.py`. Reuse `models/masking.py`,
+follow the forward/encoder contract above, and add an exact key/shape
+compatibility test against the MIST model plus an entry in the parametrized DDP
+test.
 
 **New aggregator:** subclass `AbstractAggregator`, apply
 `@register_aggregator(name="...")`, place under `embedding/aggregators/`. Import
@@ -316,7 +497,7 @@ in `embedding/aggregators/__init__.py`.
 results/
     checkpoints/checkpoint.pt    Latest checkpoint (overwritten each epoch)
     models/best_model.pt         Lowest validation loss
-    models/encoder_weights.pt    Encoder-only weights remapped for MIST (model.swinViT.*); refreshed with best_model.pt
+    models/encoder_weights.pt    Encoder-only weights in the MIST model's key format; refreshed with best_model.pt
     logs/                        TensorBoard event files
     config.json                  Architecture + hyperparameters (required by downstream commands)
 ```

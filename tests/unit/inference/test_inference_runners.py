@@ -66,7 +66,7 @@ def _make_index(tmp_path: Path, volume_ids=("vol0",), shape=PATCH_SIZE) -> Path:
     return p
 
 
-def _tiny_model(_checkpoint=None, _model_config=None, _device=None):
+def _tiny_model(_checkpoint=None, _model_config=None, _device=None, target_spacing=None):
     """Returns a tiny SwinMAE regardless of checkpoint contents."""
     return SwinMAE(
         in_channels=1,
@@ -168,6 +168,47 @@ class TestTiledReconstruct:
 
 class TestReconstruct:
 
+    def test_target_spacing_outputs_are_on_the_native_grid(self, tmp_path):
+        """Resampled inference is mapped back so outputs share the input affine."""
+        from misfit.inference.inference_runners import reconstruct
+
+        ckpt_path = _make_checkpoint(tmp_path)
+        index_path = _make_index(tmp_path, volume_ids=("vol0",), shape=(32, 32, 8))
+        df = pd.read_parquet(index_path)
+        df[["spacing_d", "spacing_h", "spacing_w"]] = [0.5, 0.5, 4.0]
+        df.to_parquet(index_path, index=False)
+        output_dir = tmp_path / "recons"
+        seen_shapes = []
+
+        def fake_tiled(padded, *args, **kwargs):
+            seen_shapes.append(padded.shape)
+            return np.full(padded.shape, 0.25), np.full(padded.shape, 0.75)
+
+        with patch(
+            "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
+            side_effect=_tiny_model,
+        ) as mock_build, patch(
+            "misfit.inference.inference_runners._tiled_reconstruct",
+            side_effect=fake_tiled,
+        ):
+            reconstruct(
+                index_path=index_path,
+                checkpoint_path=ckpt_path,
+                output_dir=output_dir,
+                model_config=MODEL_CONFIG,
+                device=torch.device("cpu"),
+                target_spacing=(1.0, 1.0, 1.0),
+            )
+
+        assert mock_build.call_args.kwargs["target_spacing"] == (1.0, 1.0, 1.0)
+        # 32×32×8 at 0.5×0.5×4 mm → 16×16×32 at 1 mm, padded to 32³ for tiling.
+        assert seen_shapes == [(32, 32, 32)]
+        recon = nib.load(str(output_dir / "reconstructions" / "vol0.nii.gz"))
+        mask = nib.load(str(output_dir / "masks" / "vol0.nii.gz")).get_fdata()
+        assert recon.shape == (32, 32, 8)
+        assert mask.shape == (32, 32, 8)
+        assert set(np.unique(mask)) == {1.0}  # re-binarised (0.75 → 1)
+
     def test_happy_path_saves_nifti(self, tmp_path):
         from misfit.inference.inference_runners import reconstruct
 
@@ -206,7 +247,7 @@ class TestReconstruct:
             "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
             side_effect=_tiny_model,
         ), patch(
-            "misfit.inference.inference_runners.inference_utils.load_and_normalise",
+            "misfit.inference.inference_runners.inference_utils.load_and_normalize",
             return_value=None,
         ):
             reconstruct(
@@ -441,9 +482,9 @@ class TestReconstruct:
         assert (output_dir / "reconstructions" / "train_vol.nii.gz").exists()
         assert (output_dir / "reconstructions" / "val_vol.nii.gz").exists()
 
-    def test_runs_real_model_threads_spacing(self, tmp_path):
-        """reconstruct() with the real _tiled_reconstruct runs the model_fn closure,
-        which forwards the volume's voxel spacing to the model."""
+    def test_runs_real_model(self, tmp_path):
+        """reconstruct() with the real _tiled_reconstruct calls the model on
+        image patches only."""
         from misfit.inference.inference_runners import reconstruct
 
         ckpt_path = _make_checkpoint(tmp_path)
@@ -453,12 +494,11 @@ class TestReconstruct:
         captured = {}
         real_forward = SwinMAE.forward
 
-        def spy_forward(self, x, spacing=None, mask_ratio=None):
-            captured["spacing"] = spacing
-            return real_forward(self, x, spacing=spacing, mask_ratio=mask_ratio)
+        def spy_forward(self, x, mask_ratio=None):
+            captured["calls"] = captured.get("calls", 0) + 1
+            return real_forward(self, x, mask_ratio=mask_ratio)
 
-        # Only patch model construction — _tiled_reconstruct runs for real so the
-        # per-volume model_fn closure is exercised.
+        # Only patch model construction — _tiled_reconstruct runs for real.
         with patch(
             "misfit.inference.inference_runners.inference_utils.build_model_from_checkpoint",
             side_effect=_tiny_model,
@@ -472,9 +512,7 @@ class TestReconstruct:
             )
 
         assert (output_dir / "reconstructions" / "realvol.nii.gz").exists()
-        # Spacing from the index (1.0, 1.0, 1.0) was threaded into the forward pass.
-        assert captured["spacing"] is not None
-        assert tuple(captured["spacing"].squeeze().tolist()) == (1.0, 1.0, 1.0)
+        assert captured["calls"] > 0
 
     def test_mask_saved_and_inverted(self, tmp_path):
         """masks/ contains inverted mask: model 1=masked → saved 0; model 0=visible → saved 1."""
@@ -533,7 +571,7 @@ class TestTiledReconstructDenormPatches:
     def test_denorm_patches_true_scales_by_patch_stats(self):
         """With denorm_patches=True each patch is scaled by the input patch mean/std.
 
-        The model output is treated as patch-normalised (unit variance, zero mean).
+        The model output is treated as patch-normalized (unit variance, zero mean).
         A reconstruction of all-zeros should be restored to the patch mean.
         """
         from misfit.inference.inference_runners import _tiled_reconstruct

@@ -33,7 +33,7 @@ class AbstractAggregator(nn.Module, ABC):
 
         Args:
             crop_features: ``(N, C)`` tensor of per-crop embeddings.
-            positions: ``(N, 3)`` tensor of normalised 3-D crop coordinates
+            positions: ``(N, 3)`` tensor of normalized 3-D crop coordinates
                 in ``[0, 1]``, or ``None`` if position encoding is disabled.
             padding_mask: ``(N,)`` boolean tensor where ``True`` marks padded
                 (invalid) crops that should be ignored, or ``None`` if all

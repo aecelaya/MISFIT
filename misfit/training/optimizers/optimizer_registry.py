@@ -28,7 +28,7 @@ def get_optimizer(
 
     Args:
         name: Registered optimizer name (case-insensitive).
-        params: Model parameters to optimise.
+        params: Model parameters to optimize.
         learning_rate: Base learning rate.
         weight_decay: L2 regularisation coefficient.
         eps: Numerical stability epsilon. Use TrainerConstants.AMP_EPS

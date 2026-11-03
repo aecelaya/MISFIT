@@ -116,12 +116,12 @@ def test_evaluator_run_produces_csv(evaluator_setup):
     assert isinstance(df, pd.DataFrame)
 
 
-def test_evaluator_load_and_normalise_missing_file(evaluator_setup):
+def test_evaluator_load_and_normalize_missing_file(evaluator_setup):
     ckpt, idx, res = evaluator_setup
     ev = _make_evaluator(ckpt, idx, res)
     row = pd.Series({"path": "/nonexistent/file.nii.gz", "p1": -1, "p99": 1,
                      "fg_mean": 0, "fg_std": 1})
-    result = ev._load_and_normalise(row)
+    result = ev._load_and_normalize(row)
     assert result is None
 
 
@@ -191,7 +191,7 @@ def test_build_model_loads_weights(evaluator_setup):
     assert ev.model.training is False   # eval() was called
 
 
-def test_load_and_normalise_4d_nifti(evaluator_setup, tmp_path):
+def test_load_and_normalize_4d_nifti(evaluator_setup, tmp_path):
     """4-D NIfTI (e.g. time series) should be squeezed to 3-D."""
     ckpt, idx, res = evaluator_setup
     ev = _make_evaluator(ckpt, idx, res)
@@ -204,7 +204,7 @@ def test_load_and_normalise_4d_nifti(evaluator_setup, tmp_path):
         "path": str(nifti_4d),
         "p1": -2.0, "p99": 2.0, "fg_mean": 0.0, "fg_std": 1.0,
     })
-    result = ev._load_and_normalise(row)
+    result = ev._load_and_normalize(row)
     assert result is not None
     assert result.ndim == 3
 
@@ -271,11 +271,11 @@ def test_run_tiled_inference_single_patch(evaluator_setup):
 
 
 def test_run_skips_volume_on_load_failure(evaluator_setup):
-    """When _load_and_normalise returns None the volume is skipped."""
+    """When _load_and_normalize returns None the volume is skipped."""
     ckpt, idx, res = evaluator_setup
     ev = _make_evaluator(ckpt, idx, res)
 
-    with patch.object(ev, "_load_and_normalise", return_value=None):
+    with patch.object(ev, "_load_and_normalize", return_value=None):
         ev.run()
 
     # CSV exists but contains only summary rows (no per-volume data row)
@@ -300,7 +300,7 @@ def test_run_all_volumes_fail_prints_error(evaluator_setup):
     ckpt, idx, res = evaluator_setup
     ev = _make_evaluator(ckpt, idx, res)
 
-    with patch.object(ev, "_load_and_normalise", return_value=None), \
+    with patch.object(ev, "_load_and_normalize", return_value=None), \
          patch("misfit.evaluation.evaluator.print_error") as mock_err:
         ev.run()
 
@@ -381,7 +381,7 @@ def test_split_none_keeps_all_rows(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# training_config / normalized_masked_mse target-patch normalisation
+# training_config / normalized_masked_mse target-patch normalization
 # ---------------------------------------------------------------------------
 
 def test_normalized_mse_evaluator_normalizes_target_patches(evaluator_setup):
@@ -417,7 +417,7 @@ def test_normalized_mse_evaluator_normalizes_target_patches(evaluator_setup):
     assert len(patch_results) == 1
     _, target_patch, _ = patch_results[0]
 
-    # The normalised target should be ~zero-mean, ~unit-std.
+    # The normalized target should be ~zero-mean, ~unit-std.
     assert abs(target_patch.mean()) < 0.1
     assert abs(target_patch.std() - 1.0) < 0.1
 
@@ -453,7 +453,7 @@ def test_non_normalized_mse_evaluator_keeps_target_unchanged(evaluator_setup):
     assert len(patch_results) == 1
     _, target_patch, _ = patch_results[0]
 
-    # Target should be the raw padded slice, not normalised.
+    # Target should be the raw padded slice, not normalized.
     np.testing.assert_allclose(target_patch, padded_vol, rtol=1e-5)
 
 
@@ -707,3 +707,36 @@ def test_print_summary_covers_all_verdicts(evaluator_setup, capsys):
         {"masked_mae": 1.0, "masked_mae_naive": 1.0, "masked_mae_skill": 0.0,
          "masked_psnr": 15.0, "masked_psnr_naive": 15.0, "masked_psnr_skill": 0.0},
     ])
+
+
+def test_evaluator_resamples_after_foreground_crop(evaluator_setup):
+    """With a target spacing, volumes are cropped to fg, then resampled."""
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+    with patch.object(
+        ReconstructionEvaluator, "_build_model",
+        lambda self: _build_tiny_model(self.checkpoint, self.model_config, self.device),
+    ):
+        ev = ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, metrics=["masked_mae"], device="cpu",
+            target_spacing=(2.0, 2.0, 1.0),
+        )
+    row = ev.index_df.iloc[0]  # 32³ at 1 mm
+    assert ev._load_and_normalize(row).shape == (16, 16, 32)
+    assert ev.run()["masked_mae"].notna().all()
+
+
+def test_evaluator_builds_model_with_target_spacing(evaluator_setup):
+    from misfit.evaluation.evaluator import ReconstructionEvaluator
+
+    ckpt, idx, res = evaluator_setup
+    tiny = _build_tiny_model(torch.load(ckpt, weights_only=True), MODEL_CONFIG, "cpu")
+    with patch("misfit.evaluation.evaluator.get_model_from_registry",
+               return_value=tiny) as mock_get:
+        ReconstructionEvaluator(
+            checkpoint_path=ckpt, index_path=idx, output_csv_path=res,
+            model_config=MODEL_CONFIG, device="cpu", target_spacing=(1, 1, 2),
+        )
+    assert mock_get.call_args.kwargs["target_spacing"] == (1, 1, 2)

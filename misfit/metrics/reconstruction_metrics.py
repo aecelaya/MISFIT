@@ -77,7 +77,7 @@ def compute_masked_psnr(
         reconstruction: Reconstructed volume, shape (D, H, W).
         target: Ground-truth volume, shape (D, H, W).
         mask: Binary mask, shape (D, H, W). 1 = masked patch.
-        data_range: Peak-to-peak intensity range of normalised inputs.
+        data_range: Peak-to-peak intensity range of normalized inputs.
             Defaults to 6.0 (≈ ±3σ after clip + z-score).
         eps: Added to MSE to prevent log(0).
 

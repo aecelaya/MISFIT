@@ -10,8 +10,10 @@ import pandas as pd
 import torch
 
 from misfit.cli.args import ArgParser, add_embed_args
+from misfit.normalization.normalization_registry import get_normalization_policy_name
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
+from misfit.utils.resampling import get_target_spacing
 
 
 def embed_entry(args=None) -> None:
@@ -37,6 +39,8 @@ def embed_entry(args=None) -> None:
     config = read_json_file(config_path)
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
+    target_spacing = get_target_spacing(config)
+    normalization_policy = get_normalization_policy_name(config)
 
     # Lazy imports so CLI startup is fast.
     import misfit.embedding  # noqa: F401 — trigger registrations
@@ -45,7 +49,7 @@ def embed_entry(args=None) -> None:
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
         get_default_device,
-        load_and_normalise,
+        load_and_normalize,
         load_checkpoint,
     )
 
@@ -55,7 +59,9 @@ def embed_entry(args=None) -> None:
 
     # Build encoder.
     checkpoint = load_checkpoint(ns.encoder_checkpoint, device)
-    model = build_model_from_checkpoint(checkpoint, model_config, device)
+    model = build_model_from_checkpoint(
+        checkpoint, model_config, device, target_spacing=target_spacing
+    )
     model.eval()
 
     def encoder_fn(x: torch.Tensor) -> torch.Tensor:
@@ -109,8 +115,10 @@ def embed_entry(args=None) -> None:
                 progress.advance(task)
                 continue
 
-            volume = load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+            volume = load_and_normalize(
+                row,
+                normalization_policy=normalization_policy,
+                target_spacing=target_spacing,
             )
             if volume is None:
                 print_error(

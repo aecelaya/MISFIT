@@ -13,6 +13,10 @@ import misfit.models  # noqa: F401 — trigger registrations
 from misfit.loss_functions.loss_registry import list_registered_losses
 from misfit.metrics.metrics_registry import list_registered_metrics
 from misfit.models.model_registry import list_registered_models
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    list_normalization_policies,
+)
 from misfit.training.lr_schedulers.lr_scheduler_registry import list_lr_schedulers
 from misfit.training.optimizers.optimizer_registry import list_optimizers
 
@@ -157,12 +161,41 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     model.add_argument(
         "--model", default="swinunetr-base",
         choices=list_registered_models(),
-        help="SwinMAE variant (controls feature_size: 24 / 48 / 96).",
+        help=(
+            "Architecture to pretrain (built from the MIST model of the same "
+            "name): swinunetr-small / -base / -large, or resenc."
+        ),
     )
     model.add_argument(
         "--patch-size", type=positive_int, nargs=3, default=[96, 96, 96],
-        metavar=("D", "H", "W"),
-        help="Spatial crop size fed to the model. Must be divisible by 32.",
+        metavar=("X", "Y", "Z"),
+        help=(
+            "Spatial crop size fed to the model, in voxels (at --target-spacing "
+            "when set). Must be divisible by 32. Same axis order and meaning "
+            "as MIST's --patch-size."
+        ),
+    )
+    model.add_argument(
+        "--target-spacing", type=positive_float, nargs=3, default=None,
+        metavar=("X", "Y", "Z"),
+        help=(
+            "Resample every volume to this voxel spacing (e.g. 1 1 1 for 1 mm "
+            "isotropic) before cropping patches. Off by default: volumes stay "
+            "at their native resolution. Saved to config.json (spatial_config) "
+            "and applied by evaluate/inspect/encode/embed and read by MIST."
+        ),
+    )
+    model.add_argument(
+        "--init-weights", default=None, metavar="PT", dest="init_weights",
+        help=(
+            "Start from these weights instead of random initialization: the "
+            "whole MAE network (encoder, decoder, and reconstruction head). "
+            "Accepts a MISFIT checkpoint or an nnssl one, such as "
+            "nnFoundationCNN's checkpoint_final.pth (needs --model resenc, a "
+            "patch of at least 128^3, and no or an isotropic "
+            "--target-spacing). Every "
+            "weight must match, or misfit_train stops. Ignored on --resume."
+        ),
     )
     model.add_argument(
         "--mask-patch-size", type=positive_int, default=16, metavar="P",
@@ -171,6 +204,21 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     model.add_argument(
         "--mask-ratio", type=float_0_1, default=0.75, metavar="R",
         help="Fraction of patches to mask during pretraining.",
+    )
+
+    # --- Normalization ---
+    norm = parser.add_argument_group("Normalization")
+    norm.add_argument(
+        "--normalization-policy", default=DEFAULT_NORMALIZATION_POLICY,
+        choices=list_normalization_policies(), dest="normalization_policy",
+        help=(
+            "How each volume's intensities are normalized. clip_and_z_score "
+            "clips to the foreground's 1st-99th percentiles and z-scores with "
+            "foreground statistics (handles mixed CT/MRI). z_score_only "
+            "z-scores with the volume's nonzero region, as nnssl does; use it "
+            "with nnFoundation weights. Saved to config.json and applied by "
+            "every downstream command."
+        ),
     )
 
     # --- Loss ---
@@ -184,9 +232,24 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         ),
     )
 
-    # --- Optimisation ---
-    opt = parser.add_argument_group("Optimisation")
-    opt.add_argument("--epochs",        type=non_negative_int, default=200)
+    # --- Optimization ---
+    opt = parser.add_argument_group("Optimization")
+    opt.add_argument(
+        "--epochs", type=non_negative_int, default=1000, metavar="N",
+        help=(
+            "Training epochs. An epoch is a fixed --steps-per-epoch optimizer "
+            "steps, not a pass over the data, so training length and the LR "
+            "schedule don't depend on corpus size."
+        ),
+    )
+    opt.add_argument(
+        "--steps-per-epoch", type=positive_int, default=250, metavar="N",
+        dest="steps_per_epoch",
+        help=(
+            "Optimizer steps per epoch. Validation, logging, and the "
+            "end-of-epoch checkpoint happen once per epoch."
+        ),
+    )
     opt.add_argument(
         "--batch-size", type=positive_int, default=2, metavar="N",
         help="Batch size per GPU.",
@@ -206,8 +269,11 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         choices=list_lr_schedulers(),
     )
     opt.add_argument(
-        "--warmup-epochs", type=non_negative_int, default=20, metavar="N",
-        help="Linear warmup epochs (recommended ≥10 for SwinUNETR-V2).",
+        "--warmup-epochs", type=non_negative_int, default=50, metavar="N",
+        help=(
+            "Linear LR warmup, in epochs. The LR is updated every optimizer "
+            "step, so warmup and decay are smooth."
+        ),
     )
     opt.add_argument(
         "--gradient-accumulation-steps", type=positive_int, default=1, metavar="N",
@@ -225,6 +291,32 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
             "all-reduce calls at multi-node scale. Defaults to 200 (vs PyTorch default 25)."
         ),
     )
+    # --- Validation & checkpointing ---
+    val = parser.add_argument_group("Validation & checkpointing")
+    val.add_argument(
+        "--val-every", type=positive_int, default=1, metavar="N",
+        dest="val_every",
+        help="Run validation every N epochs (and always after the last one).",
+    )
+    val.add_argument(
+        "--val-volumes", type=positive_int, default=128, metavar="N",
+        dest="val_volumes",
+        help=(
+            "Validate on the first N volumes of the val split (all of them if "
+            "it has fewer). A fixed subset with fixed masks keeps the val loss "
+            "comparable across epochs and runs."
+        ),
+    )
+    val.add_argument(
+        "--checkpoint-minutes", type=positive_float, default=30.0, metavar="M",
+        dest="checkpoint_minutes",
+        help=(
+            "Also save the resumable checkpoint mid-epoch at most every M "
+            "minutes, so a preempted job loses at most M minutes of work. "
+            "A checkpoint is always saved at the end of each epoch."
+        ),
+    )
+
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
@@ -311,7 +403,7 @@ def add_evaluate_args(parser: ArgParser) -> None:
             "Metrics to compute, overriding config.json's 'evaluation' section. "
             f"Choices: {', '.join(list_registered_metrics())}. "
             "Default: masked_mae, masked_mse, masked_psnr. 'ssim' is opt-in — "
-            "it runs in the loss-normalised space and its absolute value is "
+            "it runs in the loss-normalized space and its absolute value is "
             "depressed by cube-boundary seams; use misfit_inspect for a "
             "viewer-space read."
         ),

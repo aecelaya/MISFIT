@@ -25,7 +25,7 @@ def write_json_file(
 
     Args:
         json_file: Destination path.
-        data: Dictionary to serialise.
+        data: Dictionary to serialize.
     """
     with open(json_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

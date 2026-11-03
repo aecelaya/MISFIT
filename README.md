@@ -16,12 +16,13 @@ required.
 
 ## What it does
 
-MISFIT trains a [SwinUNETR](https://arxiv.org/abs/2201.01266)-based masked
-autoencoder on 3D medical images. At each training step, 75% of the image
-patches are randomly hidden, and the model learns to reconstruct them from the
-remaining context. This forces the encoder to build rich spatial representations
-of anatomy — representations that transfer well to downstream tasks like
-classification, segmentation, and retrieval.
+MISFIT trains a masked autoencoder on 3D medical images, using a
+[SwinUNETR](https://arxiv.org/abs/2201.01266) transformer or a ResEnc CNN built
+from [MIST](https://github.com/mist-medical/MIST)'s own models. At each training
+step, 75% of the image patches are randomly hidden, and the model learns to
+reconstruct them from the remaining context. This forces the encoder to build
+rich spatial representations of anatomy — representations that transfer well to
+downstream tasks like classification, segmentation, and retrieval.
 
 ```
 Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
@@ -38,13 +39,19 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 ## Key Features
 
 - **No labels required** — pretrains entirely on unlabeled NIfTI volumes
+- **Built for MIST** — encoders are MIST's own SwinUNETR-V2 and ResEnc, so
+  pretrained weights and `config.json` load directly into `mist_train`
+- **Starts from nnFoundation** — the openly released nnFoundationCNN works in
+  every command, as a baseline encoder or a starting point for pretraining
 - **End-to-end pipeline** — seven CLI commands take you from raw files to
   downstream-ready embeddings
 - **3D-native** — operates on full volumetric data, not 2D slices
 - **Mixed modality** — the `normalized_masked_mse` loss normalizes per-patch
   variance, handling CT and MRI in the same training run
-- **Scalable** — single-GPU to multi-node training via `torchrun`; the same
-  command runs everywhere (CPU too, for testing)
+- **Scalable** — single-GPU to multi-node training via `torchrun`; step-based
+  epochs, a fixed validation subset, and mid-epoch checkpoints keep long runs on
+  large corpora practical; the same command runs everywhere (CPU too, for
+  testing)
 - **BF16 AMP** — automatic `bfloat16` mixed precision on GPUs with BF16 matrix
   hardware (NVIDIA Ampere+ — A100, H100, RTX 30xx+ — and AMD CDNA / RDNA3+),
   with an automatic FP32 fallback on older GPUs and CPU
@@ -134,8 +141,10 @@ misfit_index --input  /data/paths.csv \
 ```
 
 The `--input` CSV must have a `path` column with absolute paths to `.nii` or
-`.nii.gz` files. Split ratios (default 80/10/10) are controlled via the
-auto-generated `index_config.json` sidecar.
+`.nii.gz` files. Val and test each get 5% of the volumes, capped at 500, and
+train gets the rest; change this in the auto-generated `index_config.json`
+sidecar. Add an optional `group` column (e.g. a subject ID) to keep all of a
+patient's volumes in the same split.
 
 ### Stage 2 — Pretraining (`misfit_train`)
 
@@ -161,13 +170,16 @@ misfit_train --index   /data/index.parquet \
 
 Key options:
 
-| Flag                 | Default                 | Description                                              |
-| -------------------- | ----------------------- | -------------------------------------------------------- |
-| `--model`            | `swinunetr-base`        | `swinunetr-small` / `swinunetr-base` / `swinunetr-large` |
-| `--patch-size D H W` | `96 96 96`              | Spatial crop size (must be divisible by 32)              |
-| `--epochs`           | `200`                   | Total training epochs                                    |
-| `--batch-size`       | `2`                     | Per-GPU batch size                                       |
-| `--loss`             | `normalized_masked_mse` | Loss function                                            |
+| Flag                     | Default                 | Description                                         |
+| ------------------------ | ----------------------- | --------------------------------------------------- |
+| `--model`                | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
+| `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
+| `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)     |
+| `--epochs`               | `1000`                  | Training epochs of `--steps-per-epoch` steps each   |
+| `--steps-per-epoch`      | `250`                   | Optimizer steps per epoch                           |
+| `--batch-size`           | `2`                     | Per-GPU batch size                                  |
+| `--loss`                 | `normalized_masked_mse` | Loss function                                       |
+| `--normalization-policy` | `clip_and_z_score`      | Intensity normalization (`z_score_only` for nnssl)  |
 
 Training writes a `config.json` to `--results` that captures every architecture
 and hyperparameter decision. All downstream commands read this file — you never
@@ -273,11 +285,25 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`.
 
 ## Model Variants
 
-| Variant | `--model`         | Parameters            | Recommended for                        |
-| ------- | ----------------- | --------------------- | -------------------------------------- |
-| Small   | `swinunetr-small` | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
-| Base    | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
-| Large   | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+| Variant         | `--model`         | Parameters            | Recommended for                        |
+| --------------- | ----------------- | --------------------- | -------------------------------------- |
+| SwinUNETR Small | `swinunetr-small` | ~7M (4.8M encoder)    | Rapid prototyping, small datasets      |
+| SwinUNETR Base  | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
+| SwinUNETR Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
+| ResEnc          | `resenc`          | ~102M (90M encoder)¹  | nnU-Net/nnssl-style CNN pretraining    |
+
+¹ At a patch size of 128³ or larger. ResEnc plans its depth from `--patch-size`;
+see
+[Model Variants](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#model-variants).
+
+Every architecture is built from MIST, so `--model` names match the MIST model
+each encoder fine-tunes into.
+
+`resenc` is the same network as the openly released
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN): its weights
+work directly in every MISFIT command, as a baseline encoder or as the starting
+point for `--init-weights`. See
+[Starting from nnFoundation](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#starting-from-nnfoundation).
 
 ---
 
@@ -286,7 +312,7 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`.
 ```text
 results/
     checkpoints/
-        checkpoint.pt       Latest checkpoint (overwritten each epoch)
+        checkpoint.pt       Latest checkpoint (each epoch, and every 30 min)
     models/
         best_model.pt       Checkpoint with the lowest validation loss
     logs/                   TensorBoard event files

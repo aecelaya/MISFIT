@@ -10,7 +10,7 @@ class TrainerConstants:
 
     # Gradient clipping max norm. Prevents exploding gradients, especially
     # important early in training when the Swin ViT encoder is freshly
-    # initialised.
+    # initialized.
     GRAD_CLIP_VALUE: float = 1.0
 
     # Seed base. Each rank adds its rank index to get a unique but

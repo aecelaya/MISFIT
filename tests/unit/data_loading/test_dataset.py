@@ -75,8 +75,8 @@ def test_dataset_getitem_shape_val(tmp_path):
     assert isinstance(sample, dict)
     assert sample["image"].shape == (1, 32, 32, 32)
     assert sample["image"].dtype == torch.float32
-    assert sample["spacing"].shape == (3,)
-    assert sample["spacing"].dtype == torch.float32
+    # Spacing stays in the index but is not part of the training batch.
+    assert set(sample) == {"image"}
 
 
 def test_dataset_getitem_shape_train(tmp_path):
@@ -106,13 +106,13 @@ def test_dataset_4d_nifti(tmp_path):
 
 
 def test_dataset_missing_file_returns_zeros(tmp_path):
-    """Missing nifti should return zeros image with spacing still populated."""
+    """Missing nifti should return a zeros image under the same batch keys."""
     index_path = _write_index(tmp_path, tmp_path / "missing.nii.gz")
     ds = MISFITDataset(index_path, patch_size=(32, 32, 32), augment=False)
     with pytest.warns(UserWarning, match="failed to load"):
         sample = ds[0]
     assert torch.all(sample["image"] == 0.0)
-    assert sample["spacing"].shape == (3,)
+    assert set(sample) == {"image"}
 
 
 # ---------------------------------------------------------------------------
@@ -245,3 +245,35 @@ def test_crop_to_fg_false_skips_bbox_crop(tmp_path):
     )
     sample = ds[0]
     assert sample["image"].shape == (1, 32, 32, 32)
+
+
+def test_dataset_target_spacing_none_is_default(tmp_path):
+    """Resampling is off by default (native resolution)."""
+    ds = MISFITDataset(_write_index(tmp_path, _make_nifti(tmp_path)), augment=False)
+    assert ds.target_spacing is None
+
+
+def test_dataset_resamples_foreground_to_target_spacing(tmp_path):
+    """The fg-cropped volume is resampled to target_spacing before cropping.
+
+    A 32×32×8 volume at 0.5×0.5×4 mm is 16×16×32 at 1 mm, so the center crop
+    to (16, 16, 32) holds the whole resampled volume with no padding.
+    """
+    nifti_path = _make_nifti(tmp_path, shape=(32, 32, 8))
+    index_path = _write_index(tmp_path, nifti_path, fg_z_end=7)
+    df = pd.read_parquet(index_path)
+    df[["spacing_d", "spacing_h", "spacing_w"]] = [0.5, 0.5, 4.0]
+    df.to_parquet(index_path, index=False)
+
+    ds = MISFITDataset(
+        index_path, patch_size=(16, 16, 32), augment=False,
+        target_spacing=(1.0, 1.0, 1.0),
+    )
+    image = ds[0]["image"]
+    assert image.shape == (1, 16, 16, 32)
+    # No zero padding: every voxel is interpolated data.
+    assert (image != 0).all()
+
+    native = MISFITDataset(index_path, patch_size=(16, 16, 32), augment=False)[0]["image"]
+    # At native resolution the same crop is mostly padding along z (8 → 32).
+    assert (native == 0).float().mean() > 0.5

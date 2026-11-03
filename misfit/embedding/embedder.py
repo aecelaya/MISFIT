@@ -19,7 +19,7 @@ class Embedder(nn.Module):
        which returns a 5-D feature map ``(1, C, D', H', W')``.
     3. **Pool** — global-average-pool the spatial dimensions to get ``(C,)``
        per crop.
-    4. **Aggregate** — pass the full ``(N_crops, C)`` sequence + normalised
+    4. **Aggregate** — pass the full ``(N_crops, C)`` sequence + normalized
        3-D positions to the
        :class:`~misfit.embedding.aggregators.base.AbstractAggregator`.
 
@@ -60,7 +60,7 @@ class Embedder(nn.Module):
 
         Args:
             volume: ``(1, D, H, W)`` float32 tensor (single channel, already
-                normalised to z-score).
+                normalized to z-score).
 
         Returns:
             ``(C,)`` global embedding vector.
@@ -129,7 +129,7 @@ class Embedder(nn.Module):
 
         Returns:
             crops:    ``(N_crops, 1, Pd, Ph, Pw)``
-            centres:  ``(N_crops, 3)`` normalised 3-D crop centre coordinates.
+            centres:  ``(N_crops, 3)`` normalized 3-D crop centre coordinates.
         """
         _, D, H, W = volume.shape
         pd_, ph_, pw_ = self.patch_size

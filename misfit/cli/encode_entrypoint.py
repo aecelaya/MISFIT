@@ -15,7 +15,7 @@ spatial-aware consumers can be added without re-running encoding.
 Each volume is saved as a compressed ``.npz`` file with two arrays:
 
 - ``feature_map``: ``(N_crops, C, D', H', W')`` float32
-- ``positions``:   ``(N_crops, 3)`` float32 — normalised 3-D crop centres
+- ``positions``:   ``(N_crops, 3)`` float32 — normalized 3-D crop centres
 
 Usage::
 
@@ -33,8 +33,10 @@ import pandas as pd
 import torch
 
 from misfit.cli.args import ArgParser, add_encode_args
+from misfit.normalization.normalization_registry import get_normalization_policy_name
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
+from misfit.utils.resampling import get_target_spacing
 
 
 def encode_entry(args=None) -> None:
@@ -59,11 +61,13 @@ def encode_entry(args=None) -> None:
     config = read_json_file(config_path)
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
+    target_spacing = get_target_spacing(config)
+    normalization_policy = get_normalization_policy_name(config)
 
     from misfit.inference.inference_utils import (
         build_model_from_checkpoint,
         get_default_device,
-        load_and_normalise,
+        load_and_normalize,
         load_checkpoint,
     )
 
@@ -72,7 +76,9 @@ def encode_entry(args=None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = load_checkpoint(ns.encoder_checkpoint, device)
-    model = build_model_from_checkpoint(checkpoint, model_config, device)
+    model = build_model_from_checkpoint(
+        checkpoint, model_config, device, target_spacing=target_spacing
+    )
     model.eval()
 
     # Load index and optionally filter to a single split.
@@ -93,8 +99,10 @@ def encode_entry(args=None) -> None:
                 progress.advance(task)
                 continue
 
-            volume = load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+            volume = load_and_normalize(
+                row,
+                normalization_policy=normalization_policy,
+                target_spacing=target_spacing,
             )
             if volume is None:
                 print_error(
@@ -129,7 +137,7 @@ def _encode_volume(
     """Tile *volume* into crops and return raw bottleneck feature maps.
 
     Args:
-        volume: Normalised float32 array of shape ``(D, H, W)``.
+        volume: Normalized float32 array of shape ``(D, H, W)``.
         model: Pretrained MISFIT model with a ``.encoder`` attribute.
         patch_size: Crop size in voxels. Either a single int (cubic crop) or a
             ``(D, H, W)`` sequence for anisotropic crops.
@@ -137,7 +145,7 @@ def _encode_volume(
 
     Returns:
         feature_map: ``(N_crops, C, D', H', W')`` float32 ndarray.
-        positions:   ``(N_crops, 3)`` float32 ndarray of normalised crop centres.
+        positions:   ``(N_crops, 3)`` float32 ndarray of normalized crop centres.
     """
     pd_, ph_, pw_ = (
         (patch_size, patch_size, patch_size)

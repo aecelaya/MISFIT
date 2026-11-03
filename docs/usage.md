@@ -30,13 +30,14 @@ imaging foundation models. The core pipeline consists of four stages:
 The **indexing step** scans your NIfTI files and records the path, intensity
 statistics (p1, p99, foreground mean, foreground std), voxel spacing, image
 shape, and affine transform for each volume. It also assigns each volume a
-`split` label (`train`, `val`, or `test`) using configurable ratios. The output
+`split` label (`train`, `val`, or `test`) using configurable sizes. The output
 is a single Parquet file consumed by all downstream MISFIT commands.
 
 Run indexing with `misfit_index`:
 
 - `--input FILE` (**required**): CSV or Parquet file with a `path` column
-  listing absolute paths to NIfTI files.
+  listing absolute paths to NIfTI files, and an optional `group` column (see
+  [Grouped splits](#grouped-splits)).
 - `--output PARQUET` (**required**): Destination path for the output Parquet
   index.
 - `--num-workers-index N`: Number of parallel worker processes. _(default: 32)_
@@ -44,9 +45,50 @@ Run indexing with `misfit_index`:
 ### Split configuration
 
 On first run, `misfit_index` writes a companion `<output_stem>_config.json` file
-alongside the Parquet index. This file records the split ratios and random seed
-used to assign the `split` column. Edit it and re-run `misfit_index` to change
-the split proportions.
+alongside the Parquet index. It records the split sizes and random seed used to
+assign the `split` column:
+
+```json
+{
+  "val": 0.05,
+  "test": 0.05,
+  "max_val": 500,
+  "max_test": 500,
+  "seed": 42
+}
+```
+
+By default, val and test each get 5% of the volumes, capped at 500, and train
+gets the rest. A 1,000-volume corpus splits 900/50/50; a 100,000-volume corpus
+splits 99,000/500/500. Validation only tracks the reconstruction loss and picks
+`best_model.pt`, and the real evaluation of a pretrained encoder is on
+downstream tasks, so neither split needs to grow with the corpus.
+
+- `val` / `test`: a fraction in [0, 1) of the corpus, or a whole number of
+  volumes (e.g. `"val": 200`). Use `0` for no split. A nonzero fraction always
+  gets at least one volume.
+- `max_val` / `max_test`: caps a fractional `val` / `test`. Use `null` for no
+  cap. Whole-number sizes are not capped.
+
+Edit the file and re-run `misfit_index` to change the split. A config written by
+an older MISFIT version (with `train`/`val`/`test` ratios) is still read with
+its original meaning.
+
+### Grouped splits
+
+Splits are assigned per volume by default. If your corpus has several volumes
+per patient (multiple sequences, timepoints, or scans), add a `group` column
+(e.g. a subject ID) to the `--input` file. All volumes in a group land in the
+same split, so the same patient never appears in both training and test. Rows
+with an empty `group` are split individually. With groups, val and test may hold
+slightly more than their target size, since groups are never broken up.
+
+```csv
+path,group
+/data/sub-001_T1w.nii.gz,sub-001
+/data/sub-001_FLAIR.nii.gz,sub-001
+/data/sub-002_T1w.nii.gz,sub-002
+```
 
 ### Example
 
@@ -75,6 +117,7 @@ one NIfTI volume and contains the following columns:
 | `volume_id`                             | Unique identifier derived from the filename (no extension).               |
 | `path`                                  | Absolute path to the NIfTI file.                                          |
 | `split`                                 | Dataset split: `train`, `val`, or `test`.                                 |
+| `group`                                 | The `group` value from `--input`, or empty if none was given.             |
 | `shape_d` / `shape_h` / `shape_w`       | Voxel dimensions (depth, height, width).                                  |
 | `spacing_d` / `spacing_h` / `spacing_w` | Voxel spacing in mm.                                                      |
 | `affine`                                | JSON-encoded 4×4 affine transform matrix.                                 |
@@ -123,13 +166,33 @@ Run training with `misfit_train`:
 
 ### Model
 
-- `--model NAME`: SwinMAE variant to train. _(default: `swinunetr-base`)_ See
+- `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
+  `swinunetr-large`, or `resenc`. _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
-- `--patch-size D H W`: Spatial crop size fed to the model in voxels. Must be
-  divisible by 32. _(default: `96 96 96`)_
+- `--patch-size X Y Z`: Spatial crop size fed to the model in voxels (at
+  `--target-spacing` when set). Must be divisible by 32. Same axis order as
+  MIST's `--patch-size`. _(default: `96 96 96`)_
+- `--target-spacing X Y Z`: Resample every volume to this voxel spacing (e.g.
+  `1 1 1` for 1 mm isotropic) before cropping patches. Saved to `config.json`
+  and applied by every downstream command. _(default: off — native resolution)_
+  See [Target Spacing](advanced_topics.md#target-spacing).
+- `--init-weights PT`: Start from these weights instead of random initialization
+  — the whole MAE network (encoder, decoder, and reconstruction head). Accepts a
+  MISFIT checkpoint or an nnssl one such as nnFoundationCNN's. Every weight must
+  match the model, or training stops. Ignored on `--resume`. See
+  [Starting from nnFoundation](advanced_topics.md#starting-from-nnfoundation).
+  _(default: off)_
 - `--mask-patch-size P`: Edge length of each masked 3D cube in voxels.
   _(default: 16)_
 - `--mask-ratio R`: Fraction of patch tokens to mask. _(default: 0.75)_
+
+### Normalization
+
+- `--normalization-policy NAME`: How each volume's intensities are normalized:
+  `clip_and_z_score` or `z_score_only` (nnssl's, for nnFoundation weights).
+  Saved to `config.json` and applied by every downstream command. _(default:
+  `clip_and_z_score`)_ See
+  [Normalization Policies](advanced_topics.md#normalization-policies).
 
 ### Loss
 
@@ -137,15 +200,33 @@ Run training with `misfit_train`:
   `normalized_masked_mse`)_ See
   [Loss Functions](advanced_topics.md#loss-functions) for available options.
 
-### Optimisation
+### Optimization
 
-- `--epochs N`: Total training epochs. _(default: 200)_
+- `--epochs N`: Training epochs. _(default: 1000)_
+- `--steps-per-epoch N`: Optimizer steps per epoch. _(default: 250)_
 - `--batch-size N`: Batch size per GPU. _(default: 2)_
 - `--optimizer NAME`: Optimizer. _(default: `adamw`)_
 - `--learning-rate LR`: Initial learning rate. _(default: 1e-4)_
 - `--weight-decay WD`: L2 weight decay. _(default: 0.05)_
 - `--lr-scheduler NAME`: Learning rate schedule. _(default: `cosine`)_
-- `--warmup-epochs N`: Linear warmup epochs before cosine decay. _(default: 20)_
+- `--warmup-epochs N`: Linear warmup epochs before the decay. _(default: 50)_
+
+An epoch is a fixed `--steps-per-epoch` optimizer steps, not a pass over the
+data, so the default run is 250,000 steps whatever the size of your corpus. Each
+step draws `--batch-size` × GPUs × `--gradient-accumulation-steps` volumes; over
+training, every volume is drawn about equally often. The learning rate is
+updated every step, so warmup and decay are smooth.
+
+### Validation & checkpointing
+
+- `--val-every N`: Validate every N epochs, and always after the last epoch.
+  _(default: 1)_
+- `--val-volumes N`: Validate on the first N volumes of the val split.
+  _(default: 128)_ The same volumes are scored with the same masks every time,
+  so the val loss is comparable across epochs and across runs.
+- `--checkpoint-minutes M`: Also save the resumable checkpoint mid-epoch at most
+  every M minutes, so a preempted job loses at most M minutes. A checkpoint is
+  always saved at the end of each epoch. _(default: 30)_
 
 ### Miscellaneous
 
@@ -171,7 +252,7 @@ Run training with `misfit_train`:
 
 ### Example
 
-Train a base SwinMAE for 200 epochs.
+Train a base SwinMAE with the default schedule (1000 epochs × 250 steps).
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -210,7 +291,7 @@ misfit_train --index   /data/index.parquet \
 ```text
 results/
     checkpoints/
-        checkpoint.pt       Latest checkpoint (overwritten each epoch).
+        checkpoint.pt       Latest checkpoint (each epoch, and every --checkpoint-minutes).
     models/
         best_model.pt       Checkpoint with the lowest validation loss.
     logs/                   TensorBoard event files.
@@ -234,9 +315,9 @@ produce one score per volume. The per-tile mask is drawn from `--seed` so the
 whole evaluation is reproducible.
 
 Metrics are computed in the **training loss's space**: when the run used
-`normalized_masked_mse` the target is normalised per `mask_patch_size` cube —
+`normalized_masked_mse` the target is normalized per `mask_patch_size` cube —
 exactly as the loss does — so `masked_mse` is directly comparable to the run's
-`best_val_loss`. Because a per-region-normalised error is ≈ 1.0 for _any_
+`best_val_loss`. Because a per-region-normalized error is ≈ 1.0 for _any_
 constant predictor, every metric is also reported for a **naive baseline**
 (impute the masked voxels with the visible-region mean) plus a `_skill` column
 (`1 - model/naive` for lower-is-better metrics, `model - naive` for
@@ -250,7 +331,7 @@ higher-is-better) — positive means the encoder beats the trivial baseline.
 Run evaluation with `misfit_evaluate`:
 
 - `--checkpoint PT` (**required**): Path to a checkpoint produced by
-  `misfit_train`.
+  `misfit_train`, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index produced by `misfit_index`.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and the metric space are read from this
@@ -312,14 +393,14 @@ console.
 | ------------- | ------------------------------------------------- | ---------------- |
 | `masked_mae`  | Mean absolute error on masked voxels.             | Lower is better  |
 | `masked_mse`  | Mean squared error on masked voxels — the value   | Lower is better  |
-|               | `normalized_masked_mse` optimises.                |                  |
+|               | `normalized_masked_mse` optimizes.                |                  |
 | `masked_psnr` | Peak signal-to-noise ratio on masked voxels (dB). | Higher is better |
 | `ssim`        | Structural similarity (opt-in, see note).         | Higher is better |
 
 <!-- prettier-ignore -->
 !!!note
     `ssim` is **not** in the default set. It needs a consistent absolute-intensity
-    space and a spatial window, and per-cube normalisation depresses its absolute
+    space and a spatial window, and per-cube normalization depresses its absolute
     value with boundary seams. Request it with `--metrics ssim` if you want it in
     the CSV, but for a viewer-space structural read use `misfit_inspect` instead.
 
@@ -334,14 +415,14 @@ quality — open the input and output side-by-side in a viewer such as ITK-SNAP 
 
 The reconstruction pipeline:
 
-1. Loads and z-score normalises the volume.
+1. Loads and z-score normalizes the volume.
 2. Zero-pads to the nearest multiple of the patch size in every dimension.
 3. Tiles the padded volume into non-overlapping patches and runs MAE
    reconstruction on each.
 4. Stitches the reconstructed patches and their masks back into the full padded
    volume.
 5. Trims padding to restore the original voxel dimensions.
-6. Denormalises reconstruction intensities back to the original intensity space
+6. Denormalizes reconstruction intensities back to the original intensity space
    (`reconstruction × fg_std + fg_mean`).
 7. Saves outputs under two subdirectories of `--output-dir`:
    - `reconstructions/<volume_id>.nii.gz` — full-volume reconstruction.
@@ -349,7 +430,8 @@ The reconstruction pipeline:
 
 Run inspection with `misfit_inspect`:
 
-- `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint.
+- `--checkpoint PT` (**required**): Path to a pretrained MISFIT checkpoint, or
+  an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to reconstruct.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
@@ -414,7 +496,7 @@ retrieval or UMAP visualization. Pass a trained aggregator checkpoint via
 Run embedding extraction with `misfit_embed`:
 
 - `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
-  checkpoint.
+  checkpoint, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to embed.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
@@ -490,7 +572,7 @@ Use `misfit_encode` when you need spatially-rich features for:
 Run encoding with `misfit_encode`:
 
 - `--encoder-checkpoint PT` (**required**): Path to a pretrained MISFIT encoder
-  checkpoint.
+  checkpoint, or an nnssl checkpoint such as nnFoundationCNN's.
 - `--index PARQUET` (**required**): Parquet index of volumes to encode.
 - `--config JSON` (**required**): Path to the `config.json` produced by
   `misfit_train`. Model architecture and patch size are read from this file.
@@ -515,7 +597,7 @@ One `.npz` file per volume at `<output-dir>/<volume_id>.npz`, containing:
 | Key           | Shape                      | Description                                    |
 | ------------- | -------------------------- | ---------------------------------------------- |
 | `feature_map` | `(N_crops, C, D', H', W')` | Full spatial bottleneck feature maps.          |
-| `positions`   | `(N_crops, 3)`             | Normalised 3D centre coordinates of each crop. |
+| `positions`   | `(N_crops, 3)`             | Normalized 3D centre coordinates of each crop. |
 
 ---
 

@@ -4,8 +4,9 @@ Architecture overview:
 
   1. Masking  — randomly replace mask_ratio of 3D patch blocks (size
                mask_patch_size^3) with a learnable scalar mask token.
-  2. Encoder  — SwinUNETR-V2 swinViT backbone processes the masked image and
-               returns 5 hidden states at spatial resolutions D/2 … D/32.
+  2. Encoder  — SwinUNETR-V2 swinViT backbone (taken from MIST's
+               MistSwinUNETR) processes the masked image and returns 5 hidden
+               states at spatial resolutions D/2 … D/32.
   3. Decoder  — lightweight convolutional decoder upsamples from the D/32
                bottleneck back to the original resolution in 5 steps.
   4. Loss     — MSE between reconstruction and original, computed only over
@@ -24,15 +25,15 @@ Transfer learning compatibility:
     torch.save and passed directly to ``mist_train --pretrained-weights``.
 """
 
-import math
 from collections import OrderedDict
 from typing import Any
 
 import torch
 import torch.nn as nn
-from monai.networks.nets import SwinUNETR
+from mist.models.swinunetr.mist_swinunetr import MistSwinUNETR
 
 from misfit.models.base_model import MISFITModel
+from misfit.models.masking import apply_mask, generate_patch_mask
 
 
 class MAEDecoder(nn.Module):
@@ -98,57 +99,6 @@ class MAEDecoder(nn.Module):
         return self.head(x)
 
 
-class SpacingEmbedding(nn.Module):
-    """Sinusoidal embedding of 3D voxel spacing conditioned into the MAE decoder.
-
-    Encodes (spacing_d, spacing_h, spacing_w) as sinusoidal features and
-    projects them to the bottleneck channel count. The result is added to
-    the encoder bottleneck before decoding, so the decoder (and therefore
-    the encoder through backprop) learns to account for physical voxel size.
-
-    Args:
-        embed_dim: Sinusoidal feature dimension per spatial axis. Total input
-            to the MLP is 3 * embed_dim. Defaults to 64.
-        out_channels: Output dimension; must match the encoder bottleneck
-            channel count so the embedding can be broadcast-added.
-    """
-
-    def __init__(self, embed_dim: int = 64, out_channels: int = 768) -> None:
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.proj = nn.Sequential(
-            nn.Linear(3 * embed_dim, out_channels),
-            nn.SiLU(),
-            nn.Linear(out_channels, out_channels),
-        )
-
-    def _sinusoidal(self, values: torch.Tensor) -> torch.Tensor:
-        """Map a (B,) scalar to (B, embed_dim) sinusoidal features."""
-        half = self.embed_dim // 2
-        freqs = torch.exp(
-            -math.log(10000.0)
-            * torch.arange(half, dtype=torch.float32, device=values.device)
-            / max(half - 1, 1)
-        )
-        args = values.float().unsqueeze(-1) * freqs.unsqueeze(0)  # (B, half)
-        return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)  # (B, embed_dim)
-
-    def forward(self, spacing: torch.Tensor) -> torch.Tensor:
-        """Encode voxel spacing into a bottleneck-shaped embedding vector.
-
-        Args:
-            spacing: Tensor of shape (B, 3) containing (spacing_d, spacing_h,
-                spacing_w) in mm per voxel.
-
-        Returns:
-            Embedding tensor of shape (B, out_channels).
-        """
-        embeds = torch.cat(
-            [self._sinusoidal(spacing[:, i]) for i in range(3)], dim=-1
-        )  # (B, 3 * embed_dim)
-        return self.proj(embeds)  # (B, out_channels)
-
-
 class SwinMAE(MISFITModel):
     """SwinUNETR-V2 encoder with a 3D Masked Autoencoder pretraining head.
 
@@ -209,28 +159,15 @@ class SwinMAE(MISFITModel):
         self.mask_patch_size = mask_patch_size
         self.mask_ratio = mask_ratio
 
-        # Build SwinUNETR-V2 and extract the swinViT backbone. The UNet
-        # decoder is discarded; out_channels=2 is a placeholder.
-        # MONAI >= 1.5 removed img_size from SwinUNETR; older versions require
-        # it. Try without first, fall back to passing it for compatibility.
-        try:
-            _swinunetr = SwinUNETR(
-                in_channels=in_channels,
-                out_channels=2,
-                feature_size=feature_size,
-                use_v2=True,
-                spatial_dims=3,
-            )
-        except TypeError:
-            _swinunetr = SwinUNETR(
-                img_size=img_size,
-                in_channels=in_channels,
-                out_channels=2,
-                feature_size=feature_size,
-                use_v2=True,
-                spatial_dims=3,
-            )
-        self.encoder = _swinunetr.swinViT
+        # Build MIST's SwinUNETR-V2 and keep only its swinViT backbone, so the
+        # encoder is the exact module MIST fine-tunes. The UNet decoder is
+        # discarded; out_channels=2 is a placeholder.
+        _mist_swinunetr = MistSwinUNETR(
+            in_channels=in_channels,
+            out_channels=2,
+            feature_size=feature_size,
+        )
+        self.encoder = _mist_swinunetr.model.swinViT
 
         # Learnable mask token: scalar per channel, broadcast over spatial dims.
         self.mask_token = nn.Parameter(torch.zeros(1, in_channels, 1, 1, 1))
@@ -250,10 +187,6 @@ class SwinMAE(MISFITModel):
             num_upsample=5,
         )
 
-        self.spacing_embed = SpacingEmbedding(
-            embed_dim=64,
-            out_channels=_bottleneck_channels,
-        )
 
     def generate_mask(
         self,
@@ -278,29 +211,11 @@ class SwinMAE(MISFITModel):
         """
         if mask_ratio is None:
             mask_ratio = self.mask_ratio
-        B, _, D, H, W = x.shape
-        p = self.mask_patch_size
-        gd, gh, gw = D // p, H // p, W // p
-        num_patches = gd * gh * gw
-        num_masked = int(mask_ratio * num_patches)
-
-        # Rank patches by random noise; take the top num_masked as masked.
-        noise = torch.rand(B, num_patches, device=x.device)
-        ids_sorted = torch.argsort(noise, dim=1)
-        mask_flat = torch.zeros(B, num_patches, device=x.device)
-        mask_flat.scatter_(1, ids_sorted[:, :num_masked], 1.0)
-
-        # Reshape from flat patch index → patch grid → voxel resolution.
-        mask = mask_flat.view(B, 1, gd, gh, gw)
-        mask = mask.repeat_interleave(p, dim=2)
-        mask = mask.repeat_interleave(p, dim=3)
-        mask = mask.repeat_interleave(p, dim=4)
-        return mask  # (B, 1, D, H, W)
+        return generate_patch_mask(x, self.mask_patch_size, mask_ratio)
 
     def forward(
         self,
         x: torch.Tensor,
-        spacing: torch.Tensor | None = None,
         mask_ratio: float | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward pass.
@@ -308,11 +223,6 @@ class SwinMAE(MISFITModel):
         Args:
             x: Input tensor of shape (B, C, D, H, W). All spatial dimensions
                 must match img_size.
-            spacing: Voxel spacing in mm, shape (B, 3) as
-                (spacing_d, spacing_h, spacing_w). When provided, a sinusoidal
-                embedding of the spacing is added to the encoder bottleneck
-                before decoding so the model is aware of physical voxel size.
-                Defaults to None (spacing conditioning disabled).
             mask_ratio: Override the instance mask_ratio for this call.
                 Useful for curriculum training schedules. If None, uses the
                 value set at construction. Defaults to None.
@@ -326,23 +236,36 @@ class SwinMAE(MISFITModel):
         """
         # 1. Generate mask and replace masked voxels with the mask token.
         mask = self.generate_mask(x, mask_ratio=mask_ratio)
-        masked_x = x * (1.0 - mask) + self.mask_token * mask
+        masked_x = apply_mask(x, mask, self.mask_token)
 
         # 2. Encode. swinViT returns a list of 5 hidden states at spatial
         #    resolutions D/2, D/4, D/8, D/16, D/32.
         hidden_states = self.encoder(masked_x)
         bottleneck = hidden_states[4]  # (B, C', D/32, H/32, W/32)
 
-        # 3. Inject spacing conditioning into the bottleneck so the decoder
-        #    (and encoder through backprop) learns physical-scale awareness.
-        if spacing is not None:
-            spacing_emb = self.spacing_embed(spacing)
-            bottleneck = bottleneck + spacing_emb.view(bottleneck.shape[0], -1, 1, 1, 1)
-
-        # 4. Decode from bottleneck back to original resolution.
+        # 3. Decode from bottleneck back to original resolution.
         reconstruction = self.decoder(bottleneck)
 
         return {"reconstruction": reconstruction, "mask": mask}
+
+    @staticmethod
+    def adapt_pretrained_state_dict(state_dict: OrderedDict) -> OrderedDict:
+        """Drop the removed spacing embedding from older checkpoints.
+
+        Checkpoints from MISFIT 0.1.3-alpha and earlier contain a
+        ``spacing_embed.*`` decoder-conditioning module that no longer exists.
+        It never affected the encoder, so those keys are dropped and the rest
+        of the checkpoint loads strictly as usual.
+        """
+        return OrderedDict(
+            (k, v) for k, v in state_dict.items() if not k.startswith("spacing_embed.")
+        )
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load weights, ignoring the removed spacing embedding."""
+        return super().load_state_dict(
+            self.adapt_pretrained_state_dict(state_dict), strict=strict, assign=assign
+        )
 
     def get_encoder_state_dict(self) -> OrderedDict:
         """Return encoder-only weights for downstream transfer learning.

@@ -32,9 +32,6 @@ class DataLoadingConstants:
     BRIGHTNESS_PROB: float = 0.15
     BRIGHTNESS_FACTOR: float = 0.25
 
-    # --- Normalization ---
-    NORM_EPS: float = 1e-8
-
 
 # Module-level singleton — import and use directly.
 dc = DataLoadingConstants()

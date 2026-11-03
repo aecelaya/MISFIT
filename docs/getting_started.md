@@ -110,9 +110,12 @@ misfit_index --input  /path/to/paths.csv \
 ```
 
 On first run, a companion split-config file is written alongside the index (e.g.
-`index_config.json`). It records the train/val/test ratios and random seed used
-to assign the `split` column. Edit it and re-run `misfit_index` to change the
-proportions.
+`index_config.json`). It records the split sizes and random seed used to assign
+the `split` column: by default, val and test each get 5% of the volumes, capped
+at 500, and train gets the rest. Edit it and re-run `misfit_index` to change the
+split. If you have several volumes per patient, add a `group` column (e.g. a
+subject ID) to your input file to keep each patient in one split; see
+[Usage](usage.md#grouped-splits).
 
 Once your index is built, you are ready to start pretraining. See
 [Usage](usage.md) for details on all available commands.

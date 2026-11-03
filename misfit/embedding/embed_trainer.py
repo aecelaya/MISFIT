@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from misfit.data_loading.dataloader import seal_resource_tracker_fd
 from misfit.embedding.aggregators.aggregator_registry import get_aggregator
 from misfit.embedding.objectives.base import crop_collate_fn
 from misfit.embedding.objectives.objective_registry import get_objective
@@ -23,7 +24,7 @@ class EmbedTrainer:
     - One aggregator forward pass per volume.
     - Optional output head (classification: linear; contrastive: MLP).
     - Loss computed by the objective.
-    - Adam optimiser with cosine LR decay.
+    - Adam optimizer with cosine LR decay.
 
     Args:
         input_csv: Unified CSV with columns ``volume_id``, ``split``,
@@ -107,6 +108,7 @@ class EmbedTrainer:
                 collate_fn=crop_collate_fn,
                 num_workers=self.num_workers,
                 pin_memory=self.device.type == "cuda",
+                worker_init_fn=seal_resource_tracker_fd,
             )
         else:
             loader = DataLoader(
@@ -117,14 +119,15 @@ class EmbedTrainer:
                 collate_fn=crop_collate_fn,
                 num_workers=self.num_workers,
                 pin_memory=self.device.type == "cuda",
+                worker_init_fn=seal_resource_tracker_fd,
             )
 
         head = self.objective.build_head(self.embed_dim).to(self.device)
 
         params = list(self.aggregator.parameters()) + list(head.parameters())
-        optimiser = torch.optim.Adam(params, lr=self.learning_rate)
+        optimizer = torch.optim.Adam(params, lr=self.learning_rate)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimiser, T_max=self.num_epochs
+            optimizer, T_max=self.num_epochs
         )
 
         console.print(
@@ -137,7 +140,7 @@ class EmbedTrainer:
                 "Training", total=self.num_epochs
             )
             for epoch in range(1, self.num_epochs + 1):
-                avg_loss = self._train_epoch(loader, head, optimiser)
+                avg_loss = self._train_epoch(loader, head, optimizer)
                 scheduler.step()
                 progress.advance(epoch_task)
 
@@ -159,7 +162,7 @@ class EmbedTrainer:
         self,
         loader: DataLoader,
         head: nn.Module,
-        optimiser: torch.optim.Optimizer,
+        optimizer: torch.optim.Optimizer,
     ) -> float:
         self.aggregator.train()
         head.train()
@@ -179,9 +182,9 @@ class EmbedTrainer:
             head_output = head(embeddings)           # (B, num_classes) or (B, proj_dim)
             loss = self.objective.compute_loss(head_output, labels)
 
-            optimiser.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
-            optimiser.step()
+            optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1

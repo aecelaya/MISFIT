@@ -3,7 +3,7 @@
 ``reconstruct``
     Runs the full MAE forward pass on every non-overlapping patch of each
     volume, stitches the results back into the original coordinate space,
-    denormalises the intensities, and saves outputs under two subdirectories:
+    denormalizes the intensities, and saves outputs under two subdirectories:
 
     - ``reconstructions/`` — full-volume reconstruction NIfTIs.
     - ``masks/`` — binary masks using the model convention (1 = masked /
@@ -22,10 +22,12 @@ import pandas as pd
 import torch
 
 from misfit.inference import inference_utils
+from misfit.normalization.normalization_registry import DEFAULT_NORMALIZATION_POLICY
 from misfit.utils.console import print_section_header, print_success, print_warning
 from misfit.utils.hardware import autocast_context, resolve_amp
 from misfit.utils.normalization import denormalize_patchwise
 from misfit.utils.progress_bar import get_progress_bar
+from misfit.utils.resampling import resample_to_shape
 
 _NORMALIZED_MSE_LOSS = "normalized_masked_mse"
 
@@ -53,7 +55,7 @@ def _tiled_reconstruct(
             (:func:`misfit.utils.normalization.denormalize_patchwise`). Set this
             when the model was trained with ``normalized_masked_mse`` so the
             stitched reconstruction is back in the volume z-score space (and can
-            then be denormalised to original intensities). Defaults to ``False``.
+            then be denormalized to original intensities). Defaults to ``False``.
         amp: When ``True`` (default), run the forward pass under bfloat16
             autocast on CUDA devices. Has no effect on CPU.
         mask_patch_size: Edge length of the normalization cubes — must match the
@@ -81,7 +83,7 @@ def _tiled_reconstruct(
                     output = model_fn(tensor)
                 recon = output["reconstruction"].squeeze().float().cpu().numpy()
                 if denorm_patches:
-                    # The model predicts per-mask-cube-normalised values (zero
+                    # The model predicts per-mask-cube-normalized values (zero
                     # mean, unit variance per mask_patch_size cube). Undo that
                     # with the target's per-cube stats so the stitched
                     # reconstruction is back in the volume z-score space.
@@ -106,22 +108,29 @@ def reconstruct(
     training_config: dict | None = None,
     device: str | torch.device | None = None,
     split: str | None = None,
+    target_spacing: tuple[float, float, float] | None = None,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
 ) -> None:
     """Reconstruct every volume in *index_path* and save as NIfTI.
 
     For each volume the function:
 
-    1. Loads and z-score normalises the NIfTI data.
+    1. Loads and z-score normalizes the NIfTI data, then resamples it to
+       *target_spacing* when the run used one.
     2. Zero-pads to the nearest multiple of *patch_size* in every dimension.
     3. Tiles the padded volume into non-overlapping patches and runs MAE
        reconstruction on each patch.
     4. Stitches the reconstructed patches and masks back into the full padded
        volume.
-    5. Trims padding to restore the original voxel dimensions.
-    6. Denormalises reconstruction intensities (``recon × fg_std + fg_mean``).
+    5. Trims padding to restore the original voxel dimensions, resampling back
+       to the volume's native grid if step 1 resampled it, so outputs overlay
+       on the input NIfTI with its own affine.
+    6. Denormalizes reconstruction intensities by inverting the normalization
+       policy (``recon × scale + shift``; for ``clip_and_z_score``,
+       ``recon × fg_std + fg_mean``).
        When ``training_config["loss"]`` is ``"normalized_masked_mse"``, the
-       per-patch normalisation applied by the loss is first undone (step 4a)
-       before the volume-level denormalisation so that saved intensities are
+       per-patch normalization applied by the loss is first undone (step 4a)
+       before the volume-level denormalization so that saved intensities are
        in the original physical range.
     7. Saves outputs under two subdirectories of *output_dir*:
        - ``reconstructions/<volume_id>.nii.gz``
@@ -138,16 +147,22 @@ def reconstruct(
             ``config.json``).
         training_config: Training configuration dict (``config["training"]``
             from ``config.json``). The ``loss`` name selects the correct
-            denormalisation, and the ``amp`` flag toggles bfloat16 autocast
+            denormalization, and the ``amp`` flag toggles bfloat16 autocast
             (defaults to enabled when absent, then resolved against the current
             hardware — BF16 needs an NVIDIA Ampere+ or AMD CDNA/RDNA3+ GPU,
             otherwise FP32 is used).
-            When ``None``, volume-level-only denormalisation is applied
+            When ``None``, volume-level-only denormalization is applied
             (correct for ``masked_mse`` and ``masked_l1``).
         device: Torch device. Defaults to CUDA if available, else CPU.
         split: If the index contains a ``split`` column, only rows whose
             split matches this value are processed.  ``None`` processes all
             rows.
+        target_spacing: The run's target spacing
+            (:func:`misfit.utils.resampling.get_target_spacing`), or None for
+            native resolution. Defaults to None.
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``). Defaults to
+            ``clip_and_z_score``.
     """
     tcfg = training_config or {}
     loss_name = tcfg.get("loss", "")
@@ -168,7 +183,7 @@ def reconstruct(
     mask_patch_size = int(model_config["mask_patch_size"])
 
     model = inference_utils.build_model_from_checkpoint(
-        checkpoint, model_config, device
+        checkpoint, model_config, device, target_spacing=target_spacing
     )
 
     index_df = pd.read_parquet(index_path)
@@ -189,30 +204,26 @@ def reconstruct(
             recon_path = recon_dir / f"{volume_id}.nii.gz"
             mask_path = mask_dir / f"{volume_id}.nii.gz"
 
-            volume = inference_utils.load_and_normalise(
-                row["path"], row["p1"], row["p99"], row["fg_mean"], row["fg_std"]
+            loaded = inference_utils.load_and_normalize(
+                row,
+                normalization_policy=normalization_policy,
+                target_spacing=target_spacing,
+                return_scale=True,
             )
-            if volume is None:
+            if loaded is None:
                 errors.append(f"Could not load: {row['path']}")
                 progress.advance(task)
                 continue
 
+            volume, intensity_scale = loaded
             try:
                 affine = np.array(json.loads(row["affine"]), dtype=np.float64)
-
-                # Condition the decoder on this volume's voxel spacing, exactly
-                # as during training — otherwise the reconstruction is produced
-                # from an out-of-distribution bottleneck.
-                spacing = inference_utils.get_row_spacing(row, device)
-
-                def model_fn(tensor, _spacing=spacing):
-                    return model(tensor, spacing=_spacing)
 
                 padded, original_shape = inference_utils.pad_to_multiple(
                     volume, patch_size
                 )
                 recon_padded, mask_padded = _tiled_reconstruct(
-                    padded, patch_size, model_fn, device,
+                    padded, patch_size, model, device,
                     denorm_patches=denorm_patches, amp=use_amp,
                     mask_patch_size=mask_patch_size,
                 )
@@ -221,10 +232,16 @@ def reconstruct(
                 recon_np = recon_padded[:d, :h, :w]
                 mask_np = mask_padded[:d, :h, :w]
 
-                # Denormalize reconstruction to original intensity space.
-                fg_std = float(row["fg_std"])
-                fg_mean = float(row["fg_mean"])
-                recon_np = recon_np * fg_std + fg_mean
+                if target_spacing is not None:
+                    # Back to the native grid so the outputs share the input's
+                    # affine. Re-binarise the interpolated mask.
+                    native_shape = nib.load(row["path"]).shape[:3]
+                    recon_np = resample_to_shape(recon_np, native_shape)
+                    mask_np = (resample_to_shape(mask_np, native_shape) >= 0.5)
+
+                # Denormalize reconstruction to original intensity space by
+                # inverting the normalization policy's affine map.
+                recon_np = recon_np * intensity_scale.scale + intensity_scale.shift
 
                 nib.save(
                     nib.Nifti1Image(recon_np.astype(np.float32), affine=affine),

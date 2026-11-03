@@ -18,7 +18,8 @@ Below is an example `config.json` produced by `misfit_train`.
   "misfit_version": "0.1.0-alpha",
 
   "data": {
-    "index": "/data/index.parquet"
+    "index": "/data/index.parquet",
+    "normalization_policy": "clip_and_z_score"
   },
 
   "model": {
@@ -28,19 +29,28 @@ Below is an example `config.json` produced by `misfit_train`.
     "mask_ratio": 0.75
   },
 
+  "spatial_config": {
+    "patch_size": [96, 96, 96],
+    "target_spacing": null
+  },
+
   "training": {
-    "epochs": 200,
+    "epochs": 1000,
+    "steps_per_epoch": 250,
     "batch_size": 2,
     "optimizer": "adamw",
     "learning_rate": 0.0001,
     "weight_decay": 0.05,
     "lr_scheduler": "cosine",
-    "warmup_epochs": 20,
+    "warmup_epochs": 50,
     "loss": "normalized_masked_mse",
     "amp": true,
     "seed": 42,
     "gradient_accumulation_steps": 1,
-    "bucket_cap_mb": 200
+    "bucket_cap_mb": 200,
+    "val_every": 1,
+    "val_volumes": 128,
+    "checkpoint_minutes": 30.0
   },
 
   "evaluation": {
@@ -65,6 +75,12 @@ silently producing an incompatible checkpoint.
 
 Changes to other hyperparameters (learning rate, epochs, optimizer, etc.) are
 allowed and emit a warning so you are aware of the discrepancy.
+
+The checkpoint is saved at the end of every epoch and, mid-epoch, at most every
+`--checkpoint-minutes` (default 30). A resume from a mid-epoch checkpoint
+continues the same epoch at the step it reached, with the same remaining
+samples, so a preempted job loses at most that many minutes of training. Runs
+from MISFIT versions before step-based training can't be resumed.
 
 ```console
 misfit_train --index   /data/index.parquet \
@@ -126,11 +142,17 @@ GPUs.
 The following parameters are **immutable** — changing them while resuming raises
 a hard error:
 
-| Parameter               | Reason                                                    |
-| ----------------------- | --------------------------------------------------------- |
-| `model.architecture`    | Checkpoint weights are architecture-specific.             |
-| `model.patch_size`      | Determines the spatial dimension of all model tensors.    |
-| `model.mask_patch_size` | Determines the masking grid structure inside the encoder. |
+| Parameter                       | Reason                                                    |
+| ------------------------------- | --------------------------------------------------------- |
+| `model.architecture`            | Checkpoint weights are architecture-specific.             |
+| `model.patch_size`              | Determines the spatial dimension of all model tensors.    |
+| `model.mask_patch_size`         | Determines the masking grid structure inside the encoder. |
+| `spatial_config.target_spacing` | Sets the physical scale the model learned at.             |
+| `data.normalization_policy`     | Sets the intensity distribution the model learned on.     |
+
+`--target-spacing` and `--normalization-policy` follow the same rule: pass the
+original value on `--resume`. Switching between resampled and native resolution
+is also an error.
 
 All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 **mutable** — changes produce a warning and training continues.
@@ -139,9 +161,15 @@ All other parameters (learning rate, epochs, optimizer, loss, etc.) are
 
 ## Model Variants
 
-MISFIT provides three SwinMAE variants corresponding to different encoder
-capacities. All variants share the same SwinUNETR backbone architecture but
-differ in the width of the feature maps (`feature_size`).
+MISFIT's architectures come from MIST, and each `--model` name matches the MIST
+model it fine-tunes into. All of them use the same image-level masking: masked
+cubes are replaced in the input before the encoder.
+
+### SwinUNETR
+
+Three SwinMAE variants with the same SwinUNETR-V2 backbone, differing in the
+width of the feature maps (`feature_size`). The encoder feeds a lightweight
+convolutional decoder from its bottleneck.
 
 | Variant | `--model`         | `feature_size` | Parameters (approx.)  | Recommended for                        |
 | ------- | ----------------- | -------------- | --------------------- | -------------------------------------- |
@@ -149,19 +177,120 @@ differ in the width of the feature maps (`feature_size`).
 | Base    | `swinunetr-base`  | 48             | ~28M (18.6M encoder)  | Standard pretraining (default)         |
 | Large   | `swinunetr-large` | 96             | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 
+### ResEnc
+
+`--model resenc` is nnU-Net's Residual Encoder UNet (the network shared by its
+ResEnc M/L/XL presets), pretrained the way nnssl does: the full UNet, skip
+connections included, reconstructs the masked image. The skips cannot leak the
+answer because masked regions are blank at every resolution.
+
+ResEnc plans its stages, strides, and kernel sizes from the patch size and
+spacing, exactly as MIST does. With `--target-spacing` set it plans from that
+spacing. Without one, volumes stay at their mixed native resolutions and ResEnc
+plans isotropically: one downsampling stage per halving, up to six stages. The
+patch size then sets the model size:
+
+| `--patch-size` | Stages | Parameters (approx.) |
+| -------------- | ------ | -------------------- |
+| 96³            | 5      | ~63M (57M encoder)   |
+| 128³ or larger | 6      | ~102M (90M encoder)  |
+
+<!-- prettier-ignore -->
+!!! tip
+    Pretrain ResEnc with a patch of at least 128³ (nnssl's default MAE
+    trainer uses 160³; nnFoundationCNN used 192³) so the
+    encoder has all six stages. A MIST `resenc` model with more stages than
+    the pretrained encoder trains its extra stages from scratch, and stages
+    whose kernel shapes differ (anisotropic MIST data) are skipped; MIST
+    warns about the mismatch rather than failing.
+
 <!-- prettier-ignore -->
 !!!note
     The model variant is locked into `config.json` at the start of training and
     cannot be changed when resuming. To use a different variant, start a new run
     with `--overwrite` or in a new `--results` directory.
 
+### Starting from nnFoundation
+
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN)
+([Harsy et al., 2026](https://arxiv.org/abs/2609.26924)) is an openly released
+ResEnc pretrained with nnssl's MAE objective (16³ blocks, 75% masked, plain
+masked MSE) on 2.1 million CT, MRI, and PET volumes, in single-channel 192³
+patches. nnssl did not resample the data: each volume was used at its native
+resolution (the median spacing is 1 mm isotropic), cropped to its nonzero
+region, and z-scored. MISFIT's `resenc` with a patch of at least 128³ and an
+isotropic topology is the same network, decoder and reconstruction head
+included: loaded with nnFoundationCNN's weights, it produces exactly the output
+of nnU-Net's own `ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB,
+CC-BY-SA-4.0) and use it two ways. In both, match nnssl's preprocessing and
+objective with `--normalization-policy z_score_only` and `--loss masked_mse`
+(see the note below).
+
+**As a ready-made encoder.** Every command that takes a checkpoint
+(`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
+it directly. Write a matching `config.json` with `--init-only`, without
+training:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation \
+             --model          resenc \
+             --patch-size     192 192 192 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
+             --init-only
+
+misfit_embed --encoder-checkpoint /models/checkpoint_final.pth \
+             --index              /data/index.parquet \
+             --config             /runs/nnfoundation/config.json \
+             --output-dir         /data/embeddings_nnfoundation
+```
+
+This gives a strong baseline to compare your own pretraining against.
+
+**As a starting point for pretraining.** `--init-weights` continues MAE
+pretraining from nnFoundationCNN on your own data, for example to adapt it to a
+modality or anatomy it saw little of:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation_ft \
+             --model          resenc \
+             --patch-size     192 192 192 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
+             --init-weights   /models/checkpoint_final.pth
+```
+
+A patch of at least 128³ is required: it gives the six-stage network the
+checkpoint holds (192³ matches pretraining). Leave out `--target-spacing`, as
+above: MISFIT then keeps each volume at its native resolution, as nnssl did, and
+plans an isotropic topology, which is nnFoundationCNN's.
+`--target-spacing 1 1 1` also builds the same network but resamples the data,
+which nnssl did not. An anisotropic target spacing, or a smaller patch, gives a
+different layout and stops with an error listing the mismatched weights rather
+than mixing pretrained and random weights.
+
+<!-- prettier-ignore -->
+!!! note
+    nnssl z-scores each volume over its nonzero region (`z_score_only`) and
+    trains with plain masked MSE (`masked_mse`), not MISFIT's defaults. Both
+    matter: MISFIT's default `normalized_masked_mse` standardizes each masked
+    cube of the target, so `misfit_evaluate` would score nnFoundation's
+    outputs against targets it was never trained to produce, and continued
+    pretraining would first have to relearn the reconstruction head. In a
+    smoke test on synthetic phantoms, nnFoundation's masked-MSE skill over the
+    naive baseline was 0.84 with `z_score_only` and 0.80 with
+    `clip_and_z_score` (a random network's was negative).
+
 ---
 
 ## Patch Size Selection
 
-The `--patch-size` argument controls the spatial crop fed to the model during
-training and inference. Every dimension must be divisible by 32 (due to the
-SwinUNETR downsampling stages).
+The `--patch-size X Y Z` argument controls the spatial crop fed to the model
+during training and inference, in voxels. Every dimension must be divisible
+by 32. It uses the same axis order as MIST's `--patch-size`: both tools lay
+volumes out in (x, y, z) order.
 
 A few practical guidelines:
 
@@ -192,16 +321,48 @@ A few practical guidelines:
     [Previewing a run without training](#previewing-a-run-without-training)
     below.
 
-- **Anisotropic data is handled natively.** MISFIT records each volume's voxel
-  spacing (mm) in the index and injects it into the model via sinusoidal
-  `SpacingEmbedding` conditioning on the decoder bottleneck. The model learns
-  the physical size of each crop regardless of acquisition protocol — no
-  resampling to isotropic spacing is required. Volumes from thick-slice CT (e.g.
-  5 mm slices) and thin-slice MRI can coexist in the same training run.
-
 - **The patch size is fixed at inference time.** `misfit_inspect`,
-  `misfit_evaluate`, and `misfit_embed` all read `patch_size` from `config.json`
-  via `--config`. You do not need to specify it again on the command line.
+  `misfit_evaluate`, `misfit_encode`, and `misfit_embed` all read `patch_size`
+  (and `target_spacing`) from `config.json` via `--config`. You do not need to
+  specify them again on the command line.
+
+---
+
+## Target Spacing
+
+By default volumes are used at their **native voxel spacing**: a 96-voxel crop
+covers a different physical extent on thick-slice CT (e.g. 5 mm slices) than on
+1 mm MRI. `misfit_index` records each volume's spacing (`spacing_d`,
+`spacing_h`, `spacing_w`, in x, y, z order), and `--target-spacing X Y Z`
+resamples every volume to a common spacing before patches are cropped:
+
+```console
+misfit_train \
+    --index          /data/index.parquet \
+    --results        /runs/pretrain \
+    --model          resenc \
+    --patch-size     160 160 160 \
+    --target-spacing 1 1 1
+```
+
+With a target spacing, `--patch-size` is in voxels at that spacing, so
+`--patch-size 160 160 160 --target-spacing 1 1 1` is always a 16 cm cube.
+
+- **Resampling is on the fly.** Each volume is normalized, cropped to its
+  foreground box, then trilinearly resampled, so only the foreground is
+  interpolated. Expect somewhat higher data-loading cost than at native
+  resolution; raise `--num-cpu-workers` if the GPU waits on data.
+- **Everything downstream follows.** The value is saved in `config.json` under
+  `spatial_config.target_spacing` (`null` = native resolution), and
+  `misfit_evaluate`, `misfit_inspect`, `misfit_encode`, and `misfit_embed`
+  resample the same way. `misfit_inspect` maps its reconstructions back to each
+  volume's native grid, so they overlay on the input NIfTI.
+- **MIST reads it.** `spatial_config` uses the same keys as MIST's own
+  `config.json`, so `mist_train --pretrained-config <misfit>/config.json`
+  compares the pretraining patch size and spacing with MIST's. For the best
+  transfer, pretrain at the spacing MIST will train at.
+- **ResEnc plans its topology from it**, so an anisotropic target spacing (e.g.
+  `0.8 0.8 3`) gives the same stage layout MIST would plan for that data.
 
 ---
 
@@ -214,6 +375,33 @@ paper and works well for 3D medical images.
 Higher mask ratios force the model to learn longer-range spatial dependencies;
 lower ratios make the reconstruction task easier and may be preferable for
 datasets with complex, fine-grained anatomy where local context is important.
+
+---
+
+## Normalization Policies
+
+`--normalization-policy` sets how each volume's intensities are normalized
+before it reaches the model. It is saved to `config.json`
+(`data.normalization_policy`), applied by every command that reads volumes
+(training, `misfit_evaluate`, `misfit_inspect`, `misfit_encode`,
+`misfit_embed`), and cannot change on `--resume`.
+
+| Policy           | `--normalization-policy` | Description                                                                                                                                              |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Clip and z-score | `clip_and_z_score`       | Clip to the foreground's 1st–99th percentiles, then z-score with the foreground mean and std (precomputed by `misfit_index`). Default.                   |
+| Z-score only     | `z_score_only`           | Z-score with the mean and std of the volume's nonzero bounding box, without clipping or a foreground mask. nnssl's normalization, used for nnFoundation. |
+
+`clip_and_z_score` suits mixed CT and MRI corpora: clipping removes outliers
+(metal, bias, hotspots) without modality-specific rules, and foreground
+statistics keep background from dominating. Use `z_score_only` with nnssl
+checkpoints such as nnFoundation, so they see the input distribution they were
+pretrained on; see [Starting from nnFoundation](#starting-from-nnfoundation).
+Configs from before this option count as `clip_and_z_score`.
+
+To add a policy, subclass `NormalizationPolicy` in
+`misfit/normalization/policies.py` and register it with
+`@register_normalization_policy("name")`. `normalize` returns the normalized
+volume and the affine map it applied, which `misfit_inspect` inverts.
 
 ---
 
@@ -251,10 +439,12 @@ very different intensity distributions.
 | Polynomial | `polynomial`     | Polynomial decay.                                      |
 | Constant   | `constant`       | No decay; learning rate stays at `--learning-rate`.    |
 
-All schedulers support a **linear warmup** phase controlled by
-`--warmup-epochs`. During warmup the learning rate increases linearly from 0 to
-`--learning-rate`. A warmup of 20 epochs is recommended for SwinMAE — skipping
-warmup can cause instability in the early stages of training.
+Schedulers are updated every optimizer step, over the whole run of `--epochs` ×
+`--steps-per-epoch` steps. All schedulers support a **linear warmup** phase
+controlled by `--warmup-epochs` (default 50). During warmup the learning rate
+increases linearly from 1% of `--learning-rate` to `--learning-rate`. Skipping
+warmup can cause instability in the early stages of training, especially for
+SwinMAE.
 
 ---
 
@@ -323,7 +513,7 @@ Multi-pod `Job`s set `--nnodes` / `--node_rank` / `--master_addr` /
 
 ### If a multi-GPU run hangs at startup
 
-MISFIT pins each rank to its own GPU before initialising the process group, so
+MISFIT pins each rank to its own GPU before initializing the process group, so
 the common "every rank piled onto `cuda:0`" hang does not apply. If a run still
 stalls at startup and (after ~10 minutes) dies with a NCCL collective-timeout
 (`Watchdog caught collective operation timeout`), the cause is GPU-to-GPU
@@ -461,6 +651,12 @@ whenever the validation loss improves. This file contains encoder weights with
 keys remapped from `encoder.*` to `model.swinViT.*` — the format MIST's
 SwinUNETR expects — so no manual export step is required.
 
+MISFIT depends on MIST (`mist-medical`, installed automatically) and builds its
+encoder from MIST's own SwinUNETR-V2 model, so the pretrained encoder is the
+exact module MIST fine-tunes. MISFIT's test suite checks that every
+`swinunetr-*` encoder's keys and shapes match MIST's and load with nothing
+skipped.
+
 ```text
 results/
     models/
@@ -471,9 +667,9 @@ results/
 ### Fine-tuning in MIST
 
 Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
-architecture variant must match the one used during MISFIT pretraining — both
-tools use the same variant names (`swinunetr-small`, `swinunetr-base`,
-`swinunetr-large`) with identical `feature_size` values:
+architecture must match the one used during MISFIT pretraining — both tools use
+the same names (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
+`resenc`) for the same networks:
 
 ```console
 mist_train \
@@ -491,7 +687,7 @@ MISFIT trains on single-channel images. MIST tasks are often multi-channel
 `--input-channel-strategy` flag controls how the single-channel patch embedding
 is adapted to the multi-channel model:
 
-| Strategy  | Behaviour                                                                                |
+| Strategy  | Behavior                                                                                 |
 | --------- | ---------------------------------------------------------------------------------------- |
 | `average` | Average source channels to one, then tile to match the target channel count. _(default)_ |
 | `first`   | Use only the first source channel, then tile to match the target channel count.          |
@@ -526,7 +722,7 @@ annotated cases is small relative to the model capacity.
 
 <!-- prettier-ignore -->
 !!! note
-    MISFIT encoder weights are only compatible with MIST's SwinUNETR
-    architectures (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`).
-    Other MIST architectures (nnUNet, MedNeXt, FMG-Net, W-Net) have different
-    encoder structures and are not compatible with MISFIT checkpoints.
+    MISFIT encoder weights are compatible with the MIST architectures MISFIT
+    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`, and
+    `resenc`. Other MIST architectures (nnUNet, MedNeXt, Primus, FMG-Net,
+    W-Net) are not yet available in MISFIT.

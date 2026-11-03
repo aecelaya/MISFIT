@@ -4,13 +4,13 @@
 class ReconstructionMetricsConstants:
     """Constants for reconstruction metric computation.
 
-    All metrics operate on z-score normalised volumes (mean 0, std 1 over
+    All metrics operate on z-score normalized volumes (mean 0, std 1 over
     the foreground), so intensity values are not bounded to [0, 1].  The
-    SSIM data range is therefore set to the expected spread of normalised
+    SSIM data range is therefore set to the expected spread of normalized
     intensities rather than a fixed [0, 1] window.
     """
 
-    # Expected intensity range for SSIM after clip + z-score normalisation.
+    # Expected intensity range for SSIM after clip + z-score normalization.
     # With p1/p99 clipping the range is approximately [-3, 3].
     SSIM_DATA_RANGE: float = 6.0
 

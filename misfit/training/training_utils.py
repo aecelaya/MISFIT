@@ -54,10 +54,10 @@ def build_accumulation_plan(
     schedule gets wrong on the trailing partial window:
 
     1. The **final batch always closes its window** (``is_window_end=True``).
-       Under DDP the closing micro-step runs with gradient synchronisation, so
+       Under DDP the closing micro-step runs with gradient synchronization, so
        the optimizer never steps on un-all-reduced gradients (which would let
        ranks silently diverge).
-    2. Each window's loss is normalised by its **actual** size, so the trailing
+    2. Each window's loss is normalized by its **actual** size, so the trailing
        window of ``num_batches % accum_steps`` micro-steps is scaled correctly
        rather than by the full ``accum_steps``.
 

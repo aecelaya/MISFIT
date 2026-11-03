@@ -3,47 +3,24 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 
 import misfit.models  # noqa: F401 — trigger model registrations
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_model_weights
+from misfit.normalization.base import IntensityScale
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy,
+)
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 
 def get_default_device() -> str:
     """Return the default inference device (CUDA if available, else CPU)."""
     return "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def get_row_spacing(
-    row,
-    device: str | torch.device | None = None,
-) -> torch.Tensor | None:
-    """Build a ``(1, 3)`` voxel-spacing tensor from an index row.
-
-    The model conditions its decoder on physical voxel spacing during
-    training (see ``SwinMAE.forward``), so inference and evaluation must pass
-    the same spacing to reproduce the reconstruction faithfully — otherwise
-    the decoder receives an out-of-distribution bottleneck.
-
-    Args:
-        row: A row from the metadata index (pandas Series / mapping) that may
-            contain ``spacing_d``, ``spacing_h``, and ``spacing_w`` columns.
-        device: Target device for the returned tensor.
-
-    Returns:
-        ``(1, 3)`` float32 tensor of ``(spacing_d, spacing_h, spacing_w)``, or
-        ``None`` if the row lacks any spacing column (older indexes).
-    """
-    cols = ("spacing_d", "spacing_h", "spacing_w")
-    if not all(c in row for c in cols):
-        return None
-    spacing = torch.tensor(
-        [[float(row[c]) for c in cols]], dtype=torch.float32
-    )
-    if device is not None:
-        spacing = spacing.to(device)
-    return spacing
 
 
 def load_checkpoint(
@@ -54,11 +31,13 @@ def load_checkpoint(
 
     Args:
         checkpoint_path: Path to a ``.pt`` checkpoint produced by
-            :class:`~misfit.training.trainers.mae_trainer.MAETrainer`.
+            :class:`~misfit.training.trainers.mae_trainer.MAETrainer`, or an
+            nnssl checkpoint such as nnFoundationCNN's ``checkpoint_final.pth``
+            (see :mod:`misfit.models.pretrained`).
         device: Target device. Defaults to :func:`get_default_device`.
 
     Returns:
-        Checkpoint dictionary with keys ``model``, ``epoch``, etc.
+        Checkpoint dictionary (for MISFIT: keys ``model``, ``epoch``, etc.).
     """
     device = device or get_default_device()
     return torch.load(
@@ -72,6 +51,7 @@ def build_model_from_checkpoint(
     checkpoint: dict,
     model_config: dict,
     device: str | torch.device | None = None,
+    target_spacing: tuple[float, float, float] | None = None,
 ) -> nn.Module:
     """Reconstruct a model from a model config dict and load checkpoint weights.
 
@@ -81,6 +61,10 @@ def build_model_from_checkpoint(
             ``config.json``).  Must contain ``architecture``, ``patch_size``,
             ``mask_patch_size``, and ``mask_ratio``.
         device: Target device. Defaults to :func:`get_default_device`.
+        target_spacing: The run's target spacing
+            (:func:`misfit.utils.resampling.get_target_spacing`), or None for
+            native resolution. Architectures that plan their topology from the
+            spacing (ResEnc) need it to rebuild the trained network.
 
     Returns:
         Model in eval mode with checkpoint weights loaded.
@@ -93,37 +77,40 @@ def build_model_from_checkpoint(
         img_size=tuple(model_config["patch_size"]),
         mask_patch_size=model_config["mask_patch_size"],
         mask_ratio=model_config["mask_ratio"],
+        target_spacing=target_spacing,
     )
-    model.load_state_dict(checkpoint["model"])
+    load_model_weights(model, checkpoint)
     model.to(device)
     model.eval()
     return model
 
 
-def load_and_normalise(
-    nifti_path: str | Path,
-    p1: float,
-    p99: float,
-    fg_mean: float,
-    fg_std: float,
-    eps: float = 1e-8,
-) -> np.ndarray | None:
-    """Load a NIfTI volume and apply clip + z-score normalisation.
+def load_and_normalize(
+    row: pd.Series,
+    normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
+    target_spacing: tuple[float, float, float] | None = None,
+    return_scale: bool = False,
+) -> np.ndarray | tuple[np.ndarray, IntensityScale] | None:
+    """Load an indexed NIfTI volume, normalize it, and resample it.
 
     Args:
-        nifti_path: Path to a ``.nii`` or ``.nii.gz`` file.
-        p1: 1st-percentile foreground intensity (lower clip bound).
-        p99: 99th-percentile foreground intensity (upper clip bound).
-        fg_mean: Foreground mean after clipping.
-        fg_std: Foreground standard deviation after clipping.
-        eps: Minimum value for fg_std to avoid division by zero.
+        row: The volume's row from the misfit_index Parquet index (its
+            ``path``, normalization statistics, and spacing).
+        normalization_policy: The run's normalization policy
+            (``config.json`` ``data.normalization_policy``). Defaults to
+            ``clip_and_z_score``.
+        target_spacing: Resample the normalized volume to this spacing, as
+            training did. None (default) keeps the native resolution.
+        return_scale: Also return the :class:`IntensityScale` applied, to
+            map outputs back to raw intensities. Defaults to False.
 
     Returns:
-        Float32 numpy array of shape (D, H, W), or None if the file cannot
-        be read.
+        Float32 numpy array of shape (X, Y, Z) — at target_spacing when set —
+        plus its IntensityScale when ``return_scale`` is True; or None if the
+        file cannot be read.
     """
     try:
-        img = nib.load(nifti_path)
+        img = nib.load(row["path"])
         data = np.asarray(img.dataobj, dtype=np.float32)
     except Exception:  # pylint: disable=broad-except
         return None
@@ -131,9 +118,10 @@ def load_and_normalise(
     if data.ndim == 4:
         data = data[..., 0]
 
-    data = np.clip(data, p1, p99)
-    data = (data - fg_mean) / max(fg_std, eps)
-    return data
+    data, scale = get_normalization_policy(normalization_policy).normalize(data, row)
+    if target_spacing is not None:
+        data = resample_to_spacing(data, get_row_spacing(row), target_spacing)
+    return (data, scale) if return_scale else data
 
 
 def pad_to_multiple(

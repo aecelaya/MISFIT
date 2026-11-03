@@ -17,10 +17,17 @@ training via torchrun. The same code runs in all three configurations:
 Distributed setup is torchrun-native: RANK, LOCAL_RANK, and WORLD_SIZE are
 read from environment variables set by torchrun. No mp.spawn is used, making
 multi-node training straightforward.
+
+Training is step-based: an epoch is a fixed ``--steps-per-epoch`` optimizer
+steps, not a pass over the data, so the LR schedule (stepped every optimizer
+step), validation, logging, and checkpoints run on the same cadence whatever
+the corpus size.
 """
 import argparse
 import os
-from contextlib import nullcontext
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import torch
@@ -37,6 +44,11 @@ from misfit.data_loading.dataloader import (
 )
 from misfit.loss_functions.loss_registry import get_loss
 from misfit.models.model_registry import get_model_from_registry
+from misfit.models.pretrained import load_pretrained_weights
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy_name,
+)
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
@@ -56,6 +68,17 @@ from misfit.utils import (
     resolve_amp,
     write_json_file,
 )
+from misfit.utils.resampling import get_target_spacing
+
+
+def _spacing_list(spacing: tuple[float, ...] | None) -> list[float] | None:
+    """JSON form of a target spacing: a list, or None for native resolution."""
+    return None if spacing is None else list(spacing)
+
+
+def _spacing_repr(spacing: tuple[float, ...] | None) -> str:
+    """Human-readable target spacing for error messages."""
+    return "native resolution (none)" if spacing is None else repr(list(spacing))
 
 
 class MAETrainer:
@@ -101,7 +124,7 @@ class MAETrainer:
     # ------------------------------------------------------------------
 
     def _setup_distributed(self) -> None:
-        """Initialise the process group (torchrun-native).
+        """Initialize the process group (torchrun-native).
 
         Pins this rank to its own GPU with ``torch.cuda.set_device`` *before*
         ``dist.init_process_group``, and passes ``device_id`` explicitly.
@@ -122,13 +145,13 @@ class MAETrainer:
                 init_kwargs["device_id"] = torch.device("cuda", self.local_rank)
             dist.init_process_group(backend=backend, **init_kwargs)
 
-    def _enable_cudnn_optimisations(self) -> None:
+    def _enable_cudnn_optimizations(self) -> None:
         if not self.use_cuda:
             return
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
-    def _warn_if_underutilising_gpus(self) -> None:
+    def _warn_if_underutilizing_gpus(self) -> None:
         """Warn when multiple GPUs are visible but we are not under torchrun.
 
         MISFIT has no mp.spawn fallback: without torchrun, WORLD_SIZE is 1 and
@@ -152,6 +175,15 @@ class MAETrainer:
     # Component builders
     # ------------------------------------------------------------------
 
+    def _target_spacing(self) -> tuple[float, float, float] | None:
+        """``--target-spacing`` as a tuple, or None for native resolution."""
+        spacing = getattr(self.args, "target_spacing", None)
+        return None if spacing is None else tuple(float(s) for s in spacing)
+
+    def _normalization_policy(self) -> str:
+        """``--normalization-policy``, defaulting for hand-built args."""
+        return getattr(self.args, "normalization_policy", DEFAULT_NORMALIZATION_POLICY)
+
     def _build_model(self) -> nn.Module:
         model = get_model_from_registry(
             self.args.model,
@@ -159,7 +191,18 @@ class MAETrainer:
             img_size=tuple(self.args.patch_size),
             mask_patch_size=self.args.mask_patch_size,
             mask_ratio=self.args.mask_ratio,
+            target_spacing=self._target_spacing(),
         )
+        # On --resume the checkpoint supplies the weights, so --init-weights
+        # only seeds a fresh run. Every rank loads the same file before DDP
+        # wrapping (DDP would broadcast rank 0's weights anyway).
+        init_weights = getattr(self.args, "init_weights", None)
+        if init_weights is not None and not self.args.resume:
+            load_pretrained_weights(model, init_weights)
+            if self.is_main:
+                console.print(
+                    f"[bold]Initialized[/bold] {self.args.model} from '{init_weights}'"
+                )
         model = model.to(self.device)
         if self.is_distributed:
             model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -189,11 +232,13 @@ class MAETrainer:
     def _build_scheduler(
         self, optimizer: torch.optim.Optimizer
     ) -> torch.optim.lr_scheduler.LRScheduler:
+        """Per-optimizer-step schedule over the whole run."""
+        steps_per_epoch = self.args.steps_per_epoch
         return get_lr_scheduler(
             name=self.args.lr_scheduler,
             optimizer=optimizer,
-            epochs=self.args.epochs,
-            warmup_epochs=self.args.warmup_epochs,
+            total_steps=self.args.epochs * steps_per_epoch,
+            warmup_steps=self.args.warmup_epochs * steps_per_epoch,
         )
 
     # ------------------------------------------------------------------
@@ -208,16 +253,16 @@ class MAETrainer:
         optimizer: torch.optim.Optimizer,
         window_size: int = 1,
         is_last_accum: bool = True,
-    ) -> float:
+    ) -> tuple[float, float | None]:
         """Forward + backward for one micro-batch; optimizer step on last accumulation.
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model.
-            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
+            batch: Dict with "image" (B, 1, D, H, W).
             criterion: Reconstruction loss function.
             optimizer: Optimizer instance.
             window_size: Number of micro-steps in the current accumulation
-                window; the loss is divided by this to normalise gradient
+                window; the loss is divided by this to normalize gradient
                 magnitude. Use the window's actual size (which may be smaller
                 than accum_steps for the trailing window of an epoch).
             is_last_accum: When True, performs the optimizer step and gradient
@@ -227,21 +272,21 @@ class MAETrainer:
                 micro-step of each accumulation window.
 
         Returns:
-            Un-scaled scalar loss for this micro-batch (before 1/window_size
-            normalisation), for logging purposes.
+            Tuple of the un-scaled scalar loss for this micro-batch (before
+            1/window_size normalization), for logging, and the total gradient
+            norm before clipping (None when no optimizer step was taken).
         """
         images = batch["image"].to(self.device, non_blocking=True)
-        spacing = batch["spacing"].to(self.device, non_blocking=True)
 
         amp_ctx = autocast_context(self.amp)
-        # Skip all-reduce on non-final micro-steps to avoid premature synchronisation.
+        # Skip all-reduce on non-final micro-steps to avoid premature synchronization.
         sync_ctx = (
             model.no_sync()
             if (self.is_distributed and not is_last_accum)
             else nullcontext()
         )
         with sync_ctx, amp_ctx:
-            output = model(images, spacing=spacing)
+            output = model(images)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
@@ -249,11 +294,14 @@ class MAETrainer:
             ) / window_size
 
         loss.backward()
+        grad_norm = None
         if is_last_accum:
-            nn.utils.clip_grad_norm_(model.parameters(), tc.GRAD_CLIP_VALUE)
+            grad_norm = nn.utils.clip_grad_norm_(
+                model.parameters(), tc.GRAD_CLIP_VALUE
+            ).item()
             optimizer.step()
 
-        return loss.item() * window_size  # un-scaled for logging
+        return loss.item() * window_size, grad_norm  # un-scaled for logging
 
     def _validation_step(
         self,
@@ -265,23 +313,37 @@ class MAETrainer:
 
         Args:
             model: The (possibly DDP-wrapped) SwinMAE model in eval mode.
-            batch: Dict with "image" (B, 1, D, H, W) and "spacing" (B, 3).
+            batch: Dict with "image" (B, 1, D, H, W).
             criterion: Reconstruction loss function.
 
         Returns:
             Scalar loss value for this batch.
         """
         images = batch["image"].to(self.device, non_blocking=True)
-        spacing = batch["spacing"].to(self.device, non_blocking=True)
         amp_ctx = autocast_context(self.amp)
         with torch.no_grad(), amp_ctx:
-            output = model(images, spacing=spacing)
+            output = model(images)
             loss = criterion(
                 reconstruction=output["reconstruction"],
                 target=images,
                 mask=output["mask"],
             )
         return loss.item()
+
+    @contextmanager
+    def _fixed_validation_rng(self) -> Iterator[None]:
+        """Seed the RNG for validation, then restore the training RNG.
+
+        MAE masks are drawn at random, so without this every validation pass
+        would score a different set of masks. Reseeding identically each time
+        gives every pass the same masks on the same volumes, so changes in
+        val loss reflect the model, not mask luck. ``fork_rng`` restores the
+        training RNG afterwards, so validation doesn't perturb training.
+        """
+        devices = [self.device] if self.device.type == "cuda" else []
+        with torch.random.fork_rng(devices=devices):
+            torch.manual_seed(self.args.seed + self.rank)
+            yield
 
     # ------------------------------------------------------------------
     # Distributed loss aggregation
@@ -311,15 +373,21 @@ class MAETrainer:
         global_step: int,
         best_val_loss: float,
         path: Path,
+        step_in_epoch: int = 0,
     ) -> None:
         """Atomically write a training checkpoint (rank 0 only).
 
         Writes to a .tmp file first then renames, so the checkpoint file is
         never in a partially-written state.
+
+        ``epoch`` is the epoch to resume in and ``step_in_epoch`` the
+        optimizer steps of it already done: an end-of-epoch checkpoint
+        stores ``(epoch + 1, 0)``, a mid-epoch one ``(epoch, steps_done)``.
         """
         raw_model = model.module if self.is_distributed else model
         checkpoint = {
             "epoch":         epoch,
+            "step_in_epoch": step_in_epoch,
             "global_step":   global_step,
             "best_val_loss": best_val_loss,
             "model":         raw_model.state_dict(),
@@ -336,18 +404,18 @@ class MAETrainer:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
         path: Path,
-    ) -> tuple[int, int, float]:
+    ) -> tuple[int, int, int, float]:
         """Load a checkpoint and restore all training state.
 
         Args:
             path: Checkpoint file path.
 
         Returns:
-            Tuple of (start_epoch, global_step, best_val_loss).
-            Returns (0, 0, inf) if the checkpoint does not exist.
+            Tuple of (start_epoch, step_in_epoch, global_step, best_val_loss).
+            Returns (0, 0, 0, inf) if the checkpoint does not exist.
         """
         if not path.exists():
-            return 0, 0, float("inf")
+            return 0, 0, 0, float("inf")
 
         checkpoint = torch.load(
             path, map_location=self.device, weights_only=True
@@ -359,6 +427,7 @@ class MAETrainer:
 
         return (
             checkpoint["epoch"],
+            checkpoint["step_in_epoch"],
             checkpoint["global_step"],
             checkpoint["best_val_loss"],
         )
@@ -368,13 +437,14 @@ class MAETrainer:
     # ------------------------------------------------------------------
 
     def _build_config(self) -> dict:
-        """Serialise current training args to a reproducibility config dict."""
+        """Serialize current training args to a reproducibility config dict."""
         import misfit
         from misfit.metrics.metrics_registry import DEFAULT_METRICS
         return {
             "misfit_version": misfit.__version__,
             "data": {
                 "index": str(self.args.index),
+                "normalization_policy": self._normalization_policy(),
             },
             "model": {
                 "architecture":    self.args.model,
@@ -382,8 +452,16 @@ class MAETrainer:
                 "mask_patch_size": self.args.mask_patch_size,
                 "mask_ratio":      self.args.mask_ratio,
             },
+            # Same section and keys as MIST's config.json, so MIST reads them
+            # directly from --pretrained-config. target_spacing is null for
+            # native-resolution (non-resampled) pretraining.
+            "spatial_config": {
+                "patch_size":     list(self.args.patch_size),
+                "target_spacing": _spacing_list(self._target_spacing()),
+            },
             "training": {
-                "epochs":        self.args.epochs,
+                "epochs":          self.args.epochs,
+                "steps_per_epoch": self.args.steps_per_epoch,
                 "batch_size":    self.args.batch_size,
                 "optimizer":     self.args.optimizer,
                 "learning_rate": self.args.learning_rate,
@@ -395,6 +473,10 @@ class MAETrainer:
                 "seed":                       self.args.seed,
                 "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
                 "bucket_cap_mb":              self.args.bucket_cap_mb,
+                "val_every":                  self.args.val_every,
+                "val_volumes":                self.args.val_volumes,
+                "checkpoint_minutes":         self.args.checkpoint_minutes,
+                "init_weights":               getattr(self.args, "init_weights", None),
             },
             "evaluation": {
                 metric: {} for metric in DEFAULT_METRICS
@@ -423,6 +505,17 @@ class MAETrainer:
         produce nonsensical results.  Soft mismatches (different
         hyperparameters) emit warnings but allow training to continue.
         """
+        # Runs from before step-based training stored per-epoch scheduler
+        # state and pass-over-the-data epochs; their checkpoints can't be
+        # continued under the per-step schedule.
+        saved_training = saved_config.get("training")
+        if saved_training is not None and "steps_per_epoch" not in saved_training:
+            raise ValueError(
+                "Cannot resume: this run predates step-based training (its "
+                "config.json has no 'training.steps_per_epoch'). Start a new "
+                "run in a fresh --results directory, or use --overwrite."
+            )
+
         # Fields that are not safe to change on resume.
         immutable = [
             ("model", "architecture",    self.args.model),
@@ -438,9 +531,35 @@ class MAETrainer:
                     "Use --overwrite to start fresh."
                 )
 
+        # The target spacing is None (null) for native-resolution runs, so a
+        # missing value is meaningful here, unlike the fields above. Configs
+        # without a spatial_config section predate --target-spacing and ran at
+        # native resolution.
+        saved_spacing = get_target_spacing(saved_config)
+        current_spacing = self._target_spacing()
+        if saved_spacing != current_spacing:
+            raise ValueError(
+                "Cannot resume: 'spatial_config.target_spacing' changed from "
+                f"{_spacing_repr(saved_spacing)} to "
+                f"{_spacing_repr(current_spacing)}.  Pass the original "
+                "--target-spacing, or use --overwrite to start fresh."
+            )
+
+        # The policy changes the input distribution the model learns, so it is
+        # fixed for a run. Configs without one used clip_and_z_score.
+        saved_policy = get_normalization_policy_name(saved_config)
+        if saved_policy != self._normalization_policy():
+            raise ValueError(
+                "Cannot resume: 'data.normalization_policy' changed from "
+                f"{saved_policy!r} to {self._normalization_policy()!r}.  Pass "
+                "the original --normalization-policy, or use --overwrite to "
+                "start fresh."
+            )
+
         # Fields that are allowed to change but deserve a warning.
         soft = [
             ("training", "epochs",        self.args.epochs),
+            ("training", "steps_per_epoch", self.args.steps_per_epoch),
             ("training", "batch_size",    self.args.batch_size),
             ("training", "optimizer",     self.args.optimizer),
             ("training", "learning_rate", self.args.learning_rate),
@@ -450,6 +569,9 @@ class MAETrainer:
             ("training", "loss",                         self.args.loss),
             ("training", "gradient_accumulation_steps",  self.args.gradient_accumulation_steps),
             ("training", "bucket_cap_mb",                self.args.bucket_cap_mb),
+            ("training", "val_every",                    self.args.val_every),
+            ("training", "val_volumes",                  self.args.val_volumes),
+            ("training", "checkpoint_minutes",           self.args.checkpoint_minutes),
         ]
         for section, key, current in soft:
             saved = saved_config.get(section, {}).get(key)
@@ -514,7 +636,7 @@ class MAETrainer:
             if self.is_main:
                 self._write_results_skeleton(results_dir, config_path)
                 console.print(
-                    f"[bold]Initialised[/bold] '{results_dir}' — wrote "
+                    f"[bold]Initialized[/bold] '{results_dir}' — wrote "
                     f"config.json (amp={self.amp}) without training. Edit it "
                     "if needed, then rerun with --resume to pick up edits."
                 )
@@ -526,9 +648,9 @@ class MAETrainer:
                 "for testing and debugging; MAE pretraining on CPU is very slow."
             )
 
-        self._warn_if_underutilising_gpus()
+        self._warn_if_underutilizing_gpus()
         self._setup_distributed()
-        self._enable_cudnn_optimisations()
+        self._enable_cudnn_optimizations()
         set_seed(self.args.seed, self.rank)
 
         # --- Build components ---
@@ -538,13 +660,22 @@ class MAETrainer:
         scheduler = self._build_scheduler(optimizer)
 
         # --- Data loaders ---
+        # Each epoch is steps_per_epoch optimizer steps of accum micro-batches
+        # per rank, so the training loader draws exactly that many samples.
+        steps_per_epoch = self.args.steps_per_epoch
+        accum_steps = self.args.gradient_accumulation_steps
+        samples_per_step = accum_steps * self.args.batch_size
         train_loader = get_training_dataloader(
             index_path=self.args.index,
             patch_size=tuple(self.args.patch_size),
             batch_size=self.args.batch_size,
             num_workers=self.args.num_cpu_workers,
-            distributed=self.is_distributed,
+            samples_per_epoch=steps_per_epoch * samples_per_step,
+            rank=self.rank,
+            world_size=self.world_size,
             seed=self.args.seed,
+            target_spacing=self._target_spacing(),
+            normalization_policy=self._normalization_policy(),
         )
         val_loader = get_validation_dataloader(
             index_path=self.args.index,
@@ -553,6 +684,9 @@ class MAETrainer:
             num_workers=max(self.args.num_cpu_workers // 2, 1),
             distributed=self.is_distributed,
             seed=self.args.seed,
+            target_spacing=self._target_spacing(),
+            max_volumes=self.args.val_volumes,
+            normalization_policy=self._normalization_policy(),
         )
 
         # --- Output directories (rank 0 creates, then barrier) ---
@@ -569,19 +703,23 @@ class MAETrainer:
 
         # --- Optionally resume ---
         start_epoch = 0
+        start_step = 0
         global_step = 0
         best_val_loss = float("inf")
         if self.args.resume:
-            start_epoch, global_step, best_val_loss = self._load_checkpoint(
-                model, optimizer, scheduler, checkpoint_path
+            start_epoch, start_step, global_step, best_val_loss = (
+                self._load_checkpoint(model, optimizer, scheduler, checkpoint_path)
             )
             if self.is_main:
                 console.print(
-                    f"[bold]Resumed from epoch {start_epoch} "
+                    f"[bold]Resumed at epoch {start_epoch + 1}, step "
+                    f"{start_step}/{steps_per_epoch} "
                     f"(best val loss: {format_loss(best_val_loss)})[/bold]"
                 )
 
         # --- TensorBoard (rank 0 only) ---
+        # Every scalar is logged against global_step (optimizer steps), so
+        # curves line up across runs with different --steps-per-epoch.
         writer: SummaryWriter | None = (
             SummaryWriter(str(logs_dir)) if self.is_main else None
         )
@@ -593,24 +731,32 @@ class MAETrainer:
                 f"model={self.args.model}  "
                 f"world_size={self.world_size}  "
                 f"epochs={self.args.epochs}  "
+                f"steps_per_epoch={steps_per_epoch}  "
                 f"amp={self.amp}\n"
             )
 
+        checkpoint_interval = self.args.checkpoint_minutes * 60
+        last_checkpoint_time = time.monotonic()
+
         for epoch in range(start_epoch, self.args.epochs):
-            # Required for DistributedSampler to re-shuffle each epoch.
-            if self.is_distributed:
-                train_loader.sampler.set_epoch(epoch)
+            # A mid-epoch resume skips the samples the interrupted epoch had
+            # already consumed, continuing its (deterministic) sample order.
+            first_step = start_step if epoch == start_epoch else 0
+            train_loader.sampler.set_epoch(
+                epoch, start=first_step * samples_per_step
+            )
 
             # ---- Training ----
             model.train()
             train_meter = RunningMean()
+            step_in_epoch = first_step
+            epoch_start_time = time.monotonic()
 
-            accum_steps = self.args.gradient_accumulation_steps
-            # Per-batch (window_size, is_window_end). The plan forces the final
-            # batch of the epoch to close its window, so its gradients are
-            # synced and stepped instead of being left under no_sync() (which
-            # silently desynchronises ranks); it also scales the trailing
-            # partial window by its actual size.
+            # Per-batch (window_size, is_window_end). Every window is full
+            # here (the loader yields a whole number of windows), but the plan
+            # still guarantees the final batch closes its window, so its
+            # gradients are synced and stepped instead of being left under
+            # no_sync() (which silently desynchronizes ranks).
             plan = build_accumulation_plan(len(train_loader), accum_steps)
             progress_ctx = (
                 TrainProgressBar(
@@ -626,82 +772,123 @@ class MAETrainer:
                 for (window_size, is_window_end), batch in zip(
                     plan, train_loader, strict=True
                 ):
-                    step_loss = self._training_step(
+                    step_loss, grad_norm = self._training_step(
                         model, batch, criterion, optimizer,
                         window_size=window_size, is_last_accum=is_window_end,
                     )
                     accum_loss += step_loss
-                    if is_window_end:
-                        agg_loss = self._aggregate_loss(accum_loss / window_size)
-                        train_meter.update(agg_loss)
-                        global_step += 1
-                        accum_loss = 0.0
-                        optimizer.zero_grad()
-                        # A fresh cross-rank-aggregated loss is only available
-                        # at a window end; mid-window micro-steps (accum > 1)
-                        # just advance the bar (see TrainProgressBar.update).
+                    if not is_window_end:
+                        # Mid-window micro-steps (accum > 1) just advance the
+                        # bar; a fresh cross-rank loss only exists at a window
+                        # end (see TrainProgressBar.update).
                         if self.is_main and pb is not None:
-                            pb.update(
-                                loss=train_meter.value,
-                                lr=optimizer.param_groups[0]["lr"],
+                            pb.update()
+                        continue
+
+                    # The LR this step was taken with, before the per-step
+                    # schedule advances it.
+                    lr = optimizer.param_groups[0]["lr"]
+                    scheduler.step()
+                    agg_loss = self._aggregate_loss(accum_loss / window_size)
+                    train_meter.update(agg_loss)
+                    global_step += 1
+                    step_in_epoch += 1
+                    accum_loss = 0.0
+                    optimizer.zero_grad()
+
+                    if self.is_main:
+                        pb.update(loss=train_meter.value, lr=lr)
+                        writer.add_scalar("loss/train_step", agg_loss, global_step)
+                        writer.add_scalar("lr", lr, global_step)
+                        writer.add_scalar("grad_norm", grad_norm, global_step)
+
+                        # Mid-epoch checkpoint for preemption. Rank 0 alone
+                        # decides and saves; other ranks just carry on, so no
+                        # collective is needed. The epoch-end save below
+                        # covers the last step.
+                        now = time.monotonic()
+                        if (step_in_epoch < steps_per_epoch
+                                and now - last_checkpoint_time >= checkpoint_interval):
+                            self._save_checkpoint(
+                                model, optimizer, scheduler,
+                                epoch, global_step, best_val_loss,
+                                checkpoint_path, step_in_epoch=step_in_epoch,
                             )
-                    elif self.is_main and pb is not None:
-                        pb.update()
+                            last_checkpoint_time = now
 
-            scheduler.step()
+            epoch_seconds = time.monotonic() - epoch_start_time
+            epoch_steps = step_in_epoch - first_step
 
-            # ---- Validation ----
-            if self.is_distributed:
-                dist.barrier()
-
-            model.eval()
-            val_meter = RunningMean()
-
-            val_progress_ctx = (
-                ValidationProgressBar(val_steps=len(val_loader))
-                if self.is_main else nullcontext()
+            # ---- Validation (every val_every epochs, and after the last) ----
+            run_validation = (
+                (epoch + 1) % self.args.val_every == 0
+                or epoch + 1 == self.args.epochs
             )
-            with val_progress_ctx as vpb:
-                for batch in val_loader:
-                    step_loss = self._validation_step(model, batch, criterion)
-                    step_loss = self._aggregate_loss(step_loss)
-                    val_meter.update(step_loss)
-                    if self.is_main and vpb is not None:
-                        vpb.update(loss=val_meter.value)
+            val_loss: float | None = None
+            if run_validation:
+                if self.is_distributed:
+                    dist.barrier()
+
+                model.eval()
+                val_meter = RunningMean()
+
+                val_progress_ctx = (
+                    ValidationProgressBar(val_steps=len(val_loader))
+                    if self.is_main else nullcontext()
+                )
+                with val_progress_ctx as vpb, self._fixed_validation_rng():
+                    for batch in val_loader:
+                        step_loss = self._validation_step(model, batch, criterion)
+                        step_loss = self._aggregate_loss(step_loss)
+                        val_meter.update(step_loss)
+                        if self.is_main and vpb is not None:
+                            vpb.update(loss=val_meter.value)
+                val_loss = val_meter.value
 
             # ---- Logging & checkpointing (rank 0 only) ----
+            # lr is still the last step's LR, matching the progress bar.
             if self.is_main:
-                lr = optimizer.param_groups[0]["lr"]
+                steps_per_sec = epoch_steps / max(epoch_seconds, 1e-9)
+                samples_per_sec = steps_per_sec * samples_per_step * self.world_size
 
-                if writer is not None:
-                    writer.add_scalar("loss/train", train_meter.value, epoch)
-                    writer.add_scalar("loss/val",   val_meter.value,   epoch)
-                    writer.add_scalar("lr",          lr,                epoch)
-                    writer.flush()
-
-                improved = val_meter.value < best_val_loss
-                status = (
-                    f"[green]↓ {format_loss(best_val_loss)} → "
-                    f"{format_loss(val_meter.value)}[/green]"
-                    if improved
-                    else f"[dim](best: {format_loss(best_val_loss)})[/dim]"
+                writer.add_scalar("loss/train", train_meter.value, global_step)
+                writer.add_scalar("throughput/steps_per_sec", steps_per_sec, global_step)
+                writer.add_scalar(
+                    "throughput/samples_per_sec", samples_per_sec, global_step
                 )
+                if val_loss is not None:
+                    writer.add_scalar("loss/val", val_loss, global_step)
+                writer.flush()
+
+                improved = val_loss is not None and val_loss < best_val_loss
+                if val_loss is None:
+                    val_text = "val_loss=—"
+                    status = f"[dim](best: {format_loss(best_val_loss)})[/dim]"
+                else:
+                    val_text = f"val_loss={format_loss(val_loss)}"
+                    status = (
+                        f"[green]↓ {format_loss(best_val_loss)} → "
+                        f"{format_loss(val_loss)}[/green]"
+                        if improved
+                        else f"[dim](best: {format_loss(best_val_loss)})[/dim]"
+                    )
                 console.print(
                     f"  train_loss={format_loss(train_meter.value)}  "
-                    f"val_loss={format_loss(val_meter.value)}  "
-                    f"lr={lr:.2e}  {status}"
+                    f"{val_text}  lr={lr:.2e}  "
+                    f"{samples_per_sec:.3g} samples/s  {status}"
                 )
 
                 # Update best_val_loss before saving rolling checkpoint so that
                 # a resume always restores the correct best-so-far value.
                 if improved:
-                    best_val_loss = val_meter.value
+                    best_val_loss = val_loss
 
-                # Save rolling checkpoint every epoch.
+                # Save the rolling checkpoint at the end of every epoch.
                 self._save_checkpoint(
                     model, optimizer, scheduler,
                     epoch + 1, global_step, best_val_loss, checkpoint_path,
                 )
+                last_checkpoint_time = time.monotonic()
 
                 # Save best model when validation loss improves.
                 if improved:

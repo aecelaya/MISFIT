@@ -121,7 +121,65 @@ class TestIndexEntry:
                 ])
             assert exc_info.value.code == 0
             _, kwargs = mock_build.call_args
-            assert kwargs["split_ratios"] == {"train": 0.7, "val": 0.15, "test": 0.15}
+            assert kwargs["split_config"] == {"train": 0.7, "val": 0.15, "test": 0.15}
+            assert kwargs["groups"] is None
+
+    def test_new_split_config_uses_capped_defaults(self, tmp_path):
+        import json
+
+        from misfit.cli.index_entrypoint import _split_config_path, index_entry
+        from misfit.preprocessing.indexer import DEFAULT_SPLIT_CONFIG
+        manifest = self._write_csv(tmp_path)
+        output = tmp_path / "index.parquet"
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
+            mock_build.return_value = (None, [])
+            with pytest.raises(SystemExit):
+                index_entry(["--input", str(manifest), "--output", str(output)])
+            _, kwargs = mock_build.call_args
+            assert kwargs["split_config"] == DEFAULT_SPLIT_CONFIG
+        with open(_split_config_path(output)) as fh:
+            assert json.load(fh) == {**DEFAULT_SPLIT_CONFIG, "seed": 42}
+
+    def test_group_column_is_passed_as_strings(self, tmp_path):
+        from misfit.cli.index_entrypoint import index_entry
+        manifest = tmp_path / "manifest.csv"
+        manifest.write_text(
+            "path,group\n/a.nii.gz,0101\n/b.nii.gz,\n/c.nii.gz,0101\n"
+        )
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
+            mock_build.return_value = (None, [])
+            with pytest.raises(SystemExit) as exc_info:
+                index_entry([
+                    "--input", str(manifest),
+                    "--output", str(tmp_path / "index.parquet"),
+                ])
+            assert exc_info.value.code == 0
+            _, kwargs = mock_build.call_args
+            assert kwargs["groups"] == ["0101", None, "0101"]
+
+    def test_parquet_numeric_group_column_is_stringified(self, tmp_path):
+        from misfit.cli.index_entrypoint import _load_input_paths
+        manifest = tmp_path / "paths.parquet"
+        pd.DataFrame({"path": ["/a.nii.gz", "/b.nii.gz"], "group": [7, 7]}).to_parquet(
+            manifest, index=False,
+        )
+        _, groups = _load_input_paths(manifest)
+        assert groups == ["7", "7"]
+
+    def test_invalid_split_config_exits_before_indexing(self, tmp_path):
+        import json
+
+        from misfit.cli.index_entrypoint import _split_config_path, index_entry
+        manifest = self._write_csv(tmp_path)
+        output = tmp_path / "index.parquet"
+        config_path = _split_config_path(output)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps({"val": 1.5, "seed": 0}))
+        with patch("misfit.cli.index_entrypoint.build_index", autospec=True) as mock_build:
+            with pytest.raises(SystemExit) as exc_info:
+                index_entry(["--input", str(manifest), "--output", str(output)])
+            assert exc_info.value.code == 1
+            mock_build.assert_not_called()
 
     def test_unreadable_input_exits(self, tmp_path):
         from misfit.cli.index_entrypoint import index_entry
@@ -368,7 +426,7 @@ def test_embed_entry_calls_extract_features(tmp_path):
             patch.object(_iutils, "build_model_from_checkpoint") as mock_model, \
             patch.object(_areg, "get_aggregator") as mock_agg_cls, \
             patch.object(_emb_mod, "Embedder") as mock_embedder_cls, \
-            patch.object(_iutils, "load_and_normalise",
+            patch.object(_iutils, "load_and_normalize",
                          return_value=np.zeros((8, 8, 8), dtype=np.float32)):
 
         mock_model.return_value = MagicMock()
@@ -567,7 +625,7 @@ def test_embed_entry_encoder_fn_is_called(tmp_path):
                       return_value=tiny_model), \
          patch.object(_areg, "get_aggregator",
                       return_value=MeanPoolAggregator), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
@@ -609,7 +667,7 @@ def test_embed_entry_exception_during_processing(tmp_path):
          patch.object(_areg, "get_aggregator",
                       return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         # must not raise — exception is caught internally
         embed_entry([
@@ -623,8 +681,8 @@ def test_embed_entry_exception_during_processing(tmp_path):
     assert not (output_dir / "bad_vol.npz").exists()
 
 
-def test_embed_entry_load_normalise_returns_none(tmp_path):
-    """embed_entry skips a volume when load_and_normalise returns None."""
+def test_embed_entry_load_normalize_returns_none(tmp_path):
+    """embed_entry skips a volume when load_and_normalize returns None."""
     from misfit.cli.embed_entrypoint import embed_entry
 
     manifest = tmp_path / "index.parquet"
@@ -650,7 +708,7 @@ def test_embed_entry_load_normalise_returns_none(tmp_path):
          patch.object(_areg_n, "get_aggregator",
                       return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod_n, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils_n, "load_and_normalise", return_value=None):
+         patch.object(_iutils_n, "load_and_normalize", return_value=None):
         embed_entry([
             "--encoder-checkpoint", "best.pt",
             "--config", str(config_path),
@@ -694,7 +752,7 @@ def test_embed_entry_split_filters_index(tmp_path):
          patch.object(_iutils, "build_model_from_checkpoint", return_value=MagicMock()), \
          patch.object(_areg, "get_aggregator", return_value=MagicMock(return_value=MagicMock())), \
          patch.object(_emb_mod, "Embedder", return_value=mock_embedder), \
-         patch.object(_iutils, "load_and_normalise",
+         patch.object(_iutils, "load_and_normalize",
                       return_value=np.zeros((32, 32, 32), dtype=np.float32)):
         embed_entry([
             "--encoder-checkpoint", "best.pt",

@@ -1,8 +1,8 @@
 """PyTorch Dataset for MISFIT MAE pretraining.
 
 Streams NIfTI volumes on the fly from a Parquet metadata index built by
-misfit_index. Normalization (clip + z-score) is applied using precomputed
-per-volume statistics stored in the index — no recomputation at training time.
+misfit_index and normalizes each with the run's normalization policy (by
+default clip + z-score with per-volume statistics precomputed in the index).
 """
 import warnings
 from pathlib import Path
@@ -13,38 +13,43 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from misfit.data_loading.data_loading_constants import dc
 from misfit.data_loading.transforms import build_train_transforms, build_val_transforms
+from misfit.normalization.normalization_registry import (
+    DEFAULT_NORMALIZATION_POLICY,
+    get_normalization_policy,
+)
+from misfit.utils.resampling import get_row_spacing, resample_to_spacing
 
 
 class MISFITDataset(Dataset):
     """On-the-fly NIfTI streaming dataset for MISFIT MAE pretraining.
 
     Each call to __getitem__ loads a NIfTI file from disk, normalizes it
-    using precomputed statistics from the metadata index, and returns a
-    fixed-size 3D patch ready for the SwinMAE model.
+    with the run's normalization policy, and returns a fixed-size 3D patch
+    ready for the model.
 
-    Normalization pipeline (per volume):
-        1. Clip voxel values to [p1, p99] — removes modality outliers
-           (CT metal, MRI bias, PET hotspots) without modality-specific
-           thresholds.
-        2. Z-score using foreground mean and std — centers and scales each
-           volume independently, making CT and MRI comparable in the same
-           training batch.
+    Pipeline (per volume):
+        1-2. Normalize with ``normalization_policy`` (see
+           :mod:`misfit.normalization.policies`). The default,
+           ``clip_and_z_score``, clips to the foreground's [p1, p99] and
+           z-scores with the foreground mean and std, all precomputed in the
+           index; ``z_score_only`` is nnssl's whole-volume z-score.
         3. (Optional) Crop to the precomputed foreground bounding box so
            that random patch sampling only draws from regions that contain
            tissue. Volumes smaller than patch_size after cropping are
            zero-padded back to patch_size by the transform pipeline.
            Especially useful for skull-stripped MRI and CT where a large
            fraction of the volume is air or scanner background.
+        4. (Optional) Resample to ``target_spacing`` so a patch covers the
+           same physical extent in every volume.
 
     Args:
         index_path: Path to the Parquet metadata index produced by
             misfit_index. Must contain columns: path, p1, p99, fg_mean,
-            fg_std, spacing_d, spacing_h, spacing_w.
-        patch_size: Spatial dimensions of the output patch (D, H, W).
-            Must be divisible by 32 (SwinUNETR-V2 requirement) and must
-            match SwinMAE.img_size. Defaults to (96, 96, 96).
+            fg_std (and spacing_d/h/w when target_spacing is set).
+        patch_size: Spatial dimensions of the output patch (X, Y, Z).
+            Must be divisible by 32 and must match the model's img_size.
+            Defaults to (96, 96, 96).
         augment: If True, apply random crop + flips + light intensity
             augmentation (training mode). If False, apply deterministic
             center crop only (validation mode). Defaults to True.
@@ -65,6 +70,11 @@ class MISFITDataset(Dataset):
             the run loudly rather than silently training on an escalating
             run of zero-filled "volumes". Resets to 0 on every successful
             load. Defaults to 3.
+        target_spacing: (x, y, z) voxel spacing to resample every volume to
+            before patch sampling, or None to keep each volume's native
+            spacing. Defaults to None.
+        normalization_policy: Registered normalization policy name.
+            Defaults to ``clip_and_z_score``.
     """
 
     def __init__(
@@ -75,6 +85,8 @@ class MISFITDataset(Dataset):
         split: str | None = None,
         crop_to_fg: bool = True,
         max_load_failures: int = 3,
+        target_spacing: tuple[float, float, float] | None = None,
+        normalization_policy: str = DEFAULT_NORMALIZATION_POLICY,
     ):
         self.index_df = pd.read_parquet(index_path)
         if split is not None and "split" in self.index_df.columns:
@@ -83,6 +95,8 @@ class MISFITDataset(Dataset):
         self.patch_size = patch_size
         self.crop_to_fg = crop_to_fg
         self.max_load_failures = max_load_failures
+        self.target_spacing = target_spacing
+        self.normalization_policy = get_normalization_policy(normalization_policy)
         self._consecutive_load_failures = 0
         self.transforms = (
             build_train_transforms(patch_size)
@@ -114,18 +128,16 @@ class MISFITDataset(Dataset):
         return volume[x0:x1, y0:y1, z0:z1]
 
     def _normalize(self, volume: np.ndarray, row: pd.Series) -> np.ndarray:
-        """Apply clip + z-score normalization using precomputed index stats.
+        """Apply the dataset's normalization policy.
 
         Args:
-            volume: Raw voxel array of shape (D, H, W).
+            volume: Raw voxel array of shape (X, Y, Z).
             row: Row from the metadata index DataFrame for this volume.
 
         Returns:
             Normalized float32 array of the same shape.
         """
-        volume = np.clip(volume, float(row["p1"]), float(row["p99"]))
-        std = max(float(row["fg_std"]), dc.NORM_EPS)
-        return (volume - float(row["fg_mean"])) / std
+        return self.normalization_policy.normalize(volume, row)[0]
 
     def __getitem__(self, idx: int) -> torch.Tensor:
         """Load, normalize, and crop one volume.
@@ -166,14 +178,7 @@ class MISFITDataset(Dataset):
                 "consecutive failures before this aborts the run).",
                 stacklevel=2,
             )
-            spacing = torch.tensor(
-                [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
-                dtype=torch.float32,
-            )
-            return {
-                "image": torch.zeros(1, *self.patch_size, dtype=torch.float32),
-                "spacing": spacing,
-            }
+            return {"image": torch.zeros(1, *self.patch_size, dtype=torch.float32)}
 
         self._consecutive_load_failures = 0
 
@@ -186,7 +191,7 @@ class MISFITDataset(Dataset):
             )
             volume = volume[..., 0]
 
-        # Clip + z-score using precomputed index statistics.
+        # Normalize with the run's policy (clip + z-score by default).
         volume = self._normalize(volume, row)
 
         # Restrict patch sampling to the foreground region so that random
@@ -194,13 +199,15 @@ class MISFITDataset(Dataset):
         if self.crop_to_fg:
             volume = self._crop_to_fg_bbox(volume, row)
 
-        # Add channel dim (1, D, H, W) for MONAI transforms.
+        # Resample after cropping, so only the foreground region is
+        # interpolated. Skipped at native resolution (target_spacing=None).
+        if self.target_spacing is not None:
+            volume = resample_to_spacing(
+                volume, get_row_spacing(row), self.target_spacing
+            )
+
+        # Add channel dim (1, X, Y, Z) for MONAI transforms.
         volume_t = torch.from_numpy(volume.copy()).unsqueeze(0)
 
-        spacing = torch.tensor(
-            [float(row["spacing_d"]), float(row["spacing_h"]), float(row["spacing_w"])],
-            dtype=torch.float32,
-        )
-
         # Apply spatial crop and augmentation.
-        return {"image": self.transforms(volume_t), "spacing": spacing}
+        return {"image": self.transforms(volume_t)}

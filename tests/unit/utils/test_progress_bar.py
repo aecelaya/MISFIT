@@ -109,7 +109,7 @@ class SpyProgress:
 
 @patch("misfit.utils.progress_bar.Progress", new=SpyProgress)
 def test_train_progressbar_initialization_creates_task():
-    """TrainProgressBar creates a task with loss/lr fields initialised."""
+    """TrainProgressBar creates a task with loss/lr fields initialized."""
     pb = TrainProgressBar(current_epoch=3, epochs=10, train_steps=123)
 
     assert isinstance(pb.progress, SpyProgress)
