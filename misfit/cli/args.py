@@ -191,8 +191,9 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
             "Start from these weights instead of random initialization: the "
             "whole MAE network (encoder, decoder, and reconstruction head). "
             "Accepts a MISFIT checkpoint or an nnssl one, such as "
-            "nnFoundationCNN's checkpoint_final.pth (needs --model resenc "
-            "--target-spacing 1 1 1 and a patch of at least 128^3). Every "
+            "nnFoundationCNN's checkpoint_final.pth (needs --model resenc, a "
+            "patch of at least 128^3, and no or an isotropic "
+            "--target-spacing). Every "
             "weight must match, or misfit_train stops. Ignored on --resume."
         ),
     )

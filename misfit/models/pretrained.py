@@ -102,8 +102,9 @@ def load_model_weights(model: nn.Module, checkpoint: dict) -> None:
             f"Checkpoint weights don't match {type(model).__name__}: {details}. "
             "Check --model, --patch-size, and --target-spacing; for example, "
             "nnFoundationCNN needs --model resenc --patch-size 192 192 192 "
-            "--target-spacing 1 1 1 (any patch of at least 128^3 at 1 mm "
-            "gives the same network)."
+            "(any patch of at least 128^3 gives the same network) and either "
+            "no --target-spacing (native resolution, as nnssl pretrained it) "
+            "or an isotropic one such as --target-spacing 1 1 1."
         )
     model.load_state_dict(state_dict, strict=False)
 

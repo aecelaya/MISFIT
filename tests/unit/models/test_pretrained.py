@@ -82,7 +82,7 @@ def test_loads_nnssl_checkpoint_and_maps_the_head():
 
 def test_rejects_a_different_topology_with_a_hint():
     _, nnssl_sd = _nnssl_state_dict(patch=(64, 64, 64))
-    with pytest.raises(ValueError, match="--target-spacing 1 1 1"):
+    with pytest.raises(ValueError, match="no --target-spacing"):
         load_model_weights(_resenc(), {"network_weights": nnssl_sd})
 
 

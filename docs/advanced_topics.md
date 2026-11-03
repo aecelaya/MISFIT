@@ -197,7 +197,8 @@ patch size then sets the model size:
 
 <!-- prettier-ignore -->
 !!! tip
-    Pretrain ResEnc with a patch of at least 128³ (nnssl uses 160³) so the
+    Pretrain ResEnc with a patch of at least 128³ (nnssl's default MAE
+    trainer uses 160³; nnFoundationCNN used 192³) so the
     encoder has all six stages. A MIST `resenc` model with more stages than
     the pretrained encoder trains its extra stages from scratch, and stages
     whose kernel shapes differ (anisotropic MIST data) are skipped; MIST
@@ -211,15 +212,19 @@ patch size then sets the model size:
 
 ### Starting from nnFoundation
 
-[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN) (Harsy et
-al., 2026) is an openly released ResEnc pretrained by nnssl with the same MAE
-objective, at 192³ and 1 mm. MISFIT's `resenc` at 1 mm with a patch of at least
-128³ is the same network, decoder and reconstruction head included: loaded with
-nnFoundationCNN's weights, it produces exactly the output of nnU-Net's own
-`ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB, CC-BY-SA-4.0)
-and use it two ways. In both, match nnssl's preprocessing and objective with
-`--normalization-policy z_score_only` and `--loss masked_mse` (see the note
-below).
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN)
+([Harsy et al., 2026](https://arxiv.org/abs/2609.26924)) is an openly released
+ResEnc pretrained with nnssl's MAE objective (16³ blocks, 75% masked, plain
+masked MSE) on 2.1 million CT, MRI, and PET volumes, in single-channel 192³
+patches. nnssl did not resample the data: each volume was used at its native
+resolution (the median spacing is 1 mm isotropic), cropped to its nonzero
+region, and z-scored. MISFIT's `resenc` with a patch of at least 128³ and an
+isotropic topology is the same network, decoder and reconstruction head
+included: loaded with nnFoundationCNN's weights, it produces exactly the output
+of nnU-Net's own `ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB,
+CC-BY-SA-4.0) and use it two ways. In both, match nnssl's preprocessing and
+objective with `--normalization-policy z_score_only` and `--loss masked_mse`
+(see the note below).
 
 **As a ready-made encoder.** Every command that takes a checkpoint
 (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
@@ -231,7 +236,6 @@ misfit_train --index          /data/index.parquet \
              --results        /runs/nnfoundation \
              --model          resenc \
              --patch-size     192 192 192 \
-             --target-spacing 1 1 1 \
              --normalization-policy z_score_only \
              --loss           masked_mse \
              --init-only
@@ -253,15 +257,19 @@ misfit_train --index          /data/index.parquet \
              --results        /runs/nnfoundation_ft \
              --model          resenc \
              --patch-size     192 192 192 \
-             --target-spacing 1 1 1 \
              --normalization-policy z_score_only \
              --loss           masked_mse \
              --init-weights   /models/checkpoint_final.pth
 ```
 
-`--target-spacing 1 1 1` and a patch of at least 128³ are required: they give
-the six-stage network the checkpoint holds. Any other layout stops with an error
-listing the mismatched weights rather than mixing pretrained and random weights.
+A patch of at least 128³ is required: it gives the six-stage network the
+checkpoint holds (192³ matches pretraining). Leave out `--target-spacing`, as
+above: MISFIT then keeps each volume at its native resolution, as nnssl did, and
+plans an isotropic topology, which is nnFoundationCNN's.
+`--target-spacing 1 1 1` also builds the same network but resamples the data,
+which nnssl did not. An anisotropic target spacing, or a smaller patch, gives a
+different layout and stops with an error listing the mismatched weights rather
+than mixing pretrained and random weights.
 
 <!-- prettier-ignore -->
 !!! note
@@ -338,8 +346,7 @@ misfit_train \
 ```
 
 With a target spacing, `--patch-size` is in voxels at that spacing, so
-`--patch-size 160 160 160 --target-spacing 1 1 1` is always a 16 cm cube, the
-setup nnssl uses for ResEnc pretraining.
+`--patch-size 160 160 160 --target-spacing 1 1 1` is always a 16 cm cube.
 
 - **Resampling is on the fly.** Each volume is normalized, cropped to its
   foreground box, then trilinearly resampled, so only the foreground is

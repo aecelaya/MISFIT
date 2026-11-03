@@ -263,10 +263,10 @@ data has no single spacing; only axis ratios matter, so this just means
 "isotropic topology"). Every builder (trainer, evaluator,
 `build_model_from_checkpoint`) passes `target_spacing` through the registry;
 SwinMAE ignores it via `**kwargs`. Isotropically, the patch size sets depth: 96³
-→ 5 stages (~63M params), ≥128³ → 6 stages (~102M; nnssl uses 160³). A MIST
-`resenc` planned with more stages or anisotropic kernels still loads every
-matching tensor; MIST skips the rest and warns. Same `img_size` constraints as
-SwinMAE (÷32, ÷`mask_patch_size`).
+→ 5 stages (~63M params), ≥128³ → 6 stages (~102M; nnssl's default MAE trainer
+uses 160³, nnFoundationCNN used 192³). A MIST `resenc` planned with more stages
+or anisotropic kernels still loads every matching tensor; MIST skips the rest
+and warns. Same `img_size` constraints as SwinMAE (÷32, ÷`mask_patch_size`).
 
 ### `config.json` as source of truth
 
@@ -354,10 +354,20 @@ legacy `spacing_embed.*`). Loading is strict — only `mask_token` may be absent
 (nnssl masks with zeros, the token's init) — because a partial load would
 silently mix pretrained and random weights.
 
-nnFoundationCNN equals `resenc` at 1 mm with a patch ≥128³; verified against
-nnU-Net's `ResidualEncoderUNet` with the real checkpoint (max output difference
-0). MIST pins the same layout with a name/shape fingerprint test
-(`test_resenc_layout_matches_nnfoundation_cnn_checkpoint`).
+nnFoundation facts (verified from the checkpoints' `nnssl_adaptation_plan`,
+nnssl's trainer source, and Harsy et al. 2026): MAE (16³ blocks, 75% masked,
+zero-filled, `MAEMSELoss`), 192³ patches, 2.1M CT/MRI/PET volumes, nnssl's
+`noresample` config (native resolution, median spacing 1 mm; NOT resampled to 1
+mm), crop to nonzero (holes filled), z-score without mask or clipping. So the
+closest MISFIT match is
+`--model resenc --patch-size 192 192 192 --normalization-policy z_score_only --loss masked_mse`
+with NO `--target-spacing` (native, isotropic planning = nnFoundationCNN's
+topology); `--target-spacing 1 1 1` builds the same network but resamples.
+
+nnFoundationCNN equals `resenc` with an isotropic topology and a patch ≥128³;
+verified against nnU-Net's `ResidualEncoderUNet` with the real checkpoint (max
+output difference 0). MIST pins the same layout with a name/shape fingerprint
+test (`test_resenc_layout_matches_nnfoundation_cnn_checkpoint`).
 
 ### Target spacing (`--target-spacing X Y Z`, `utils/resampling.py`)
 
