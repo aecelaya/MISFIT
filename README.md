@@ -16,12 +16,13 @@ required.
 
 ## What it does
 
-MISFIT trains a [SwinUNETR](https://arxiv.org/abs/2201.01266)-based masked
-autoencoder on 3D medical images. At each training step, 75% of the image
-patches are randomly hidden, and the model learns to reconstruct them from the
-remaining context. This forces the encoder to build rich spatial representations
-of anatomy — representations that transfer well to downstream tasks like
-classification, segmentation, and retrieval.
+MISFIT trains a masked autoencoder on 3D medical images, using a
+[SwinUNETR](https://arxiv.org/abs/2201.01266) transformer or a ResEnc CNN built
+from [MIST](https://github.com/mist-medical/MIST)'s own models. At each training
+step, 75% of the image patches are randomly hidden, and the model learns to
+reconstruct them from the remaining context. This forces the encoder to build
+rich spatial representations of anatomy — representations that transfer well to
+downstream tasks like classification, segmentation, and retrieval.
 
 ```
 Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
@@ -38,13 +39,19 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 ## Key Features
 
 - **No labels required** — pretrains entirely on unlabeled NIfTI volumes
+- **Built for MIST** — encoders are MIST's own SwinUNETR-V2 and ResEnc, so
+  pretrained weights and `config.json` load directly into `mist_train`
+- **Starts from nnFoundation** — the openly released nnFoundationCNN works in
+  every command, as a baseline encoder or a starting point for pretraining
 - **End-to-end pipeline** — seven CLI commands take you from raw files to
   downstream-ready embeddings
 - **3D-native** — operates on full volumetric data, not 2D slices
 - **Mixed modality** — the `normalized_masked_mse` loss normalizes per-patch
   variance, handling CT and MRI in the same training run
-- **Scalable** — single-GPU to multi-node training via `torchrun`; the same
-  command runs everywhere (CPU too, for testing)
+- **Scalable** — single-GPU to multi-node training via `torchrun`; step-based
+  epochs, a fixed validation subset, and mid-epoch checkpoints keep long runs on
+  large corpora practical; the same command runs everywhere (CPU too, for
+  testing)
 - **BF16 AMP** — automatic `bfloat16` mixed precision on GPUs with BF16 matrix
   hardware (NVIDIA Ampere+ — A100, H100, RTX 30xx+ — and AMD CDNA / RDNA3+),
   with an automatic FP32 fallback on older GPUs and CPU
