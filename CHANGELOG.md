@@ -4,7 +4,7 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 0.2.0-alpha are described on the
 [GitHub releases page](https://github.com/mist-medical/MISFIT/releases).
 
-## 0.2.0-alpha — Unreleased
+## 0.2.0-alpha — 2026-11-03
 
 MISFIT now builds every encoder from MIST, adds a CNN, and trains in fixed-size
 steps so long runs on large corpora are practical. Requires
