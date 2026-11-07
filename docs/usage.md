@@ -60,9 +60,9 @@ assign the `split` column:
 
 By default, val and test each get 5% of the volumes, capped at 500, and train
 gets the rest. A 1,000-volume corpus splits 900/50/50; a 100,000-volume corpus
-splits 99,000/500/500. Validation only tracks the reconstruction loss and picks
-`best_model.pt`, and the real evaluation of a pretrained encoder is on
-downstream tasks, so neither split needs to grow with the corpus.
+splits 99,000/500/500. Validation only tracks the reconstruction loss, and the
+real evaluation of a pretrained encoder is on downstream tasks, so neither split
+needs to grow with the corpus.
 
 - `val` / `test`: a fraction in [0, 1) of the corpus, or a whole number of
   volumes (e.g. `"val": 200`). Use `0` for no split. A nonzero fraction always
@@ -221,7 +221,8 @@ updated every step, so warmup and decay are smooth.
 ### Validation & checkpointing
 
 - `--val-every N`: Validate every N epochs, and always after the last epoch.
-  _(default: 1)_
+  _(default: 50)_ Validation monitors the run; it doesn't choose a model. See
+  [The final model](advanced_topics.md#the-final-model).
 - `--val-volumes N`: Validate on the first N volumes of the val split.
   _(default: 128)_ The same volumes are scored with the same masks every time,
   so the val loss is comparable across epochs and across runs.
@@ -232,6 +233,8 @@ updated every step, so warmup and decay are smooth.
 ### Miscellaneous
 
 - `--seed N`: Random seed for reproducibility. _(default: 42)_
+- `--compile`: Compile the model with `torch.compile` during training. See
+  [Compiling the model](advanced_topics.md#compiling-the-model).
 - `--no-amp`: Request FP32 instead of BF16 mixed precision on a fresh run. Not
   consulted on `--resume` — `config.json`'s saved `training.amp` is
   authoritative there; edit the file directly to change it on a resumed run.
@@ -294,7 +297,8 @@ results/
     checkpoints/
         checkpoint.pt       Latest checkpoint (each epoch, and every --checkpoint-minutes).
     models/
-        best_model.pt       Checkpoint with the lowest validation loss.
+        final_model.pt      Weights at the end of training (refreshed at each validation).
+        encoder_weights.pt  The same encoder, in the MIST model's format.
     logs/                   TensorBoard event files.
     config.json             Reproducibility config (architecture, patch size,
                             hyperparameters, and MISFIT version).
@@ -318,7 +322,7 @@ whole evaluation is reproducible.
 Metrics are computed in the **training loss's space**: when the run used
 `normalized_masked_mse` the target is normalized per `mask_patch_size` cube —
 exactly as the loss does — so `masked_mse` is directly comparable to the run's
-`best_val_loss`. Because a per-region-normalized error is ≈ 1.0 for _any_
+validation loss. Because a per-region-normalized error is ≈ 1.0 for _any_
 constant predictor, every metric is also reported for a **naive baseline**
 (impute the masked voxels with the visible-region mean) plus a `_skill` column
 (`1 - model/naive` for lower-is-better metrics, `model - naive` for
@@ -354,7 +358,7 @@ Run evaluation with `misfit_evaluate`:
 Evaluate on the validation split (default).
 
 ```console
-misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
                 --index       /data/index.parquet \
                 --config      /runs/exp1/config.json \
                 --output-csv  /runs/exp1/eval_results.csv
@@ -363,7 +367,7 @@ misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
 Evaluate on the test split.
 
 ```console
-misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
                 --index       /data/index.parquet \
                 --config      /runs/exp1/config.json \
                 --output-csv  /runs/exp1/test_results.csv \
@@ -448,7 +452,7 @@ Run inspection with `misfit_inspect`:
 Reconstruct all volumes in the index.
 
 ```console
-misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint  /runs/exp1/models/final_model.pt \
                --index       /data/index.parquet \
                --config      /runs/exp1/config.json \
                --output-dir  /runs/exp1/reconstructions
@@ -457,7 +461,7 @@ misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
 Reconstruct only the validation split.
 
 ```console
-misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint  /runs/exp1/models/final_model.pt \
                --index       /data/index.parquet \
                --config      /runs/exp1/config.json \
                --output-dir  /runs/exp1/reconstructions \
@@ -518,7 +522,7 @@ Extract mean-pooled embeddings for all volumes (zero-shot, no aggregator
 training required).
 
 ```console
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index              /data/index.parquet \
              --config             /runs/exp1/config.json \
              --output-dir         /data/embeddings
@@ -527,7 +531,7 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
 Embed only the test split.
 
 ```console
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index              /data/index.parquet \
              --config             /runs/exp1/config.json \
              --output-dir         /data/embeddings \
@@ -537,7 +541,7 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
 Extract embeddings with a trained attention-pooling aggregator.
 
 ```console
-misfit_embed --encoder-checkpoint  /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint  /runs/exp1/models/final_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings \
@@ -585,7 +589,7 @@ Run encoding with `misfit_encode`:
 ### Example
 
 ```console
-misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_encode --encoder-checkpoint /runs/exp1/models/final_model.pt \
               --index               /data/index.parquet \
               --config              /runs/exp1/config.json \
               --output-dir          /data/encodings

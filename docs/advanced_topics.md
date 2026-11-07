@@ -48,7 +48,7 @@ Below is an example `config.json` produced by `misfit_train`.
     "seed": 42,
     "gradient_accumulation_steps": 1,
     "bucket_cap_mb": 200,
-    "val_every": 1,
+    "val_every": 50,
     "val_volumes": 128,
     "checkpoint_minutes": 30.0
   },
@@ -506,6 +506,43 @@ SwinMAE.
 
 ---
 
+## The final model
+
+MISFIT keeps the weights training ended on, not the ones with the lowest
+validation loss. `models/final_model.pt` and `models/encoder_weights.pt` hold
+them, and refresh at each validation so a preempted job leaves a recent encoder.
+Reconstruction loss doesn't say which encoder is best for downstream tasks, so
+it doesn't choose one. Files hold weights only; `checkpoints/checkpoint.pt` has
+what `--resume` needs.
+
+Validation monitors the run instead: every 50 epochs by default (`--val-every`)
+and after the last, on at most 128 volumes (`--val-volumes`). Two guards protect
+the run:
+
+- **If the loss or gradient norm becomes NaN or infinite, training stops with an
+  error.** Files saved earlier stay as they were, so `--resume` continues from
+  the last checkpoint.
+- **If a validation loss is more than 1.5 times the lowest so far, MISFIT
+  warns,** during training and again at the end. Training continues, and the
+  final model is still saved, so check the loss curves before relying on it.
+
+---
+
+## Compiling the model
+
+`--compile` compiles the model with `torch.compile` during training. It takes
+extra time at startup and is often faster afterwards, but how much depends on
+the network and GPU, so try it on yours: the `throughput/steps_per_sec`
+TensorBoard scalar shows the effect. It compiles in place, so checkpoints keep
+the same weight names and load with or without it. It has no effect on CPUs or
+Windows, and evaluation, encoding, and embedding don't use it.
+
+`--compile` is saved to `config.json`, and `--resume` uses the saved value. If
+you hit a compiler error, set `training.compile` to `false` in `config.json` and
+resume.
+
+---
+
 ## Multi-Node Training
 
 MISFIT uses `torch.distributed` and can be launched with `torchrun` on any
@@ -718,8 +755,8 @@ skipped.
 ```text
 results/
     models/
-        best_model.pt       Full MAE checkpoint.
-        encoder_weights.pt  Encoder-only weights, remapped for MIST.
+        final_model.pt      Weights of the full MAE network.
+        encoder_weights.pt  Encoder-only weights, in the MIST model's format.
 ```
 
 ### Fine-tuning in MIST

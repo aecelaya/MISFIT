@@ -68,4 +68,4 @@ def test_misfit_train_exits_after_training_with_workers(tmp_path):
         ) from None
     assert proc.returncode == 0, output
     assert "Training complete." in output
-    assert (results / "models" / "best_model.pt").exists()
+    assert (results / "models" / "final_model.pt").exists()

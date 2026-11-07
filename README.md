@@ -113,13 +113,13 @@ misfit_train --index   index.parquet \
              --results /runs/exp1
 
 # 3. Evaluate reconstruction quality
-misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint /runs/exp1/models/final_model.pt \
                 --index      index.parquet \
                 --config     /runs/exp1/config.json \
                 --output-csv /runs/exp1/eval_results.csv
 
 # 4. Extract volume embeddings
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index               index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings
@@ -193,13 +193,13 @@ writes a per-volume CSV. It defaults to the `val` split; pass `--split test` to
 evaluate on the test set, or `--split ""` for all rows.
 
 ```console
-misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint /runs/exp1/models/final_model.pt \
                 --index      /data/index.parquet \
                 --config     /runs/exp1/config.json \
                 --output-csv /runs/exp1/eval_results.csv
 
 # Evaluate on the test split
-misfit_evaluate --checkpoint /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint /runs/exp1/models/final_model.pt \
                 --index      /data/index.parquet \
                 --config     /runs/exp1/config.json \
                 --output-csv /runs/exp1/test_results.csv \
@@ -214,13 +214,13 @@ the model had to fill in from context. Defaults to all rows; use `--split val`
 to restrict to the validation set.
 
 ```console
-misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint /runs/exp1/models/final_model.pt \
                --index      /data/index.parquet \
                --config     /runs/exp1/config.json \
                --output-dir /runs/exp1/inspect
 
 # Inspect only the validation split
-misfit_inspect --checkpoint /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint /runs/exp1/models/final_model.pt \
                --index      /data/index.parquet \
                --config     /runs/exp1/config.json \
                --output-dir /runs/exp1/inspect \
@@ -242,7 +242,7 @@ inspect/
 training without re-running the encoder.
 
 ```console
-misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_encode --encoder-checkpoint /runs/exp1/models/final_model.pt \
               --index               /data/index.parquet \
               --config              /runs/exp1/config.json \
               --output-dir          /data/encodings
@@ -255,13 +255,13 @@ for zero-shot retrieval or UMAP visualization. Use `--split` to restrict to a
 specific split.
 
 ```console
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings
 
 # Embed only the test split
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings \
@@ -321,7 +321,8 @@ results/
     checkpoints/
         checkpoint.pt       Latest checkpoint (each epoch, and every 30 min)
     models/
-        best_model.pt       Checkpoint with the lowest validation loss
+        final_model.pt      Weights at the end of training (refreshed at each validation)
+        encoder_weights.pt  The same encoder, in the MIST model's format
     logs/                   TensorBoard event files
     config.json             Reproducibility record — architecture, patch size,
                             all hyperparameters, and MISFIT version

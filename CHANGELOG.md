@@ -16,6 +16,35 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 - **nnFoundationViT** — nnFoundationViT's `checkpoint_final.pth` works in every
   command that takes a checkpoint and with `misfit_train --init-weights`, using
   `--model primus-x`. Position embeddings are resized for other patch sizes.
+- **`--compile`** compiles the model with `torch.compile` during training, in
+  place, so checkpoints keep the same weight names. It's off by default and has
+  no effect on CPUs or Windows.
+- MISFIT warns about mistakes in `config.json`: keys it doesn't use, with the
+  likely spelling, values of the wrong type or range, and `patch_size` copies
+  that disagree. These are only warnings.
+
+### Changed
+
+- **MISFIT now keeps the final model.** `models/final_model.pt` replaces
+  `best_model.pt`, and it and `encoder_weights.pt` hold the weights training
+  ended on, refreshed at each validation, not those with the lowest validation
+  loss. Reconstruction loss doesn't say which encoder is best for downstream
+  tasks. `final_model.pt` holds weights only, so it's much smaller;
+  `checkpoint.pt` still has what `--resume` needs. Update scripts that read
+  `best_model.pt`.
+- **`--val-every` now defaults to 50**, from 1.
+- **Training stops with an error if the loss or gradient norm becomes NaN or
+  infinite,** before saving broken weights, and warns if a validation loss is
+  more than 1.5 times the lowest so far.
+- Training turns on the same GPU math settings as MIST, including TF32
+  convolutions.
+
+### Fixed
+
+- `misfit_evaluate` failed on every volume on GPUs with BF16 (A100, H100, and
+  newer), because NumPy can't represent the reconstruction's `bfloat16` type.
+- `misfit_evaluate` now exits with an error when no volume succeeds, instead of
+  reporting success.
 
 ## 0.2.0-alpha — 2026-11-03
 

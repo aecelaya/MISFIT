@@ -13,6 +13,11 @@ class TrainerConstants:
     # initialized.
     GRAD_CLIP_VALUE: float = 1.0
 
+    # Warn when a validation loss is more than this many times the lowest so far.
+    # A judgment call: well above noise, since validation repeats the same masks
+    # on the same volumes, but it only warns, so a false alarm costs little.
+    VAL_DRIFT_WARNING_RATIO: float = 1.5
+
     # Seed base. Each rank adds its rank index to get a unique but
     # reproducible RNG stream per process.
     DEFAULT_SEED: int = 42

@@ -156,10 +156,10 @@ statistics.
 
 Val and test default to 5% of the corpus each, capped at 500 volumes
 (`DEFAULT_SPLIT_CONFIG`); train takes the rest. Validation only tracks
-reconstruction loss and picks `best_model.pt`, and real encoder evaluation is
-downstream, so held-out sets shouldn't grow with the corpus — 80/10/10 withheld
-20k volumes from a 100k pretraining run. Integer sizes are exact counts and are
-not capped. A legacy config (has a `train` key) keeps its old ratio meaning.
+reconstruction loss, and real encoder evaluation is downstream, so held-out sets
+shouldn't grow with the corpus — 80/10/10 withheld 20k volumes from a 100k
+pretraining run. Integer sizes are exact counts and are not capped. A legacy
+config (has a `train` key) keeps its old ratio meaning.
 
 An optional `group` column in the `--input` file (e.g. subject ID) keeps all of
 a group's volumes in one split: `assign_splits` shuffles groups and deals them
@@ -307,6 +307,16 @@ Validation runs every `--val-every` epochs and after the last, on the first
 (`fork_rng` + reseed): every pass scores the same masks on the same volumes, so
 the curve is comparable, and the training RNG is restored afterwards.
 
+Validation monitors; it doesn't select. `_save_final_weights` writes
+`models/final_model.pt` (weights only; `checkpoint.pt` has the optimizer) and
+`encoder_weights.pt` at each validation, so reconstruction loss never picks the
+encoder. Guards: `_stop_if_not_finite` raises on NaN/inf loss or gradient norm
+before anything is saved, and `_has_drifted` warns above
+`tc.VAL_DRIFT_WARNING_RATIO` (1.5) times the lowest so far, compared directly
+because fixed masks keep validation low noise. An empty val split skips
+validation and still saves. Checkpoints keep the key `best_val_loss` so older
+ones resume; it now only feeds the drift warning.
+
 Checkpoints store `(epoch, step_in_epoch)`: `(e + 1, 0)` at epoch end, `(e, s)`
 mid-epoch. Rank 0 alone saves mid-epoch when `--checkpoint-minutes` have passed
 (no collective needed — other ranks just continue). TensorBoard scalars are all
@@ -367,6 +377,24 @@ overlapping receptive fields would leak masked voxels into visible tokens.
   same visible tokens). Verified by hand, since that package isn't a dependency.
   nnssl's sizes: medium decoder (2, 12) and x decoder (8, 16); large's (4, 16)
   is MISFIT's choice because nnssl has no preset.
+
+### `--compile`, GPU math, and config warnings
+
+Mirrors MIST 2.5.0. `resolve_compile` and `tune_gpu_math` in `utils/hardware.py`
+are copies, since MISFIT requires only MIST 2.4.0. `--compile` is opt-in until
+it's measured on the MAE models (MIST's speedups are for its own networks);
+`model.compile()` is in place (no `_orig_mod.` in checkpoints) and goes before
+DDP. `--resume` uses the saved `training.compile`.
+`PrimusMAE._visible_token_indices` avoids `nonzero()`, which would split forward
+into 4 graphs; `test_forward_compiles_as_one_graph` guards that. In a tiny CPU
+check on torch 2.6, compiled `SwinMAE` failed during backward in Inductor code
+generation (not yet known on GPU).
+
+`training/config_validation.py` warns on `--resume` and in evaluate, inspect,
+encode, and embed; `_SETTINGS` must list every key `_build_config` writes (a
+test enforces it). Note that `--resume` takes hyperparameters from the CLI, not
+`config.json`, except `amp` and `compile`, so most hand edits there don't affect
+training.
 
 ### Pretrained weights (`models/pretrained.py`, `--init-weights`)
 
@@ -484,9 +512,9 @@ all-reduced per-step loss (`train_meter.value`), refreshed every step.
 `SwinMAE` remaps `encoder.<name>` → `model.swinViT.<name>` (MIST's
 `MistSwinUNETR`), `ResEncMAE` keeps `encoder.<name>` as is (MIST's
 `ResEncUNet`), and `PrimusMAE` keeps `down_projection.<name>` and `eva.<name>`
-(MIST's `Primus`). Its output is saved to `models/encoder_weights.pt` whenever
-validation loss improves (alongside `best_model.pt`), so the MIST-ready encoder
-is always available after training. Pass it to
+(MIST's `Primus`). Its output is saved to `models/encoder_weights.pt` at each
+validation (alongside `final_model.pt`), so the MIST-ready encoder is always
+available after training. Pass it to
 `mist_train --pretrained-weights models/encoder_weights.pt` along with
 `--pretrained-config <misfit results>/config.json` (MIST uses the source config
 to validate encoder compatibility; omitting it only warns and skips that check).
@@ -525,8 +553,8 @@ in `embedding/aggregators/__init__.py`.
 ```
 results/
     checkpoints/checkpoint.pt    Latest checkpoint (overwritten each epoch)
-    models/best_model.pt         Lowest validation loss
-    models/encoder_weights.pt    Encoder-only weights in the MIST model's key format; refreshed with best_model.pt
+    models/final_model.pt        Latest weights; refreshed at each validation
+    models/encoder_weights.pt    Encoder-only weights in the MIST model's key format; refreshed with final_model.pt
     logs/                        TensorBoard event files
     config.json                  Architecture + hyperparameters (required by downstream commands)
 ```

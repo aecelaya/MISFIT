@@ -20,7 +20,7 @@ deterministically from ``seed`` so runs are reproducible.
 Typical usage::
 
     evaluator = ReconstructionEvaluator(
-        checkpoint_path=Path("best_model.pt"),
+        checkpoint_path=Path("final_model.pt"),
         index_path=Path("val.parquet"),
         output_csv_path=Path("/runs/exp1/eval/evaluation_results.csv"),
         model_config=config["model"],

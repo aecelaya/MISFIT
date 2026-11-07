@@ -177,6 +177,27 @@ def test_visible_token_indices_match_the_voxel_mask(mask_patch_size):
         assert torch.equal(mask[sample, 0], tokens_as_voxels)
 
 
+def test_visible_token_indices_are_ordered_like_nonzero():
+    """The reference comparison with nnssl relies on a stable, ascending order."""
+    model = _tiny(mask_patch_size=8, mask_ratio=0.8)
+    mask = model.generate_mask(torch.randn(3, 1, *IMG_SIZE))
+    expected = (mask[:, 0, ::8, ::8, ::8].flatten(1) == 0).nonzero()[:, 1].reshape(3, -1)
+    assert torch.equal(model._visible_token_indices(mask), expected)
+
+
+def test_visible_token_indices_follow_a_ratio_override():
+    model = _tiny(mask_ratio=0.75)
+    mask = model.generate_mask(torch.randn(1, 1, *IMG_SIZE), mask_ratio=0.5)
+    assert model._visible_token_indices(mask, 0.5).shape == (1, 32)
+
+
+def test_forward_compiles_as_one_graph():
+    """No data-dependent shapes: graph breaks would split up torch.compile."""
+    model = _tiny().train()
+    explanation = torch._dynamo.explain(model)(torch.randn(2, 1, *IMG_SIZE))
+    assert explanation.graph_break_count == 0
+
+
 def test_masked_tokens_do_not_reach_the_encoder():
     """Changing only masked voxels leaves the encoded visible tokens unchanged."""
     model = _tiny().eval()

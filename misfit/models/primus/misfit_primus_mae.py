@@ -29,6 +29,7 @@ Transfer learning compatibility:
     :mod:`misfit.models.pretrained`).
 """
 
+import math
 from collections import OrderedDict
 from typing import Any
 
@@ -181,21 +182,35 @@ class PrimusMAE(MISFITModel):
             mask_ratio = self.mask_ratio
         return generate_patch_mask(x, self.mask_patch_size, mask_ratio)
 
-    def _visible_token_indices(self, mask: torch.Tensor) -> torch.Tensor:
-        """Return the visible tokens' indices, shape (B, num_visible).
+    def _visible_token_indices(
+        self, mask: torch.Tensor, mask_ratio: float | None = None
+    ) -> torch.Tensor:
+        """Return each sample's visible token indices in order, shape (B, num_visible).
 
-        Every sample masks the same number of cubes, so the result is regular.
+        Every sample masks the same number of cubes, so the count is known from the
+        mask ratio. That keeps the shape independent of the data, which nonzero()
+        wouldn't, so torch.compile can compile forward as one graph.
+
+        Args:
+            mask: Voxel mask from generate_mask, shape (B, 1, D, H, W).
+            mask_ratio: The ratio the mask was generated with. If None, uses the
+                value set at construction.
 
         Raises:
             ValueError: If every token is masked; the encoder needs at least one.
         """
-        step = self.token_size
-        token_is_visible = mask[:, 0, ::step, ::step, ::step].flatten(1) == 0
-        batch_size = mask.shape[0]
-        indices = token_is_visible.nonzero()[:, 1].reshape(batch_size, -1)
-        if indices.shape[1] == 0:
+        if mask_ratio is None:
+            mask_ratio = self.mask_ratio
+        num_cubes = math.prod(dim // self.mask_patch_size for dim in self.img_size)
+        tokens_per_cube = (self.mask_patch_size // self.token_size) ** 3
+        num_visible = (num_cubes - int(mask_ratio * num_cubes)) * tokens_per_cube
+        if num_visible == 0:
             raise ValueError("mask_ratio masks every token; nothing is left to encode.")
-        return indices
+
+        step = self.token_size
+        token_is_masked = mask[:, 0, ::step, ::step, ::step].flatten(1) != 0
+        # A stable sort puts visible tokens (False) first, in their original order.
+        return token_is_masked.long().argsort(dim=1, stable=True)[:, :num_visible]
 
     def _encode_visible(self, tokens: torch.Tensor, visible: torch.Tensor) -> torch.Tensor:
         """Run the encoder on the visible tokens only.
@@ -238,7 +253,7 @@ class PrimusMAE(MISFITModel):
                 ``"mask"``: Binary mask (B, 1, D, H, W); 1 = masked voxels.
         """
         mask = self.generate_mask(x, mask_ratio=mask_ratio)
-        visible = self._visible_token_indices(mask)
+        visible = self._visible_token_indices(mask, mask_ratio)
 
         tokens = self.down_projection(x)
         b, c, d, h, w = tokens.shape

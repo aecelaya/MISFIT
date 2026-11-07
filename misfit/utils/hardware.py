@@ -22,6 +22,7 @@ identically.
 """
 
 import contextlib
+import os
 import warnings
 from typing import Literal
 
@@ -139,6 +140,40 @@ def resolve_amp(requested: bool, *, warn: bool = True) -> bool:
             stacklevel=2,
         )
     return False
+
+
+def resolve_compile(requested: bool) -> bool:
+    """Resolve the torch.compile setting against the current hardware.
+
+    Compiling is left off on CPUs and on Windows, where its default backend isn't
+    supported. This is quiet; the training banner shows whether it's on.
+
+    Args:
+        requested: The compile setting (``--compile`` / ``training.compile``).
+
+    Returns:
+        Whether to compile the model.
+    """
+    return bool(requested) and get_accelerator_type() != "cpu" and os.name != "nt"
+
+
+def tune_gpu_math() -> None:
+    """Turn on the faster math that training uses, including TF32 convolutions.
+
+    These tune cuDNN (CUDA) or its MIOpen equivalent (ROCm, via the same
+    ``torch.backends.cudnn`` compatibility shim). They mean nothing on CPU-only
+    hardware, so they're skipped there.
+    """
+    if get_accelerator_type() == "cpu":
+        return
+    torch.set_float32_matmul_precision("high")
+    # torch.backends.cudnn.conv.fp32_precision was added in PyTorch 2.5; fall back
+    # to allow_tf32, which does the same on older builds.
+    if hasattr(torch.backends.cudnn, "conv"):
+        torch.backends.cudnn.conv.fp32_precision = "tf32"
+    else:
+        torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
 
 
 def autocast_context(enabled: bool):

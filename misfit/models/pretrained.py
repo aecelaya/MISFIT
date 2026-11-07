@@ -4,7 +4,7 @@ Used both to initialize pretraining (``misfit_train --init-weights``) and to
 rebuild a model for evaluation, inspection, encoding, and embedding, so every
 command accepts the same checkpoint formats:
 
-* a MISFIT checkpoint (``checkpoint.pt`` / ``best_model.pt``; weights under
+* a MISFIT checkpoint (``checkpoint.pt`` / ``final_model.pt``; weights under
   ``"model"``),
 * an nnssl checkpoint such as nnFoundationCNN's or nnFoundationViT's
   ``checkpoint_final.pth``
