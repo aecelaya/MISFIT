@@ -17,12 +17,12 @@ required.
 ## What it does
 
 MISFIT trains a masked autoencoder on 3D medical images, using a
-[SwinUNETR](https://arxiv.org/abs/2201.01266) transformer or a ResEnc CNN built
-from [MIST](https://github.com/mist-medical/MIST)'s own models. At each training
-step, 75% of the image patches are randomly hidden, and the model learns to
-reconstruct them from the remaining context. This forces the encoder to build
-rich spatial representations of anatomy — representations that transfer well to
-downstream tasks like classification, segmentation, and retrieval.
+[SwinUNETR](https://arxiv.org/abs/2201.01266) or Primus transformer or a ResEnc
+CNN built from [MIST](https://github.com/mist-medical/MIST)'s own models. At
+each training step, 75% of the image patches are randomly hidden, and the model
+learns to reconstruct them from the remaining context. This forces the encoder
+to build rich spatial representations of anatomy — representations that transfer
+well to downstream tasks like classification, segmentation, and retrieval.
 
 ```
 Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
@@ -39,10 +39,11 @@ Unlabeled NIfTIs  →  misfit_index  →  misfit_train  →  Pretrained Encoder
 ## Key Features
 
 - **No labels required** — pretrains entirely on unlabeled NIfTI volumes
-- **Built for MIST** — encoders are MIST's own SwinUNETR-V2 and ResEnc, so
-  pretrained weights and `config.json` load directly into `mist_train`
-- **Starts from nnFoundation** — the openly released nnFoundationCNN works in
-  every command, as a baseline encoder or a starting point for pretraining
+- **Built for MIST** — encoders are MIST's own SwinUNETR-V2, ResEnc, and Primus,
+  so pretrained weights and `config.json` load directly into `mist_train`
+- **Starts from nnFoundation** — the openly released nnFoundationCNN and
+  nnFoundationViT work in every command, as a baseline encoder or a starting
+  point for pretraining
 - **End-to-end pipeline** — seven CLI commands take you from raw files to
   downstream-ready embeddings
 - **3D-native** — operates on full volumetric data, not 2D slices
@@ -148,7 +149,7 @@ patient's volumes in the same split.
 
 ### Stage 2 — Pretraining (`misfit_train`)
 
-Trains a SwinUNETR masked autoencoder. At each step, 75% of patch tokens are
+Trains a masked autoencoder. At each step, 75% of the volume's patches are
 masked and the model reconstructs them from visible context. Supports
 single-GPU, multi-GPU, and multi-node training out of the box.
 
@@ -170,16 +171,16 @@ misfit_train --index   /data/index.parquet \
 
 Key options:
 
-| Flag                     | Default                 | Description                                         |
-| ------------------------ | ----------------------- | --------------------------------------------------- |
-| `--model`                | `swinunetr-base`        | `swinunetr-small` / `-base` / `-large`, or `resenc` |
-| `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)         |
-| `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)     |
-| `--epochs`               | `1000`                  | Training epochs of `--steps-per-epoch` steps each   |
-| `--steps-per-epoch`      | `250`                   | Optimizer steps per epoch                           |
-| `--batch-size`           | `2`                     | Per-GPU batch size                                  |
-| `--loss`                 | `normalized_masked_mse` | Loss function                                       |
-| `--normalization-policy` | `clip_and_z_score`      | Intensity normalization (`z_score_only` for nnssl)  |
+| Flag                     | Default                 | Description                                        |
+| ------------------------ | ----------------------- | -------------------------------------------------- |
+| `--model`                | `swinunetr-base`        | `swinunetr-*`, `resenc`, or `primus-*` (see below) |
+| `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)        |
+| `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)    |
+| `--epochs`               | `1000`                  | Training epochs of `--steps-per-epoch` steps each  |
+| `--steps-per-epoch`      | `250`                   | Optimizer steps per epoch                          |
+| `--batch-size`           | `2`                     | Per-GPU batch size                                 |
+| `--loss`                 | `normalized_masked_mse` | Loss function                                      |
+| `--normalization-policy` | `clip_and_z_score`      | Intensity normalization (`z_score_only` for nnssl) |
 
 Training writes a `config.json` to `--results` that captures every architecture
 and hyperparameter decision. All downstream commands read this file — you never
@@ -291,18 +292,24 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`.
 | SwinUNETR Base  | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
 | SwinUNETR Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 | ResEnc          | `resenc`          | ~102M (90M encoder)¹  | nnU-Net/nnssl-style CNN pretraining    |
+| Primus Medium   | `primus-medium`   | ~166M (146M encoder)² | nnssl-style transformer pretraining    |
+| Primus Large    | `primus-large`    | ~381M (324M encoder)² | Larger Primus                          |
+| PrimusX         | `primus-x`        | ~649M (539M encoder)² | The nnFoundationViT network            |
 
 ¹ At a patch size of 128³ or larger. ResEnc plans its depth from `--patch-size`;
 see
 [Model Variants](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#model-variants).
 
+² At a patch size of 96³; the position embeddings grow with `--patch-size`.
+
 Every architecture is built from MIST, so `--model` names match the MIST model
 each encoder fine-tunes into.
 
-`resenc` is the same network as the openly released
-[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN): its weights
-work directly in every MISFIT command, as a baseline encoder or as the starting
-point for `--init-weights`. See
+`resenc` and `primus-x` are the same networks as the openly released
+[nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN) and
+[nnFoundationViT](https://huggingface.co/MIC-DKFZ/nnFoundationViT): their
+weights work directly in every MISFIT command, as a baseline encoder or as the
+starting point for `--init-weights`. See
 [Starting from nnFoundation](https://misfit-medical.readthedocs.io/en/latest/advanced_topics/#starting-from-nnfoundation).
 
 ---

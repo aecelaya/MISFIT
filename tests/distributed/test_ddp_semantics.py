@@ -47,11 +47,16 @@ def _build_tiny_model(model_name: str) -> torch.nn.Module:
     """Smallest instance of each MAE architecture for CPU DDP tests."""
     import misfit.models  # noqa: F401 — trigger registrations
     from misfit.models.model_registry import get_model_from_registry
+    from misfit.models.primus.misfit_primus_mae import PrimusMAE
     from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
 
     if model_name == "swinunetr":
         return SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
                        mask_patch_size=16, mask_ratio=0.75)
+    if model_name == "primus":
+        return PrimusMAE(embed_dim=48, depth=2, num_heads=4, decoder_depth=1,
+                         decoder_num_heads=4, img_size=(32, 32, 32),
+                         mask_patch_size=16, mask_ratio=0.75)
     return get_model_from_registry(model_name, in_channels=1, img_size=(32, 32, 32),
                                    mask_patch_size=16, mask_ratio=0.75)
 
@@ -127,7 +132,7 @@ def _guard_worker(rank: int, world_size: int, results_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("model_name", ["swinunetr", "resenc"])
+@pytest.mark.parametrize("model_name", ["swinunetr", "resenc", "primus"])
 def test_ddp_synchronizes_gradients_on_window_end(model_name):
     """is_last_accum=True → DDP all-reduces, so gradients match across ranks."""
     mp.spawn(_grad_sync_worker, args=(2, _free_port(), True, model_name),

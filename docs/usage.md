@@ -10,9 +10,9 @@ imaging foundation models. The core pipeline consists of four stages:
    statistics and spacing, assigns train/val/test splits, and produces a Parquet
    index that all downstream commands consume.
 
-2. **Pretraining** — Trains a SwinUNETR masked autoencoder (MAE) on the indexed
-   dataset. The encoder learns to reconstruct randomly masked patches of each
-   volume, producing generalizable semantic representations without any labels.
+2. **Pretraining** — Trains a masked autoencoder (MAE) on the indexed dataset.
+   The encoder learns to reconstruct randomly masked patches of each volume,
+   producing generalizable semantic representations without any labels.
 
 3. **Evaluation / Inspection** — Commands for measuring reconstruction quality
    on the validation set and generating full-volume reconstruction NIfTIs for
@@ -133,10 +133,10 @@ one NIfTI volume and contains the following columns:
 
 ## Training
 
-The **training step** pretrains a SwinUNETR masked autoencoder on the indexed
-dataset. At each iteration a random 75% of patch tokens are masked, and the
-model learns to reconstruct the missing voxels from the visible context.
-Train/val split is determined by the `split` column in the index.
+The **training step** pretrains a masked autoencoder on the indexed dataset. At
+each iteration a random 75% of the volume's patches are masked, and the model
+learns to reconstruct the missing voxels from the visible context. Train/val
+split is determined by the `split` column in the index.
 
 Run training with `misfit_train`:
 
@@ -167,11 +167,12 @@ Run training with `misfit_train`:
 ### Model
 
 - `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
-  `swinunetr-large`, or `resenc`. _(default: `swinunetr-base`)_ See
+  `swinunetr-large`, `resenc`, `primus-medium`, `primus-large`, or `primus-x`.
+  _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
 - `--patch-size X Y Z`: Spatial crop size fed to the model in voxels (at
-  `--target-spacing` when set). Must be divisible by 32. Same axis order as
-  MIST's `--patch-size`. _(default: `96 96 96`)_
+  `--target-spacing` when set). Must be divisible by 32 (by 8 for `primus-*`).
+  Same axis order as MIST's `--patch-size`. _(default: `96 96 96`)_
 - `--target-spacing X Y Z`: Resample every volume to this voxel spacing (e.g.
   `1 1 1` for 1 mm isotropic) before cropping patches. Saved to `config.json`
   and applied by every downstream command. _(default: off — native resolution)_

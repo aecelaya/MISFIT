@@ -54,6 +54,9 @@ def test_list_registered_models_contains_swinmae():
     assert "swinunetr-small" in models
     assert "swinunetr-base" in models
     assert "swinunetr-large" in models
+    assert "primus-medium" in models
+    assert "primus-large" in models
+    assert "primus-x" in models
 
 
 def test_registry_kwargs_passed():

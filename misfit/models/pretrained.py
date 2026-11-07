@@ -6,7 +6,8 @@ command accepts the same checkpoint formats:
 
 * a MISFIT checkpoint (``checkpoint.pt`` / ``best_model.pt``; weights under
   ``"model"``),
-* an nnssl checkpoint such as nnFoundationCNN's ``checkpoint_final.pth``
+* an nnssl checkpoint such as nnFoundationCNN's or nnFoundationViT's
+  ``checkpoint_final.pth``
   (weights under ``"network_weights"``, nnU-Net parameter names), or
 * a plain state dict.
 
@@ -104,7 +105,8 @@ def load_model_weights(model: nn.Module, checkpoint: dict) -> None:
             "nnFoundationCNN needs --model resenc --patch-size 192 192 192 "
             "(any patch of at least 128^3 gives the same network) and either "
             "no --target-spacing (native resolution, as nnssl pretrained it) "
-            "or an isotropic one such as --target-spacing 1 1 1."
+            "or an isotropic one such as --target-spacing 1 1 1. "
+            "nnFoundationViT needs --model primus-x."
         )
     model.load_state_dict(state_dict, strict=False)
 

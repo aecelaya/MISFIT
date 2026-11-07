@@ -4,6 +4,19 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 0.2.0-alpha are described on the
 [GitHub releases page](https://github.com/mist-medical/MISFIT/releases).
 
+## Unreleased
+
+### Added
+
+- **Primus** (`--model primus-medium`, `primus-large`, `primus-x`) — MIST's
+  transformer-centric Primus pretrained as a masked autoencoder the way nnssl
+  does it: masked tokens are removed before the encoder, and a small transformer
+  decoder reconstructs the image. Its encoder transfers to the MIST model of the
+  same name with no key remapping.
+- **nnFoundationViT** — nnFoundationViT's `checkpoint_final.pth` works in every
+  command that takes a checkpoint and with `misfit_train --init-weights`, using
+  `--model primus-x`. Position embeddings are resized for other patch sizes.
+
 ## 0.2.0-alpha — 2026-11-03
 
 MISFIT now builds every encoder from MIST, adds a CNN, and trains in fixed-size

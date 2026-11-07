@@ -17,10 +17,10 @@ Texas MD Anderson Cancer Center.
 
 MISFIT is organized around two main workflows:
 
-**Pretraining** — Train a masked autoencoder (MIST's SwinUNETR-V2 or ResEnc) on
-a large collection of unlabeled 3D NIfTI volumes, or continue from the openly
-released nnFoundationCNN. The encoder learns rich semantic representations of
-anatomy without any labels.
+**Pretraining** — Train a masked autoencoder (MIST's SwinUNETR-V2, ResEnc, or
+Primus) on a large collection of unlabeled 3D NIfTI volumes, or continue from
+the openly released nnFoundation models. The encoder learns rich semantic
+representations of anatomy without any labels.
 
 **Embedding** — Use a pretrained encoder to extract per-volume feature vectors.
 These embeddings can be used directly for zero-shot similarity search or

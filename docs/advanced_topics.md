@@ -210,6 +210,35 @@ patch size then sets the model size:
     cannot be changed when resuming. To use a different variant, start a new run
     with `--overwrite` or in a new `--results` directory.
 
+### Primus
+
+`--model primus-medium`, `primus-large`, and `primus-x` are MIST's Primus
+transformers, pretrained the way nnssl does (its `EvaMAE`). The volume becomes
+one token per 8 × 8 × 8 voxels and masked tokens are removed, so the encoder
+only sees visible tokens. Mask tokens then fill the gaps, and a small
+transformer decoder plus Primus's patch decoder reconstruct the image.
+
+| Variant | `--model`       | Encoder blocks, width | Decoder blocks | Parameters at 96³    |
+| ------- | --------------- | --------------------- | -------------- | -------------------- |
+| Medium  | `primus-medium` | 16, 864               | 2              | ~166M (146M encoder) |
+| Large   | `primus-large`  | 24, 1056              | 4              | ~381M (324M encoder) |
+| X       | `primus-x`      | 40, 1056              | 8              | ~649M (539M encoder) |
+
+The decoder sizes are nnssl's for medium and x. nnssl has no preset for large,
+so its decoder is MISFIT's own choice. PrimusV2 isn't available: its tokenizer's
+receptive fields overlap, so visible tokens would carry masked voxels.
+
+- `--patch-size` must be divisible by 8, and the learned position embeddings are
+  sized for it, so the model only accepts crops of exactly that size. MISFIT's
+  crops and tiled inference already guarantee this.
+- `--mask-patch-size` must be a multiple of 8, so each masked cube covers whole
+  tokens. Both the default of 16 and nnFoundationViT's 8 work.
+- The decoder attends over every token, so memory grows quickly with patch size.
+  At 192³ there are 13,824 tokens. Try your largest planned patch and batch size
+  briefly before committing to a long run.
+- `misfit_encode` and `misfit_embed` return a feature map at the token grid,
+  with `C` equal to the transformer width: 1056 × 24³ for `primus-x` at 192³.
+
 ### Starting from nnFoundation
 
 [nnFoundationCNN](https://huggingface.co/MIC-DKFZ/nnFoundationCNN)
@@ -224,7 +253,8 @@ included: loaded with nnFoundationCNN's weights, it produces exactly the output
 of nnU-Net's own `ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB,
 CC-BY-SA-4.0) and use it two ways. In both, match nnssl's preprocessing and
 objective with `--normalization-policy z_score_only` and `--loss masked_mse`
-(see the note below).
+(see the note below). [nnFoundationViT](#nnfoundationvit) works the same way
+with `primus-x`.
 
 **As a ready-made encoder.** Every command that takes a checkpoint
 (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
@@ -283,14 +313,42 @@ than mixing pretrained and random weights.
     naive baseline was 0.84 with `z_score_only` and 0.80 with
     `clip_and_z_score` (a random network's was negative).
 
+#### nnFoundationViT
+
+[nnFoundationViT](https://huggingface.co/MIC-DKFZ/nnFoundationViT) is the
+transformer from the same paper and data: PrimusX, an MAE with 80% of its 8³
+tokens removed, pretrained in 192³ patches with the same preprocessing. MISFIT's
+`primus-x` is the same network, MAE decoder included: with its weights and the
+same visible tokens, the reconstruction matches a reference built from the
+`dynamic-network-architectures` blocks nnssl uses, with a maximum difference of
+exactly 0. Download `checkpoint_final.pth` (2.7 GB) and use it as above, with
+its masking settings:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation_vit \
+             --model          primus-x \
+             --patch-size     192 192 192 \
+             --mask-patch-size 8 \
+             --mask-ratio     0.8 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
+             --init-only
+```
+
+Other patch sizes work too: both position embeddings are resized on load. Don't
+load it into a smaller Primus; the depths differ, so loading stops with an
+error. On synthetic phantoms at 96³, its masked-MSE skill over the naive
+baseline was 0.49.
+
 ---
 
 ## Patch Size Selection
 
 The `--patch-size X Y Z` argument controls the spatial crop fed to the model
-during training and inference, in voxels. Every dimension must be divisible
-by 32. It uses the same axis order as MIST's `--patch-size`: both tools lay
-volumes out in (x, y, z) order.
+during training and inference, in voxels. Every dimension must be divisible by
+32 (by 8 for `primus-*`). It uses the same axis order as MIST's `--patch-size`:
+both tools lay volumes out in (x, y, z) order.
 
 A few practical guidelines:
 
@@ -368,9 +426,9 @@ With a target spacing, `--patch-size` is in voxels at that spacing, so
 
 ## Mask Ratio
 
-The `--mask-ratio` controls what fraction of patch tokens are hidden from the
-encoder during pretraining. The default of 0.75 (75%) follows the original MAE
-paper and works well for 3D medical images.
+The `--mask-ratio` controls what fraction of patches are hidden from the encoder
+during pretraining. The default of 0.75 (75%) follows the original MAE paper and
+works well for 3D medical images.
 
 Higher mask ratios force the model to learn longer-range spatial dependencies;
 lower ratios make the reconstruction task easier and may be preferable for
@@ -723,6 +781,7 @@ annotated cases is small relative to the model capacity.
 <!-- prettier-ignore -->
 !!! note
     MISFIT encoder weights are compatible with the MIST architectures MISFIT
-    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`, and
-    `resenc`. Other MIST architectures (nnUNet, MedNeXt, Primus, FMG-Net,
-    W-Net) are not yet available in MISFIT.
+    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
+    `resenc`, `primus-medium`, `primus-large`, and `primus-x`. Other MIST
+    architectures (nnUNet, MedNeXt, PrimusV2, FMG-Net, W-Net) are not yet
+    available in MISFIT.

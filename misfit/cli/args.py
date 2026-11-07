@@ -171,8 +171,8 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
         metavar=("X", "Y", "Z"),
         help=(
             "Spatial crop size fed to the model, in voxels (at --target-spacing "
-            "when set). Must be divisible by 32. Same axis order and meaning "
-            "as MIST's --patch-size."
+            "when set). Must be divisible by 32 (by 8 for primus-*). Same axis "
+            "order and meaning as MIST's --patch-size."
         ),
     )
     model.add_argument(
@@ -193,13 +193,16 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
             "Accepts a MISFIT checkpoint or an nnssl one, such as "
             "nnFoundationCNN's checkpoint_final.pth (needs --model resenc, a "
             "patch of at least 128^3, and no or an isotropic "
-            "--target-spacing). Every "
-            "weight must match, or misfit_train stops. Ignored on --resume."
+            "--target-spacing) or nnFoundationViT's (needs --model primus-x). "
+            "Every weight must match, or misfit_train stops. Ignored on --resume."
         ),
     )
     model.add_argument(
         "--mask-patch-size", type=positive_int, default=16, metavar="P",
-        help="Edge length of each masked 3D cube (voxels).",
+        help=(
+            "Edge length of each masked 3D cube (voxels). For primus-*, must be "
+            "a multiple of the 8-voxel token size."
+        ),
     )
     model.add_argument(
         "--mask-ratio", type=float_0_1, default=0.75, metavar="R",
