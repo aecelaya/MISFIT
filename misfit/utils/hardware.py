@@ -149,7 +149,7 @@ def resolve_compile(requested: bool) -> bool:
     supported. This is quiet; the training banner shows whether it's on.
 
     Args:
-        requested: The compile setting (``--compile`` / ``training.compile``).
+        requested: The compile setting (``training.compile``).
 
     Returns:
         Whether to compile the model.

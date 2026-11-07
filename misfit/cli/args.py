@@ -194,7 +194,8 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
             "nnFoundationCNN's checkpoint_final.pth (needs --model resenc, a "
             "patch of at least 128^3, and no or an isotropic "
             "--target-spacing) or nnFoundationViT's (needs --model primus-x). "
-            "Every weight must match, or misfit_train stops. Ignored on --resume."
+            "Every weight must match, or misfit_train stops. Ignored when resuming "
+            "from a checkpoint."
         ),
     )
     model.add_argument(
@@ -323,15 +324,6 @@ def add_train_args(parser: ArgParser, index_required: bool = True) -> None:
     # --- Reproducibility & resumption ---
     misc = parser.add_argument_group("Miscellaneous")
     misc.add_argument("--seed", type=non_negative_int, default=42)
-    misc.add_argument(
-        "--compile", action="store_true", dest="compile",
-        help=(
-            "Compile the model with torch.compile during training. Often faster "
-            "after some extra minutes at startup, and checkpoints are unchanged. "
-            "Has no effect on CPUs or Windows. Only takes effect on a fresh run; "
-            "on --resume, config.json's saved 'training.compile' is used."
-        ),
-    )
     misc.add_argument(
         "--no-amp", action="store_true", dest="no_amp",
         help=(

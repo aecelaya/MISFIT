@@ -162,9 +162,10 @@ class MAETrainer:
         # callers that build args by hand (tests, MAETrainer.__new__ users)
         # without a --no-amp field.
         self.amp = not getattr(self.args, "no_amp", False)
-        # Requested --compile setting. As with AMP, a --resume uses the value
-        # saved in config.json; resolve_compile checks it against the hardware.
-        self.compile_model = getattr(self.args, "compile", False)
+        # Compile for training, like MIST. To turn it off, set training.compile to
+        # false in config.json: a --resume uses the saved value, and resolve_compile
+        # checks it against the hardware.
+        self.compile_model = True
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -234,11 +235,13 @@ class MAETrainer:
             mask_ratio=self.args.mask_ratio,
             target_spacing=self._target_spacing(),
         )
-        # On --resume the checkpoint supplies the weights, so --init-weights
-        # only seeds a fresh run. Every rank loads the same file before DDP
-        # wrapping (DDP would broadcast rank 0's weights anyway).
+        # A checkpoint supplies the weights when resuming, so --init-weights only
+        # seeds a run that has none yet (including --init-only, edit config.json,
+        # --resume). Every rank loads the same file before DDP wrapping (DDP would
+        # broadcast rank 0's weights anyway).
         init_weights = getattr(self.args, "init_weights", None)
-        if init_weights is not None and not self.args.resume:
+        checkpoint_path = Path(self.args.results) / "checkpoints" / "checkpoint.pt"
+        if init_weights is not None and not (self.args.resume and checkpoint_path.exists()):
             load_pretrained_weights(model, init_weights)
             if self.is_main:
                 console.print(

@@ -378,17 +378,19 @@ overlapping receptive fields would leak masked voxels into visible tokens.
   nnssl's sizes: medium decoder (2, 12) and x decoder (8, 16); large's (4, 16)
   is MISFIT's choice because nnssl has no preset.
 
-### `--compile`, GPU math, and config warnings
+### Compile, GPU math, and config warnings
 
 Mirrors MIST 2.5.0. `resolve_compile` and `tune_gpu_math` in `utils/hardware.py`
-are copies, since MISFIT requires only MIST 2.4.0. `--compile` is opt-in until
-it's measured on the MAE models (MIST's speedups are for its own networks);
+are copies, since MISFIT requires only MIST 2.4.0. `training.compile` is on for
+new runs, with no CLI flag, and a config without it doesn't compile. `--resume`
+uses the saved value; to turn it off, edit `config.json` (after `--init-only`
+for a new run; `--init-weights` still applies when no checkpoint exists).
 `model.compile()` is in place (no `_orig_mod.` in checkpoints) and goes before
-DDP. `--resume` uses the saved `training.compile`.
-`PrimusMAE._visible_token_indices` avoids `nonzero()`, which would split forward
-into 4 graphs; `test_forward_compiles_as_one_graph` guards that. In a tiny CPU
-check on torch 2.6, compiled `SwinMAE` failed during backward in Inductor code
-generation (not yet known on GPU).
+DDP. `PrimusMAE._visible_token_indices` avoids `nonzero()`, which would split
+forward into 4 graphs; `test_forward_compiles_as_one_graph` guards that. In a
+tiny CPU check on torch 2.6, compiled `SwinMAE` failed during backward in
+Inductor code generation (not yet known on GPU). The trainer tests fake a GPU,
+so their `patch_cuda` fixture turns compiling off.
 
 `training/config_validation.py` warns on `--resume` and in evaluate, inspect,
 encode, and embed; `_SETTINGS` must list every key `_build_config` writes (a

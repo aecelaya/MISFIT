@@ -97,6 +97,10 @@ def patch_cuda(monkeypatch):
     """
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True, raising=False)
     monkeypatch.setattr(torch.cuda, "set_device", lambda _: None, raising=False)
+    # With a faked GPU the trainer would really compile; compile tests override this.
+    monkeypatch.setattr(
+        "misfit.training.trainers.mae_trainer.resolve_compile", lambda requested: False
+    )
     # hardware.bf16_supported() checks compute capability; report Ampere (8.0).
     monkeypatch.setattr(
         torch.cuda, "get_device_capability", lambda *a, **k: (8, 0), raising=False
@@ -1772,17 +1776,6 @@ def test_build_model_loads_init_weights(tmp_path):
     assert "Initialized" in mock_console.print.call_args[0][0]
 
 
-def test_build_model_ignores_init_weights_on_resume(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
-
-    _, path = _saved_tiny_resenc(tmp_path)
-    args = _make_args(tmp_path)
-    args.model, args.init_weights, args.resume = "resenc", str(path), True
-    with patch("misfit.training.trainers.mae_trainer.load_pretrained_weights") as load:
-        MAETrainer(args)._build_model()
-    load.assert_not_called()
-
-
 def test_build_model_rejects_mismatched_init_weights(tmp_path):
     from misfit.training.trainers.mae_trainer import MAETrainer
 
@@ -1866,11 +1859,9 @@ def _compile_spy(monkeypatch, resolved):
     return patch.object(torch.nn.Module, "compile", autospec=True)
 
 
-def test_build_model_compiles_in_place_when_requested(tmp_path, monkeypatch):
+def test_build_model_compiles_in_place_by_default(tmp_path, monkeypatch):
     from misfit.training.trainers.mae_trainer import MAETrainer
-    args = _make_args(tmp_path)
-    args.compile = True
-    trainer = MAETrainer(args)
+    trainer = MAETrainer(_make_args(tmp_path))
     with _compile_spy(monkeypatch, resolved=True) as compile_call:
         model = trainer._build_model()
     compile_call.assert_called_once()
@@ -1878,9 +1869,10 @@ def test_build_model_compiles_in_place_when_requested(tmp_path, monkeypatch):
     assert not [k for k in model.state_dict() if "_orig_mod" in k]
 
 
-def test_build_model_skips_compile_when_not_requested(tmp_path, monkeypatch):
+def test_build_model_skips_compile_when_turned_off(tmp_path, monkeypatch):
     from misfit.training.trainers.mae_trainer import MAETrainer
     trainer = MAETrainer(_make_args(tmp_path))
+    trainer.compile_model = False
     with _compile_spy(monkeypatch, resolved=True) as compile_call:
         trainer._build_model()
     compile_call.assert_not_called()
@@ -1888,9 +1880,7 @@ def test_build_model_skips_compile_when_not_requested(tmp_path, monkeypatch):
 
 def test_build_model_skips_compile_when_hardware_does_not_support_it(tmp_path, monkeypatch):
     from misfit.training.trainers.mae_trainer import MAETrainer
-    args = _make_args(tmp_path)
-    args.compile = True
-    trainer = MAETrainer(args)
+    trainer = MAETrainer(_make_args(tmp_path))
     with _compile_spy(monkeypatch, resolved=False) as compile_call:
         trainer._build_model()
     compile_call.assert_not_called()
@@ -1898,10 +1888,25 @@ def test_build_model_skips_compile_when_hardware_does_not_support_it(tmp_path, m
 
 def test_config_records_the_compile_setting(tmp_path):
     from misfit.training.trainers.mae_trainer import MAETrainer
+    assert MAETrainer(_make_args(tmp_path))._build_config()["training"]["compile"] is True
+
+
+@pytest.mark.parametrize("has_checkpoint", [False, True])
+def test_init_weights_on_resume_applies_only_without_a_checkpoint(tmp_path, has_checkpoint):
+    """--init-only, edit config.json, --resume must still start from --init-weights."""
+    from misfit.training.trainers import mae_trainer
+
     args = _make_args(tmp_path)
-    assert MAETrainer(args)._build_config()["training"]["compile"] is False
-    args.compile = True
-    assert MAETrainer(args)._build_config()["training"]["compile"] is True
+    args.resume = True
+    args.init_weights = "weights.pth"
+    if has_checkpoint:
+        checkpoint = Path(args.results) / "checkpoints" / "checkpoint.pt"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.touch()
+    trainer = mae_trainer.MAETrainer(args)
+    with patch.object(mae_trainer, "load_pretrained_weights") as load:
+        trainer._build_model()
+    assert load.called is not has_checkpoint
 
 
 def test_resume_uses_the_saved_compile_setting_and_checks_the_config(tmp_path):

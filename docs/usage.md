@@ -233,8 +233,6 @@ updated every step, so warmup and decay are smooth.
 ### Miscellaneous
 
 - `--seed N`: Random seed for reproducibility. _(default: 42)_
-- `--compile`: Compile the model with `torch.compile` during training. See
-  [Compiling the model](advanced_topics.md#compiling-the-model).
 - `--no-amp`: Request FP32 instead of BF16 mixed precision on a fresh run. Not
   consulted on `--resume` — `config.json`'s saved `training.amp` is
   authoritative there; edit the file directly to change it on a resumed run.

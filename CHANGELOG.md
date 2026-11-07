@@ -16,9 +16,12 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 - **nnFoundationViT** — nnFoundationViT's `checkpoint_final.pth` works in every
   command that takes a checkpoint and with `misfit_train --init-weights`, using
   `--model primus-x`. Position embeddings are resized for other patch sizes.
-- **`--compile`** compiles the model with `torch.compile` during training, in
-  place, so checkpoints keep the same weight names. It's off by default and has
-  no effect on CPUs or Windows.
+- **Training compiles the model with `torch.compile`** on GPUs, in place, so
+  checkpoints keep the same weight names. It has no effect on CPUs or Windows,
+  and `training.compile` in `config.json` turns it off. Configs from before this
+  setting don't compile.
+- `--init-weights` now applies when `--resume` finds no checkpoint yet, so a
+  config written with `--init-only` can start from pretrained weights.
 - MISFIT warns about mistakes in `config.json`: keys it doesn't use, with the
   likely spelling, values of the wrong type or range, and `patch_size` copies
   that disagree. These are only warnings.

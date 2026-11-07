@@ -530,16 +530,23 @@ the run:
 
 ## Compiling the model
 
-`--compile` compiles the model with `torch.compile` during training. It takes
-extra time at startup and is often faster afterwards, but how much depends on
-the network and GPU, so try it on yours: the `throughput/steps_per_sec`
-TensorBoard scalar shows the effect. It compiles in place, so checkpoints keep
+Training compiles the model with `torch.compile` on GPUs. It takes extra time at
+startup and is usually faster afterwards; the `throughput/steps_per_sec`
+TensorBoard scalar shows the speed. It compiles in place, so checkpoints keep
 the same weight names and load with or without it. It has no effect on CPUs or
 Windows, and evaluation, encoding, and embedding don't use it.
 
-`--compile` is saved to `config.json`, and `--resume` uses the saved value. If
-you hit a compiler error, set `training.compile` to `false` in `config.json` and
-resume.
+The setting is `training.compile` in `config.json`. To turn it off, for example
+after a compiler error, set it to `false` and pass `--resume`. For a new run,
+write the config first:
+
+```console
+misfit_train --index index.parquet --results /runs/exp1 --init-only
+# Set "compile": false under "training" in /runs/exp1/config.json, then:
+misfit_train --index index.parquet --results /runs/exp1 --resume
+```
+
+Configs from before this setting don't compile.
 
 ---
 
