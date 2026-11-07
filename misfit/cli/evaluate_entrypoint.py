@@ -88,7 +88,8 @@ def evaluate_entry(args=None) -> None:
         target_spacing=get_target_spacing(config),
         normalization_policy=get_normalization_policy_name(config),
     )
-    evaluator.run()
+    if evaluator.run().empty:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

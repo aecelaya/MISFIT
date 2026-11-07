@@ -245,8 +245,9 @@ class ReconstructionEvaluator:
         with torch.no_grad(), amp_ctx:
             output = self.model(tensor)
 
-        recon = output["reconstruction"].squeeze().cpu().numpy()  # (D,H,W)
-        mask = output["mask"].squeeze().cpu().numpy()              # (D,H,W)
+        # .float(): autocast returns bfloat16, which NumPy can't represent.
+        recon = output["reconstruction"].squeeze().float().cpu().numpy()  # (D,H,W)
+        mask = output["mask"].squeeze().float().cpu().numpy()              # (D,H,W)
         return recon, mask
 
     def _run_tiled_inference(
@@ -474,9 +475,10 @@ class ReconstructionEvaluator:
         n_ok = n_total - n_errors
         if n_errors:
             print_warning(f"{n_errors:,} volume(s) failed and were skipped.")
-        print_success(
-            f"Evaluated {n_ok:,}/{n_total:,} volumes. "
-            f"Results saved to {self.output_csv_path}"
-        )
+        if rows:
+            print_success(
+                f"Evaluated {n_ok:,}/{n_total:,} volumes. "
+                f"Results saved to {self.output_csv_path}"
+            )
 
         return results_df

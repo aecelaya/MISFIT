@@ -92,6 +92,7 @@ def test_evaluate_entry_forwards_the_config_policy(files):
 
     index, config = files
     with patch("misfit.cli.evaluate_entrypoint.ReconstructionEvaluator") as ev:
+        ev.return_value.run.return_value.empty = False
         evaluate_entry(["--checkpoint", "c.pt", "--config", str(config),
                         "--index", str(index), "--output-csv", "o.csv"])
     assert ev.call_args.kwargs["normalization_policy"] == POLICY

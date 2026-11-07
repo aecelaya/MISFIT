@@ -545,6 +545,31 @@ def test_run_inference_amp_disabled_uses_nullcontext(evaluator_setup):
     assert mask.shape == (32, 32, 32)
 
 
+def test_run_inference_converts_bf16_output_for_numpy(evaluator_setup):
+    """Autocast returns bfloat16 on GPU, which .numpy() rejects without .float()."""
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res)
+    ev.model = lambda _: {
+        "reconstruction": torch.zeros(1, 1, 32, 32, 32, dtype=torch.bfloat16),
+        "mask": torch.zeros(1, 1, 32, 32, 32, dtype=torch.bfloat16),
+    }
+
+    recon, mask = ev._run_inference(np.zeros((32, 32, 32), dtype=np.float32))
+    assert recon.dtype == np.float32
+    assert mask.dtype == np.float32
+
+
+def test_run_all_volumes_fail_does_not_report_success(evaluator_setup):
+    ckpt, idx, res = evaluator_setup
+    ev = _make_evaluator(ckpt, idx, res)
+
+    with patch.object(ev, "_load_and_normalize", return_value=None), \
+         patch("misfit.evaluation.evaluator.print_success") as mock_success:
+        assert ev.run().empty
+
+    mock_success.assert_not_called()
+
+
 def test_run_partial_errors_prints_warning(evaluator_setup, tmp_path):
     """When some volumes fail n_errors > 0 → print_warning path."""
     from misfit.evaluation.evaluator import ReconstructionEvaluator
