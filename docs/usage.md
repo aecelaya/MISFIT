@@ -51,18 +51,19 @@ assign the `split` column:
 ```json
 {
   "val": 0.05,
-  "test": 0.05,
-  "max_val": 500,
+  "test": 0,
+  "max_val": 128,
   "max_test": 500,
   "seed": 42
 }
 ```
 
-By default, val and test each get 5% of the volumes, capped at 500, and train
-gets the rest. A 1,000-volume corpus splits 900/50/50; a 100,000-volume corpus
-splits 99,000/500/500. Validation only tracks the reconstruction loss, and the
-real evaluation of a pretrained encoder is on downstream tasks, so neither split
-needs to grow with the corpus.
+By default, val gets 5% of the volumes, capped at 128 to match `--val-volumes`,
+and train gets the rest. A 1,000-volume corpus splits 950 train and 50 val; a
+100,000-volume corpus splits 99,872 and 128. There's no test split by default:
+validation only tracks the reconstruction loss, and the real evaluation of a
+pretrained encoder is on downstream tasks, with test sets for those tasks. To
+hold out a test split anyway, set `test`.
 
 - `val` / `test`: a fraction in [0, 1) of the corpus, or a whole number of
   volumes (e.g. `"val": 200`). Use `0` for no split. A nonzero fraction always
@@ -79,8 +80,8 @@ its original meaning.
 Splits are assigned per volume by default. If your corpus has several volumes
 per patient (multiple sequences, timepoints, or scans), add a `group` column
 (e.g. a subject ID) to the `--input` file. All volumes in a group land in the
-same split, so the same patient never appears in both training and test. Rows
-with an empty `group` are split individually. With groups, val and test may hold
+same split, so the same patient never appears in more than one. Rows with an
+empty `group` are split individually. With groups, val and test may hold
 slightly more than their target size, since groups are never broken up.
 
 ```csv
@@ -362,7 +363,7 @@ misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
                 --output-csv  /runs/exp1/eval_results.csv
 ```
 
-Evaluate on the test split.
+Evaluate on a test split, if you set one when indexing.
 
 ```console
 misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
@@ -526,7 +527,7 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --output-dir         /data/embeddings
 ```
 
-Embed only the test split.
+Embed only a test split, if you set one when indexing.
 
 ```console
 misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \

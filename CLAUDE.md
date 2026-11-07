@@ -154,12 +154,13 @@ statistics.
 
 ### Index splits (`preprocessing/indexer.py`)
 
-Val and test default to 5% of the corpus each, capped at 500 volumes
-(`DEFAULT_SPLIT_CONFIG`); train takes the rest. Validation only tracks
-reconstruction loss, and real encoder evaluation is downstream, so held-out sets
-shouldn't grow with the corpus — 80/10/10 withheld 20k volumes from a 100k
-pretraining run. Integer sizes are exact counts and are not capped. A legacy
-config (has a `train` key) keeps its old ratio meaning.
+Val defaults to 5% of the corpus, capped at 128 volumes to match
+`--val-volumes`, with no test split (`DEFAULT_SPLIT_CONFIG`); train takes the
+rest. Validation only tracks reconstruction loss, and real encoder evaluation is
+downstream with its own test sets, so nothing reads a test split by default and
+held-out sets shouldn't grow with the corpus. A `test` value still works
+(`max_test` caps a fraction). Integer sizes are exact counts and are not capped.
+A legacy config (has a `train` key) keeps its old ratio meaning.
 
 An optional `group` column in the `--input` file (e.g. subject ID) keeps all of
 a group's volumes in one split: `assign_splits` shuffles groups and deals them

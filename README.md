@@ -142,8 +142,8 @@ misfit_index --input  /data/paths.csv \
 ```
 
 The `--input` CSV must have a `path` column with absolute paths to `.nii` or
-`.nii.gz` files. Val and test each get 5% of the volumes, capped at 500, and
-train gets the rest; change this in the auto-generated `index_config.json`
+`.nii.gz` files. Val gets 5% of the volumes, capped at 128, train gets the rest,
+and there's no test split; change this in the auto-generated `index_config.json`
 sidecar. Add an optional `group` column (e.g. a subject ID) to keep all of a
 patient's volumes in the same split.
 
@@ -189,21 +189,14 @@ have to re-specify model flags.
 ### Stage 3 — Evaluation (`misfit_evaluate`) and Inspection (`misfit_inspect`)
 
 `misfit_evaluate` computes reconstruction metrics (MAE, MSE, PSNR, SSIM) and
-writes a per-volume CSV. It defaults to the `val` split; pass `--split test` to
-evaluate on the test set, or `--split ""` for all rows.
+writes a per-volume CSV. It defaults to the `val` split; pass `--split ""` for
+all rows.
 
 ```console
 misfit_evaluate --checkpoint /runs/exp1/models/final_model.pt \
                 --index      /data/index.parquet \
                 --config     /runs/exp1/config.json \
                 --output-csv /runs/exp1/eval_results.csv
-
-# Evaluate on the test split
-misfit_evaluate --checkpoint /runs/exp1/models/final_model.pt \
-                --index      /data/index.parquet \
-                --config     /runs/exp1/config.json \
-                --output-csv /runs/exp1/test_results.csv \
-                --split      test
 ```
 
 `misfit_inspect` reconstructs volumes and saves outputs under two subdirectories
@@ -259,13 +252,6 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings
-
-# Embed only the test split
-misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
-             --index               /data/index.parquet \
-             --config              /runs/exp1/config.json \
-             --output-dir          /data/embeddings \
-             --split               test
 ```
 
 `misfit_embed_train` fine-tunes a lightweight aggregator on the **cached

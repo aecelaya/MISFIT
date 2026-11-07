@@ -36,6 +36,11 @@ All notable changes to MISFIT are listed here, newest first. Releases before
   `checkpoint.pt` still has what `--resume` needs. Update scripts that read
   `best_model.pt`.
 - **`--val-every` now defaults to 50**, from 1.
+- **New indexes have no test split by default,** and val is capped at 128
+  volumes, from 500, to match `--val-volumes`. Nothing reads a test split unless
+  you ask for one, and a pretrained encoder's real test is on downstream tasks
+  with their own test sets. Set `test` in the split file to hold one out.
+  Existing split files keep their meaning.
 - **Training stops with an error if the loss or gradient norm becomes NaN or
   infinite,** before saving broken weights, and warns if a validation loss is
   more than 1.5 times the lowest so far.
