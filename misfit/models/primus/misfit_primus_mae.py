@@ -135,6 +135,8 @@ class PrimusMAE(MISFITModel):
         self.img_size = img_size
         self.mask_patch_size = mask_patch_size
         self.mask_ratio = mask_ratio
+        self.num_cubes = math.prod([dim // mask_patch_size for dim in img_size])
+        self.tokens_per_cube = (mask_patch_size // self.token_size) ** 3
 
         # Build MIST's Primus with one output channel per input channel, so its
         # patch decoder reconstructs the image. Its mask_token buffer is an
@@ -201,9 +203,7 @@ class PrimusMAE(MISFITModel):
         """
         if mask_ratio is None:
             mask_ratio = self.mask_ratio
-        num_cubes = math.prod(dim // self.mask_patch_size for dim in self.img_size)
-        tokens_per_cube = (self.mask_patch_size // self.token_size) ** 3
-        num_visible = (num_cubes - int(mask_ratio * num_cubes)) * tokens_per_cube
+        num_visible = (self.num_cubes - int(mask_ratio * self.num_cubes)) * self.tokens_per_cube
         if num_visible == 0:
             raise ValueError("mask_ratio masks every token; nothing is left to encode.")
 
