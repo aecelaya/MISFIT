@@ -204,6 +204,14 @@ patch size then sets the model size:
     whose kernel shapes differ (anisotropic MIST data) are skipped; MIST
     warns about the mismatch rather than failing.
 
+`--model resenc-pocket` is the same network with 32 filters in every stage
+instead of doubling to 320, as MIST's `resenc-pocket`: ~1.8M parameters (1.4M
+encoder) at six stages. It needs MIST 3.0 or later
+(`pip install -U --pre mist-medical`); with an older MIST, MISFIT stops with an
+error that says so. Fine-tune it in MIST with `--model resenc-pocket`; MIST
+rejects a pocket encoder for `resenc` and the reverse. nnFoundationCNN weights
+are sized for `resenc` and don't load into `resenc-pocket`.
+
 <!-- prettier-ignore -->
 !!!note
     The model variant is locked into `config.json` at the start of training and
@@ -771,7 +779,7 @@ results/
 Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
 architecture must match the one used during MISFIT pretraining — both tools use
 the same names (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
-`resenc`) for the same networks:
+`resenc`, `resenc-pocket`) for the same networks:
 
 ```console
 mist_train \
@@ -826,6 +834,7 @@ annotated cases is small relative to the model capacity.
 !!! note
     MISFIT encoder weights are compatible with the MIST architectures MISFIT
     can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
-    `resenc`, `primus-medium`, `primus-large`, and `primus-x`. Other MIST
+    `resenc`, `resenc-pocket` (MIST 3.0+), `primus-medium`, `primus-large`,
+    and `primus-x`. Other MIST
     architectures (nnUNet, MedNeXt, PrimusV2, FMG-Net, W-Net) are not yet
     available in MISFIT.

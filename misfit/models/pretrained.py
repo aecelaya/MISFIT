@@ -99,6 +99,16 @@ def load_model_weights(model: nn.Module, checkpoint: dict) -> None:
             )
             if keys
         )
+        if getattr(model, "use_pocket_model", False):
+            raise ValueError(
+                f"Checkpoint weights don't match resenc-pocket: {details}. "
+                "resenc-pocket keeps 32 filters in every stage, so "
+                "nnFoundationCNN and other nnssl/nnU-Net ResEnc checkpoints "
+                "(sized for resenc's 32 to 320 filters) don't load into it. "
+                "Use --model resenc for those, or pass a resenc-pocket "
+                "checkpoint from MISFIT with the same --patch-size and "
+                "--target-spacing."
+            )
         raise ValueError(
             f"Checkpoint weights don't match {type(model).__name__}: {details}. "
             "Check --model, --patch-size, and --target-spacing; for example, "

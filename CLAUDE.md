@@ -270,6 +270,15 @@ uses 160³, nnFoundationCNN used 192³). A MIST `resenc` planned with more stage
 or anisotropic kernels still loads every matching tensor; MIST skips the rest
 and warns. Same `img_size` constraints as SwinMAE (÷32, ÷`mask_patch_size`).
 
+`--model resenc-pocket` is `ResEncMAE(use_pocket_model=True)`: 32 filters per
+stage (~1.8M params at 6 stages). `use_pocket_model` exists only in MIST ≥
+3.0.0rc0, so `_require_pocket_support` checks `ResEncUNet`'s signature and
+raises `ImportError` on older MIST; plain `resenc` never passes the argument, so
+the 2.4 floor stands. Tests that build the real pocket network skip on old MIST;
+the check and pass-through are tested with stand-ins, so coverage holds on 2.4.
+`load_model_weights` gives a pocket-specific error (nnFoundationCNN doesn't
+fit).
+
 ### `config.json` as source of truth
 
 `misfit_train` writes `config.json` to the results directory. All downstream

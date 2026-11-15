@@ -168,8 +168,8 @@ Run training with `misfit_train`:
 ### Model
 
 - `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
-  `swinunetr-large`, `resenc`, `primus-medium`, `primus-large`, or `primus-x`.
-  _(default: `swinunetr-base`)_ See
+  `swinunetr-large`, `resenc`, `resenc-pocket`, `primus-medium`, `primus-large`,
+  or `primus-x`. _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
 - `--patch-size X Y Z`: Spatial crop size fed to the model in voxels (at
   `--target-spacing` when set). Must be divisible by 32 (by 8 for `primus-*`).

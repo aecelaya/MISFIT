@@ -8,6 +8,11 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 
 ### Added
 
+- **ResEnc Pocket** (`--model resenc-pocket`) — ResEnc with 32 filters in every
+  stage (~1.8M parameters at six stages), matching MIST's `resenc-pocket`. Needs
+  MIST 3.0 or later; MISFIT still requires only 2.4 and stops with a clear error
+  if the installed MIST is older. nnFoundationCNN weights don't fit it.
+
 - **Primus** (`--model primus-medium`, `primus-large`, `primus-x`) — MIST's
   transformer-centric Primus pretrained as a masked autoencoder the way nnssl
   does it: masked tokens are removed before the encoder, and a small transformer

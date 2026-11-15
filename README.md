@@ -173,7 +173,7 @@ Key options:
 
 | Flag                     | Default                 | Description                                        |
 | ------------------------ | ----------------------- | -------------------------------------------------- |
-| `--model`                | `swinunetr-base`        | `swinunetr-*`, `resenc`, or `primus-*` (see below) |
+| `--model`                | `swinunetr-base`        | `swinunetr-*`, `resenc*`, or `primus-*` (below)    |
 | `--patch-size X Y Z`     | `96 96 96`              | Spatial crop size (must be divisible by 32)        |
 | `--target-spacing X Y Z` | off (native)            | Resample volumes to this spacing (e.g. `1 1 1`)    |
 | `--epochs`               | `1000`                  | Training epochs of `--steps-per-epoch` steps each  |
@@ -278,6 +278,7 @@ The input CSV has four columns: `volume_id`, `split`, `features_path`, `label`.
 | SwinUNETR Base  | `swinunetr-base`  | ~28M (18.6M encoder)  | Standard pretraining (default)         |
 | SwinUNETR Large | `swinunetr-large` | ~110M (73.9M encoder) | Large-scale datasets, maximum capacity |
 | ResEnc          | `resenc`          | ~102M (90M encoder)¹  | nnU-Net/nnssl-style CNN pretraining    |
+| ResEnc Pocket   | `resenc-pocket`   | ~1.8M (1.4M encoder)¹ | Small CNN; needs MIST ≥ 3.0            |
 | Primus Medium   | `primus-medium`   | ~166M (146M encoder)² | nnssl-style transformer pretraining    |
 | Primus Large    | `primus-large`    | ~381M (324M encoder)² | Larger Primus                          |
 | PrimusX         | `primus-x`        | ~649M (539M encoder)² | The nnFoundationViT network            |

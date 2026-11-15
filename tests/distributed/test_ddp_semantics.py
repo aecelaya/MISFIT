@@ -13,6 +13,7 @@ the fast suite CPU/single-process). Run them with::
 
     pytest -m distributed
 """
+import inspect
 import os
 import socket
 import time
@@ -28,6 +29,11 @@ pytestmark = pytest.mark.distributed
 
 if not dist.is_available() or not dist.is_gloo_available():
     pytest.skip("torch.distributed gloo backend unavailable", allow_module_level=True)
+
+
+def _mist_has_resenc_pocket() -> bool:
+    from mist.models.resenc.mist_resenc import ResEncUNet
+    return "use_pocket_model" in inspect.signature(ResEncUNet).parameters
 
 
 def _free_port() -> int:
@@ -132,7 +138,13 @@ def _guard_worker(rank: int, world_size: int, results_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("model_name", ["swinunetr", "resenc", "primus"])
+@pytest.mark.parametrize("model_name", [
+    "swinunetr",
+    "resenc",
+    pytest.param("resenc-pocket", marks=pytest.mark.skipif(
+        not _mist_has_resenc_pocket(), reason="needs mist-medical>=3.0.0rc0")),
+    "primus",
+])
 def test_ddp_synchronizes_gradients_on_window_end(model_name):
     """is_last_accum=True → DDP all-reduces, so gradients match across ranks."""
     mp.spawn(_grad_sync_worker, args=(2, _free_port(), True, model_name),
