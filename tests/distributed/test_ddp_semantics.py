@@ -105,6 +105,11 @@ def _grad_sync_worker(
     checksum = float(sum(p.grad.double().sum() for p in ddp.parameters()))
     gathered: list = [None] * world_size
     dist.all_gather_object(gathered, checksum)
+    # Wait for every rank before tearing down, as MAETrainer.train() does. A
+    # rank that destroys the group (or, on rank 0, the rendezvous store) while
+    # the other is still finishing the collective aborts the other with
+    # "terminate called without an active exception".
+    dist.barrier()
     dist.destroy_process_group()
 
     spread = max(gathered) - min(gathered)

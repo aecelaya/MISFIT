@@ -65,9 +65,13 @@ GitHub Release, mirroring MIST:
    - `.github/workflows/python-publish.yml` builds the sdist+wheel and uploads
      to PyPI using the `PYPI_API_TOKEN` repo secret.
    - `.github/workflows/docker-publish.yml` then fires (`workflow_run`),
-     rebuilds from `./Dockerfile` (which `pip install`s the just-published PyPI
-     package), and pushes `mistmedical/misfit:<version>` + `:latest`. Needs repo
-     secrets `DOCKER_USERNAME` / `DOCKER_PASSWORD`.
+     rebuilds from `./Dockerfile`, and pushes `mistmedical/misfit:<version>` +
+     `:latest`. Needs repo secrets `DOCKER_USERNAME` / `DOCKER_PASSWORD`. The
+     image builds on `mistmedical/mist:<version>` (the `MIST_IMAGE` arg), which
+     supplies MIST, a C compiler for `torch.compile`, cuDNN 9.15+, a default
+     username, and a writable Triton cache; the workflow passes
+     `MISFIT_VERSION`, and the build asserts the installed MISFIT and MIST
+     versions. Bump `MIST_IMAGE` when MIST releases.
 
 The `-alpha`/`-beta`/`-rc` suffix in `pyproject.toml` is transformed to the PEP
 440 form (`a0`/`b0`/`rc0`) for the Docker tag.
