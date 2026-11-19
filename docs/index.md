@@ -28,6 +28,10 @@ fine-tuned for downstream classification tasks.
 
 ## What's New
 
+- November 2026 — **MISFIT 0.3.0-alpha** — Primus transformer pretraining and
+  nnFoundationViT weights, a ResEnc Pocket encoder (needs MIST 3.0), compiled
+  training by default, and the final model kept instead of the lowest-loss one.
+  See the [changelog](changelog.md).
 - November 2026 — **MISFIT 0.2.0-alpha** — ResEnc pretraining, encoders built
   from MIST, loading nnFoundation weights, normalization policies, and
   step-based training for large corpora. Requires MIST 2.4.0. See the

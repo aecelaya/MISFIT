@@ -4,7 +4,14 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 0.2.0-alpha are described on the
 [GitHub releases page](https://github.com/mist-medical/MISFIT/releases).
 
-## Unreleased
+## 0.3.0-alpha — 2026-11-19
+
+### Docker
+
+- **The image builds on `mistmedical/mist:3.0.0rc0`,** so it has MIST 3.0
+  (needed for `resenc-pocket`), a C compiler for compiled training, cuDNN 9.15
+  or later, and runs under a numeric UID. The publish workflow pins the image to
+  the released MISFIT version, and the build checks it.
 
 ### Added
 
