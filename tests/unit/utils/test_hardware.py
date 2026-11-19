@@ -1,10 +1,12 @@
 """Tests for misfit.utils.hardware — BF16 capability detection and AMP resolution."""
 import contextlib
+import types
 import warnings
 
 import pytest
 import torch
 
+from misfit.utils import hardware
 from misfit.utils.hardware import (
     autocast_context,
     bf16_supported,
@@ -202,3 +204,70 @@ def test_autocast_context_enabled_uses_cpu_device_type_on_cpu(monkeypatch):
     monkeypatch.setattr("misfit.utils.hardware.get_accelerator_type", lambda: "cpu")
     ctx = autocast_context(True)
     assert ctx.device == "cpu"
+
+
+# ---------------------------------------------------------------------------
+# resolve_compile
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("requested", "accelerator", "os_name", "expected"),
+    [
+        (True, "cuda", "posix", True),
+        (True, "rocm", "posix", True),
+        (True, "cpu", "posix", False),
+        (True, "cuda", "nt", False),
+        (False, "cuda", "posix", False),
+    ],
+)
+def test_resolve_compile(monkeypatch, requested, accelerator, os_name, expected):
+    monkeypatch.setattr(hardware, "get_accelerator_type", lambda: accelerator)
+    monkeypatch.setattr(hardware.os, "name", os_name)
+    assert hardware.resolve_compile(requested) is expected
+
+
+# ---------------------------------------------------------------------------
+# tune_gpu_math
+# ---------------------------------------------------------------------------
+
+
+def test_tune_gpu_math_is_skipped_on_cpu(monkeypatch):
+    monkeypatch.setattr(hardware, "get_accelerator_type", lambda: "cpu")
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
+    hardware.tune_gpu_math()
+    assert torch.backends.cudnn.benchmark is False
+
+
+def _restore_math_settings(monkeypatch):
+    precision = torch.get_float32_matmul_precision()
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
+    monkeypatch.setattr(hardware, "get_accelerator_type", lambda: "cuda")
+    return precision
+
+
+def test_tune_gpu_math_turns_on_the_fast_settings(monkeypatch):
+    precision = _restore_math_settings(monkeypatch)
+    conv = types.SimpleNamespace(fp32_precision="fp32")
+    monkeypatch.setattr(torch.backends.cudnn, "conv", conv, raising=False)
+    try:
+        hardware.tune_gpu_math()
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        torch.set_float32_matmul_precision(precision)
+    assert conv.fp32_precision == "tf32"
+    assert torch.backends.cudnn.benchmark is True
+
+
+def test_tune_gpu_math_on_older_pytorch(monkeypatch):
+    """Before PyTorch 2.5 there is no cudnn.conv, only allow_tf32."""
+    precision = _restore_math_settings(monkeypatch)
+    fake_cudnn = types.SimpleNamespace(allow_tf32=False, benchmark=False)
+    monkeypatch.setattr(hardware.torch.backends, "cudnn", fake_cudnn)
+    try:
+        hardware.tune_gpu_math()
+    finally:
+        torch.set_float32_matmul_precision(precision)
+    assert fake_cudnn.allow_tf32 is True
+    assert fake_cudnn.benchmark is True
+

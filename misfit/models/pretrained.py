@@ -4,9 +4,10 @@ Used both to initialize pretraining (``misfit_train --init-weights``) and to
 rebuild a model for evaluation, inspection, encoding, and embedding, so every
 command accepts the same checkpoint formats:
 
-* a MISFIT checkpoint (``checkpoint.pt`` / ``best_model.pt``; weights under
+* a MISFIT checkpoint (``checkpoint.pt`` / ``final_model.pt``; weights under
   ``"model"``),
-* an nnssl checkpoint such as nnFoundationCNN's ``checkpoint_final.pth``
+* an nnssl checkpoint such as nnFoundationCNN's or nnFoundationViT's
+  ``checkpoint_final.pth``
   (weights under ``"network_weights"``, nnU-Net parameter names), or
 * a plain state dict.
 
@@ -98,13 +99,24 @@ def load_model_weights(model: nn.Module, checkpoint: dict) -> None:
             )
             if keys
         )
+        if getattr(model, "use_pocket_model", False):
+            raise ValueError(
+                f"Checkpoint weights don't match resenc-pocket: {details}. "
+                "resenc-pocket keeps 32 filters in every stage, so "
+                "nnFoundationCNN and other nnssl/nnU-Net ResEnc checkpoints "
+                "(sized for resenc's 32 to 320 filters) don't load into it. "
+                "Use --model resenc for those, or pass a resenc-pocket "
+                "checkpoint from MISFIT with the same --patch-size and "
+                "--target-spacing."
+            )
         raise ValueError(
             f"Checkpoint weights don't match {type(model).__name__}: {details}. "
             "Check --model, --patch-size, and --target-spacing; for example, "
             "nnFoundationCNN needs --model resenc --patch-size 192 192 192 "
             "(any patch of at least 128^3 gives the same network) and either "
             "no --target-spacing (native resolution, as nnssl pretrained it) "
-            "or an isotropic one such as --target-spacing 1 1 1."
+            "or an isotropic one such as --target-spacing 1 1 1. "
+            "nnFoundationViT needs --model primus-x."
         )
     model.load_state_dict(state_dict, strict=False)
 

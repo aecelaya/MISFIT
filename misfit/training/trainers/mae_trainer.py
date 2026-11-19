@@ -24,6 +24,7 @@ step), validation, logging, and checkpoints run on the same cadence whatever
 the corpus size.
 """
 import argparse
+import math
 import os
 import time
 from collections.abc import Iterator
@@ -49,6 +50,7 @@ from misfit.normalization.normalization_registry import (
     DEFAULT_NORMALIZATION_POLICY,
     get_normalization_policy_name,
 )
+from misfit.training.config_validation import warn_about_config_problems
 from misfit.training.lr_schedulers.lr_scheduler_registry import get_lr_scheduler
 from misfit.training.optimizers.optimizer_registry import get_optimizer
 from misfit.training.trainer_constants import tc
@@ -68,6 +70,7 @@ from misfit.utils import (
     resolve_amp,
     write_json_file,
 )
+from misfit.utils.hardware import resolve_compile, tune_gpu_math
 from misfit.utils.resampling import get_target_spacing
 
 
@@ -79,6 +82,47 @@ def _spacing_list(spacing: tuple[float, ...] | None) -> list[float] | None:
 def _spacing_repr(spacing: tuple[float, ...] | None) -> str:
     """Human-readable target spacing for error messages."""
     return "native resolution (none)" if spacing is None else repr(list(spacing))
+
+
+def _atomic_save(payload: dict, path: Path) -> None:
+    """Write a .tmp file and rename it, so *path* is never left partially written."""
+    tmp = path.with_suffix(".tmp")
+    torch.save(payload, tmp)
+    tmp.rename(path)
+
+
+def _stop_if_not_finite(name: str, value: float, step: int) -> None:
+    """Stop training if a loss or gradient norm has become NaN or infinite.
+
+    The weights are broken from here on, so continuing would only overwrite the
+    saved models and checkpoint with them.
+
+    Raises:
+        RuntimeError: If *value* isn't finite.
+    """
+    if not math.isfinite(value):
+        raise RuntimeError(
+            f"{name} became {value} at step {step}, so training stopped. Files saved "
+            "earlier are intact, and --resume continues from the last checkpoint. If "
+            "this repeats, try a lower --learning-rate."
+        )
+
+
+def _has_drifted(val_loss: float, lowest_val_loss: float) -> bool:
+    """Return whether a validation loss is well above the lowest so far."""
+    return (
+        math.isfinite(lowest_val_loss)
+        and val_loss > tc.VAL_DRIFT_WARNING_RATIO * lowest_val_loss
+    )
+
+
+def _drift_message(val_loss: float, lowest_val_loss: float) -> str:
+    return (
+        f"Validation loss {format_loss(val_loss)} is more than "
+        f"{tc.VAL_DRIFT_WARNING_RATIO} times the lowest so far "
+        f"({format_loss(lowest_val_loss)}). The model may have diverged; check the "
+        "loss curves before relying on it."
+    )
 
 
 class MAETrainer:
@@ -118,6 +162,10 @@ class MAETrainer:
         # callers that build args by hand (tests, MAETrainer.__new__ users)
         # without a --no-amp field.
         self.amp = not getattr(self.args, "no_amp", False)
+        # Compile for training, like MIST. To turn it off, set training.compile to
+        # false in config.json: a --resume uses the saved value, and resolve_compile
+        # checks it against the hardware.
+        self.compile_model = True
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -144,12 +192,6 @@ class MAETrainer:
             if self.use_cuda:
                 init_kwargs["device_id"] = torch.device("cuda", self.local_rank)
             dist.init_process_group(backend=backend, **init_kwargs)
-
-    def _enable_cudnn_optimizations(self) -> None:
-        if not self.use_cuda:
-            return
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
 
     def _warn_if_underutilizing_gpus(self) -> None:
         """Warn when multiple GPUs are visible but we are not under torchrun.
@@ -193,11 +235,13 @@ class MAETrainer:
             mask_ratio=self.args.mask_ratio,
             target_spacing=self._target_spacing(),
         )
-        # On --resume the checkpoint supplies the weights, so --init-weights
-        # only seeds a fresh run. Every rank loads the same file before DDP
-        # wrapping (DDP would broadcast rank 0's weights anyway).
+        # A checkpoint supplies the weights when resuming, so --init-weights only
+        # seeds a run that has none yet (including --init-only, edit config.json,
+        # --resume). Every rank loads the same file before DDP wrapping (DDP would
+        # broadcast rank 0's weights anyway).
         init_weights = getattr(self.args, "init_weights", None)
-        if init_weights is not None and not self.args.resume:
+        checkpoint_path = Path(self.args.results) / "checkpoints" / "checkpoint.pt"
+        if init_weights is not None and not (self.args.resume and checkpoint_path.exists()):
             load_pretrained_weights(model, init_weights)
             if self.is_main:
                 console.print(
@@ -206,6 +250,11 @@ class MAETrainer:
         model = model.to(self.device)
         if self.is_distributed:
             model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # Compile in place rather than with torch.compile(model), whose wrapper
+        # would add "_orig_mod." to the name of every weight in the checkpoints.
+        if resolve_compile(self.compile_model):
+            model.compile()
+        if self.is_distributed:
             ddp_kwargs = {"bucket_cap_mb": self.args.bucket_cap_mb}
             # device_ids is only valid for single-device (GPU) DDP; a CPU
             # process group must omit it.
@@ -389,14 +438,36 @@ class MAETrainer:
             "epoch":         epoch,
             "step_in_epoch": step_in_epoch,
             "global_step":   global_step,
+            # Named for checkpoints from before MISFIT kept the final model.
             "best_val_loss": best_val_loss,
             "model":         raw_model.state_dict(),
             "optimizer":     optimizer.state_dict(),
             "scheduler":     scheduler.state_dict(),
         }
-        tmp = path.with_suffix(".tmp")
-        torch.save(checkpoint, tmp)
-        tmp.rename(path)
+        _atomic_save(checkpoint, path)
+
+    def _save_final_weights(
+        self, model: nn.Module, models_dir: Path, epochs_done: int, global_step: int
+    ) -> None:
+        """Save the current weights as the run's model and encoder (rank 0 only).
+
+        The final model is what training ended on, not the lowest validation loss:
+        reconstruction loss doesn't say which encoder is best for downstream tasks.
+        Refreshing these at each validation leaves a recent encoder if a job is
+        preempted. Only weights are kept, since checkpoint.pt has what --resume needs
+        and the optimizer state can be several gigabytes.
+        """
+        raw_model = model.module if self.is_distributed else model
+        _atomic_save(
+            {
+                "epoch": epochs_done,
+                "global_step": global_step,
+                "model": raw_model.state_dict(),
+            },
+            models_dir / "final_model.pt",
+        )
+        # In the MIST model's format, for mist_train --pretrained-weights.
+        _atomic_save(raw_model.get_encoder_state_dict(), models_dir / "encoder_weights.pt")
 
     def _load_checkpoint(
         self,
@@ -470,6 +541,7 @@ class MAETrainer:
                 "warmup_epochs": self.args.warmup_epochs,
                 "loss":          self.args.loss,
                 "amp":                        self.amp,
+                "compile":                    self.compile_model,
                 "seed":                       self.args.seed,
                 "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
                 "bucket_cap_mb":              self.args.bucket_cap_mb,
@@ -608,7 +680,11 @@ class MAETrainer:
                 "--overwrite to start fresh."
             )
         if self.args.resume and config_path.exists():
-            self._validate_resume(read_json_file(config_path))
+            saved_config = read_json_file(config_path)
+            if self.is_main:
+                warn_about_config_problems(saved_config)
+            self._validate_resume(saved_config)
+            self.compile_model = saved_config.get("training", {}).get("compile", False)
 
         # Resolve the requested AMP setting against the actual hardware. BF16
         # autocast is only accelerated on GPUs with BF16 matrix hardware (NVIDIA
@@ -650,7 +726,7 @@ class MAETrainer:
 
         self._warn_if_underutilizing_gpus()
         self._setup_distributed()
-        self._enable_cudnn_optimizations()
+        tune_gpu_math()
         set_seed(self.args.seed, self.rank)
 
         # --- Build components ---
@@ -699,22 +775,23 @@ class MAETrainer:
             dist.barrier()
 
         checkpoint_path = checkpoint_dir / "checkpoint.pt"
-        best_model_path = models_dir / "best_model.pt"
+        final_model_path = models_dir / "final_model.pt"
 
         # --- Optionally resume ---
         start_epoch = 0
         start_step = 0
         global_step = 0
-        best_val_loss = float("inf")
+        lowest_val_loss = float("inf")
+        last_val_loss: float | None = None
         if self.args.resume:
-            start_epoch, start_step, global_step, best_val_loss = (
+            start_epoch, start_step, global_step, lowest_val_loss = (
                 self._load_checkpoint(model, optimizer, scheduler, checkpoint_path)
             )
             if self.is_main:
                 console.print(
                     f"[bold]Resumed at epoch {start_epoch + 1}, step "
                     f"{start_step}/{steps_per_epoch} "
-                    f"(best val loss: {format_loss(best_val_loss)})[/bold]"
+                    f"(lowest val loss: {format_loss(lowest_val_loss)})[/bold]"
                 )
 
         # --- TensorBoard (rank 0 only) ---
@@ -732,7 +809,8 @@ class MAETrainer:
                 f"world_size={self.world_size}  "
                 f"epochs={self.args.epochs}  "
                 f"steps_per_epoch={steps_per_epoch}  "
-                f"amp={self.amp}\n"
+                f"amp={self.amp}  "
+                f"compile={resolve_compile(self.compile_model)}\n"
             )
 
         checkpoint_interval = self.args.checkpoint_minutes * 60
@@ -790,6 +868,10 @@ class MAETrainer:
                     lr = optimizer.param_groups[0]["lr"]
                     scheduler.step()
                     agg_loss = self._aggregate_loss(accum_loss / window_size)
+                    # Before anything can be saved: grad_norm catches gradients
+                    # that broke the weights on a step whose loss was still finite.
+                    _stop_if_not_finite("Training loss", agg_loss, global_step + 1)
+                    _stop_if_not_finite("Gradient norm", grad_norm, global_step + 1)
                     train_meter.update(agg_loss)
                     global_step += 1
                     step_in_epoch += 1
@@ -811,7 +893,7 @@ class MAETrainer:
                                 and now - last_checkpoint_time >= checkpoint_interval):
                             self._save_checkpoint(
                                 model, optimizer, scheduler,
-                                epoch, global_step, best_val_loss,
+                                epoch, global_step, lowest_val_loss,
                                 checkpoint_path, step_in_epoch=step_in_epoch,
                             )
                             last_checkpoint_time = now
@@ -825,7 +907,7 @@ class MAETrainer:
                 or epoch + 1 == self.args.epochs
             )
             val_loss: float | None = None
-            if run_validation:
+            if run_validation and len(val_loader) > 0:
                 if self.is_distributed:
                     dist.barrier()
 
@@ -844,6 +926,7 @@ class MAETrainer:
                         if self.is_main and vpb is not None:
                             vpb.update(loss=val_meter.value)
                 val_loss = val_meter.value
+                _stop_if_not_finite("Validation loss", val_loss, global_step)
 
             # ---- Logging & checkpointing (rank 0 only) ----
             # lr is still the last step's LR, matching the progress bar.
@@ -860,48 +943,35 @@ class MAETrainer:
                     writer.add_scalar("loss/val", val_loss, global_step)
                 writer.flush()
 
-                improved = val_loss is not None and val_loss < best_val_loss
                 if val_loss is None:
                     val_text = "val_loss=—"
-                    status = f"[dim](best: {format_loss(best_val_loss)})[/dim]"
+                    status = ""
                 else:
                     val_text = f"val_loss={format_loss(val_loss)}"
-                    status = (
-                        f"[green]↓ {format_loss(best_val_loss)} → "
-                        f"{format_loss(val_loss)}[/green]"
-                        if improved
-                        else f"[dim](best: {format_loss(best_val_loss)})[/dim]"
-                    )
+                    status = f"[dim](lowest: {format_loss(min(val_loss, lowest_val_loss))})[/dim]"
                 console.print(
                     f"  train_loss={format_loss(train_meter.value)}  "
                     f"{val_text}  lr={lr:.2e}  "
                     f"{samples_per_sec:.3g} samples/s  {status}"
                 )
 
-                # Update best_val_loss before saving rolling checkpoint so that
-                # a resume always restores the correct best-so-far value.
-                if improved:
-                    best_val_loss = val_loss
+                # Update the lowest loss before saving the rolling checkpoint, so
+                # that a resume restores it for the drift warning.
+                if val_loss is not None:
+                    last_val_loss = val_loss
+                    if _has_drifted(val_loss, lowest_val_loss):
+                        print_warning(_drift_message(val_loss, lowest_val_loss))
+                    lowest_val_loss = min(val_loss, lowest_val_loss)
 
                 # Save the rolling checkpoint at the end of every epoch.
                 self._save_checkpoint(
                     model, optimizer, scheduler,
-                    epoch + 1, global_step, best_val_loss, checkpoint_path,
+                    epoch + 1, global_step, lowest_val_loss, checkpoint_path,
                 )
                 last_checkpoint_time = time.monotonic()
 
-                # Save best model when validation loss improves.
-                if improved:
-                    self._save_checkpoint(
-                        model, optimizer, scheduler,
-                        epoch + 1, global_step, best_val_loss, best_model_path,
-                    )
-                    # Export encoder weights in MIST-compatible format so the
-                    # pretrained encoder can be passed directly to mist_train
-                    # via --pretrained-weights.
-                    raw_model = model.module if self.is_distributed else model
-                    encoder_weights_path = models_dir / "encoder_weights.pt"
-                    torch.save(raw_model.get_encoder_state_dict(), encoder_weights_path)
+                if run_validation:
+                    self._save_final_weights(model, models_dir, epoch + 1, global_step)
 
             if self.is_distributed:
                 dist.barrier()
@@ -913,7 +983,13 @@ class MAETrainer:
             dist.destroy_process_group()
         if self.is_main:
             console.print(
-                f"\n[bold green]Training complete.[/bold green]  "
-                f"Best val loss: {format_loss(best_val_loss)}\n"
-                f"Best model saved to: {best_model_path}"
+                f"\n[bold green]Training complete.[/bold green]\n"
+                f"Final model saved to: {final_model_path}"
             )
+            if last_val_loss is not None:
+                console.print(
+                    f"Final val loss: {format_loss(last_val_loss)}  "
+                    f"(lowest: {format_loss(lowest_val_loss)})"
+                )
+                if _has_drifted(last_val_loss, lowest_val_loss):
+                    print_warning(_drift_message(last_val_loss, lowest_val_loss))

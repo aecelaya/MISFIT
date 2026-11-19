@@ -154,14 +154,19 @@ def _counts(df):
     return df["split"].value_counts().to_dict()
 
 
-def test_assign_splits_default_is_five_percent():
+def test_assign_splits_default_is_five_percent_val_and_no_test():
     result = assign_splits(_ids(1000), DEFAULT_SPLIT_CONFIG, seed=0)
-    assert _counts(result) == {"train": 900, "val": 50, "test": 50}
+    assert _counts(result) == {"train": 950, "val": 50}
 
 
-def test_assign_splits_default_caps_at_500():
+def test_assign_splits_default_caps_val_at_128():
     result = assign_splits(_ids(20_000), DEFAULT_SPLIT_CONFIG, seed=0)
-    assert _counts(result) == {"train": 19_000, "val": 500, "test": 500}
+    assert _counts(result) == {"train": 19_872, "val": 128}
+
+
+def test_assign_splits_fractional_test_keeps_its_default_cap():
+    result = assign_splits(_ids(20_000), {"test": 0.05}, seed=0)
+    assert _counts(result) == {"train": 19_372, "val": 128, "test": 500}
 
 
 def test_assign_splits_null_cap_is_uncapped():
@@ -178,12 +183,12 @@ def test_assign_splits_integer_counts_are_exact_and_uncapped():
 
 def test_assign_splits_missing_keys_use_defaults():
     result = assign_splits(_ids(1000), {}, seed=0)
-    assert _counts(result) == {"train": 900, "val": 50, "test": 50}
+    assert _counts(result) == {"train": 950, "val": 50}
 
 
 def test_assign_splits_nonzero_fraction_gets_at_least_one():
     result = assign_splits(_ids(10), DEFAULT_SPLIT_CONFIG, seed=0)
-    assert _counts(result) == {"train": 8, "val": 1, "test": 1}
+    assert _counts(result) == {"train": 9, "val": 1}
 
 
 def test_assign_splits_zero_fraction_is_empty():
@@ -197,7 +202,7 @@ def test_assign_splits_zero_fraction_is_empty():
     [
         (1, {"train": 1}),
         (2, {"train": 1, "val": 1}),
-        (3, {"train": 1, "val": 1, "test": 1}),
+        (3, {"train": 2, "val": 1}),
     ],
 )
 def test_assign_splits_tiny_corpus_keeps_a_train_volume(n, expected):
@@ -243,7 +248,7 @@ def test_assign_splits_keeps_groups_together():
     result = assign_splits(df, DEFAULT_SPLIT_CONFIG, seed=0)
     assert (result.groupby("group")["split"].nunique() == 1).all()
     # 5% of 800 volumes is 40, dealt out in whole subjects of 4.
-    assert _counts(result) == {"train": 720, "val": 40, "test": 40}
+    assert _counts(result) == {"train": 760, "val": 40}
 
 
 def test_assign_splits_null_groups_are_singletons():

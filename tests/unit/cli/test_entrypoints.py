@@ -9,6 +9,10 @@ import torch
 
 import misfit.models  # noqa
 
+# What ReconstructionEvaluator.run returns when volumes were evaluated.
+_EVALUATED = pd.DataFrame({"volume_id": ["a"]})
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -239,7 +243,7 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
     mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
     with patch(mock_path, autospec=True) as MockEval:
         instance = MockEval.return_value
-        instance.run.return_value = None
+        instance.run.return_value = _EVALUATED
         evaluate_entry([
             "--checkpoint", "best.pt",
             "--config", str(config_path),
@@ -251,6 +255,27 @@ def test_evaluate_entry_calls_evaluator(tmp_path):
         assert kwargs["metrics"] == ["masked_mae", "ssim"]
         assert kwargs["model_config"]["architecture"] == "swinunetr-small"
         instance.run.assert_called_once()
+
+
+def test_evaluate_entry_exits_when_no_volume_was_evaluated(tmp_path):
+    from misfit.cli.evaluate_entrypoint import evaluate_entry
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"model": {"architecture": "swinunetr-small", "patch_size": [96, 96, 96],'
+        ' "mask_patch_size": 16, "mask_ratio": 0.75},'
+        ' "evaluation": {"masked_mae": {}}}'
+    )
+    mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
+    with patch(mock_path, autospec=True) as MockEval:
+        MockEval.return_value.run.return_value = pd.DataFrame()
+        with pytest.raises(SystemExit) as exit_info:
+            evaluate_entry([
+                "--checkpoint", "best.pt",
+                "--config", str(config_path),
+                "--index", "val.parquet",
+                "--output-csv", str(tmp_path / "results.csv"),
+            ])
+    assert exit_info.value.code == 1
 
 
 def test_evaluate_entry_missing_config_exits(tmp_path):
@@ -276,7 +301,7 @@ def test_evaluate_entry_empty_evaluation_section_falls_back_to_defaults(tmp_path
     )
     mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
     with patch(mock_path, autospec=True) as MockEval:
-        MockEval.return_value.run.return_value = None
+        MockEval.return_value.run.return_value = _EVALUATED
         evaluate_entry([
             "--checkpoint", "best.pt",
             "--config", str(config_path),
@@ -298,7 +323,7 @@ def test_evaluate_entry_metrics_flag_overrides_config(tmp_path):
     )
     mock_path = "misfit.cli.evaluate_entrypoint.ReconstructionEvaluator"
     with patch(mock_path, autospec=True) as MockEval:
-        MockEval.return_value.run.return_value = None
+        MockEval.return_value.run.return_value = _EVALUATED
         evaluate_entry([
             "--checkpoint", "best.pt",
             "--config", str(config_path),

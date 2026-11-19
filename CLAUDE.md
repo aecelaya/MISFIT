@@ -6,9 +6,9 @@ Guidance for Claude Code when working in this repository.
 
 MISFIT (Medical Imaging Semantic Foundation Toolkit) trains 3D medical imaging
 foundation models using masked autoencoders (MAE). It reads unlabeled NIfTI
-files and produces a pretrained encoder (SwinUNETR-V2 or ResEnc, built from
-MIST's own models) that transfers directly to MIST for segmentation fine-tuning.
-No labels required.
+files and produces a pretrained encoder (SwinUNETR-V2, ResEnc, or Primus, built
+from MIST's own models) that transfers directly to MIST for segmentation
+fine-tuning. No labels required.
 
 ## Running tests
 
@@ -116,6 +116,7 @@ misfit/
                         EpochSampler (fixed samples per epoch for step-based training)
   models/               MISFITModel base class; SwinMAE (MIST SwinUNETR-V2 + MAE head);
                         ResEncMAE (MIST ResEnc UNet as the MAE network);
+                        PrimusMAE (MIST Primus, token-dropping MAE);
                         masking (shared image-level patch masking)
   training/             MAETrainer; optimizer/LR-scheduler registries; training_utils
   loss_functions/       ReconstructionLoss base; masked_mse, masked_l1, normalized_mse
@@ -153,12 +154,13 @@ statistics.
 
 ### Index splits (`preprocessing/indexer.py`)
 
-Val and test default to 5% of the corpus each, capped at 500 volumes
-(`DEFAULT_SPLIT_CONFIG`); train takes the rest. Validation only tracks
-reconstruction loss and picks `best_model.pt`, and real encoder evaluation is
-downstream, so held-out sets shouldn't grow with the corpus — 80/10/10 withheld
-20k volumes from a 100k pretraining run. Integer sizes are exact counts and are
-not capped. A legacy config (has a `train` key) keeps its old ratio meaning.
+Val defaults to 5% of the corpus, capped at 128 volumes to match
+`--val-volumes`, with no test split (`DEFAULT_SPLIT_CONFIG`); train takes the
+rest. Validation only tracks reconstruction loss, and real encoder evaluation is
+downstream with its own test sets, so nothing reads a test split by default and
+held-out sets shouldn't grow with the corpus. A `test` value still works
+(`max_test` caps a fraction). Integer sizes are exact counts and are not capped.
+A legacy config (has a `train` key) keeps its old ratio meaning.
 
 An optional `group` column in the `--input` file (e.g. subject ID) keeps all of
 a group's volumes in one split: `assign_splits` shuffles groups and deals them
@@ -213,7 +215,7 @@ Defaults: `masked_mae`, `masked_mse`, `masked_psnr` (`DEFAULT_METRICS`). `ssim`
 is registered but opt-in via `--metrics ssim` — it has no consistent space here;
 use `misfit_inspect` for a viewer-space read.
 
-### Model architectures (`models/swinunetr/`, `models/resenc/`)
+### Model architectures (`models/swinunetr/`, `models/resenc/`, `models/primus/`)
 
 MISFIT depends on MIST (`mist-medical>=2.4.0` in `pyproject.toml`; ResEnc first
 shipped in 2.4.0) for model architectures: encoders are built from
@@ -268,6 +270,15 @@ uses 160³, nnFoundationCNN used 192³). A MIST `resenc` planned with more stage
 or anisotropic kernels still loads every matching tensor; MIST skips the rest
 and warns. Same `img_size` constraints as SwinMAE (÷32, ÷`mask_patch_size`).
 
+`--model resenc-pocket` is `ResEncMAE(use_pocket_model=True)`: 32 filters per
+stage (~1.8M params at 6 stages). `use_pocket_model` exists only in MIST ≥
+3.0.0rc0, so `_require_pocket_support` checks `ResEncUNet`'s signature and
+raises `ImportError` on older MIST; plain `resenc` never passes the argument, so
+the 2.4 floor stands. Tests that build the real pocket network skip on old MIST;
+the check and pass-through are tested with stand-ins, so coverage holds on 2.4.
+`load_model_weights` gives a pocket-specific error (nnFoundationCNN doesn't
+fit).
+
 ### `config.json` as source of truth
 
 `misfit_train` writes `config.json` to the results directory. All downstream
@@ -306,6 +317,16 @@ Validation runs every `--val-every` epochs and after the last, on the first
 (`fork_rng` + reseed): every pass scores the same masks on the same volumes, so
 the curve is comparable, and the training RNG is restored afterwards.
 
+Validation monitors; it doesn't select. `_save_final_weights` writes
+`models/final_model.pt` (weights only; `checkpoint.pt` has the optimizer) and
+`encoder_weights.pt` at each validation, so reconstruction loss never picks the
+encoder. Guards: `_stop_if_not_finite` raises on NaN/inf loss or gradient norm
+before anything is saved, and `_has_drifted` warns above
+`tc.VAL_DRIFT_WARNING_RATIO` (1.5) times the lowest so far, compared directly
+because fixed masks keep validation low noise. An empty val split skips
+validation and still saves. Checkpoints keep the key `best_val_loss` so older
+ones resume; it now only feeds the drift warning.
+
 Checkpoints store `(epoch, step_in_epoch)`: `(e + 1, 0)` at epoch end, `(e, s)`
 mid-epoch. Rank 0 alone saves mid-epoch when `--checkpoint-minutes` have passed
 (no collective needed — other ranks just continue). TensorBoard scalars are all
@@ -341,6 +362,52 @@ no index columns. For nnFoundation also use `--loss masked_mse` (nnssl's
 nnFoundation's head never learned — with it, `misfit_evaluate` reports
 nnFoundation as worse than the naive baseline.
 
+### Primus (`models/primus/`)
+
+`PrimusMAE(MISFITModel)` (`--model primus-medium|large|x`) is the nnssl `EvaMAE`
+recipe, not image-level masking: `generate_patch_mask` (the shared masking)
+picks cubes, `_visible_token_indices` turns the voxel mask into tokens, and
+masked tokens are removed before the encoder. `mask_patch_size` must be a
+multiple of the 8-voxel token. PrimusV2 is deliberately absent: its tokenizer's
+overlapping receptive fields would leak masked voxels into visible tokens.
+
+- The tokenizer, encoder, and patch decoder are MIST's `Primus` modules; the
+  decoder is MIST's `Eva` with its own position embedding. MIST's `Eva.forward`
+  has no token dropping, so `_encode_visible` runs its pieces in the reference
+  order: `pos_embed`, drop, blocks with per-sample `rope` of shape
+  `(B, 1, N, E)`, norm.
+- Parameter names must stay MIST's and nnssl's (`down_projection.*`, `eva.*`,
+  `up_projection.*`, `decoder.*`, `mask_token`), so there is no `encoder`
+  submodule: `encoder` is a method that returns `[feature_map]`, keeping the
+  `model.encoder(x)[-1]` contract.
+- `adapt_pretrained_state_dict` resizes both position embeddings for other patch
+  sizes (cubic source grids only).
+- `primus-x` matches a reference built from `dynamic-network-architectures`
+  blocks exactly with nnFoundationViT's weights (max difference 0, patch 64³,
+  same visible tokens). Verified by hand, since that package isn't a dependency.
+  nnssl's sizes: medium decoder (2, 12) and x decoder (8, 16); large's (4, 16)
+  is MISFIT's choice because nnssl has no preset.
+
+### Compile, GPU math, and config warnings
+
+Mirrors MIST 2.5.0. `resolve_compile` and `tune_gpu_math` in `utils/hardware.py`
+are copies, since MISFIT requires only MIST 2.4.0. `training.compile` is on for
+new runs, with no CLI flag, and a config without it doesn't compile. `--resume`
+uses the saved value; to turn it off, edit `config.json` (after `--init-only`
+for a new run; `--init-weights` still applies when no checkpoint exists).
+`model.compile()` is in place (no `_orig_mod.` in checkpoints) and goes before
+DDP. `PrimusMAE._visible_token_indices` avoids `nonzero()`, which would split
+forward into 4 graphs; `test_forward_compiles_as_one_graph` guards that. In a
+tiny CPU check on torch 2.6, compiled `SwinMAE` failed during backward in
+Inductor code generation (not yet known on GPU). The trainer tests fake a GPU,
+so their `patch_cuda` fixture turns compiling off.
+
+`training/config_validation.py` warns on `--resume` and in evaluate, inspect,
+encode, and embed; `_SETTINGS` must list every key `_build_config` writes (a
+test enforces it). Note that `--resume` takes hyperparameters from the CLI, not
+`config.json`, except `amp` and `compile`, so most hand edits there don't affect
+training.
+
 ### Pretrained weights (`models/pretrained.py`, `--init-weights`)
 
 `load_model_weights` is the one loader for full-network weights: the trainer's
@@ -355,11 +422,11 @@ legacy `spacing_embed.*`). Loading is strict — only `mask_token` may be absent
 silently mix pretrained and random weights.
 
 nnFoundation facts (verified from the checkpoints' `nnssl_adaptation_plan`,
-nnssl's trainer source, and Harsy et al. 2026): MAE (16³ blocks, 75% masked,
-zero-filled, `MAEMSELoss`), 192³ patches, 2.1M CT/MRI/PET volumes, nnssl's
-`noresample` config (native resolution, median spacing 1 mm; NOT resampled to 1
-mm), crop to nonzero (holes filled), z-score without mask or clipping. So the
-closest MISFIT match is
+nnssl's trainer source, and Harsy et al. 2026): MAE with `MAEMSELoss` (CNN: 16³
+blocks, 75% masked, zero-filled; ViT: 8³ tokens, 80% removed), 192³ patches,
+2.1M CT/MRI/PET volumes, nnssl's `noresample` config (native resolution, median
+spacing 1 mm; NOT resampled to 1 mm), crop to nonzero (holes filled), z-score
+without mask or clipping. So the closest MISFIT match is
 `--model resenc --patch-size 192 192 192 --normalization-policy z_score_only --loss masked_mse`
 with NO `--target-spacing` (native, isotropic planning = nnFoundationCNN's
 topology); `--target-spacing 1 1 1` builds the same network but resamples.
@@ -455,18 +522,20 @@ all-reduced per-step loss (`train_meter.value`), refreshed every step.
 
 `get_encoder_state_dict()` returns keys in the matching MIST model's format:
 `SwinMAE` remaps `encoder.<name>` → `model.swinViT.<name>` (MIST's
-`MistSwinUNETR`), and `ResEncMAE` keeps `encoder.<name>` as is (MIST's
-`ResEncUNet`). Its output is saved to `models/encoder_weights.pt` whenever
-validation loss improves (alongside `best_model.pt`), so the MIST-ready encoder
-is always available after training. Pass it to
+`MistSwinUNETR`), `ResEncMAE` keeps `encoder.<name>` as is (MIST's
+`ResEncUNet`), and `PrimusMAE` keeps `down_projection.<name>` and `eva.<name>`
+(MIST's `Primus`). Its output is saved to `models/encoder_weights.pt` at each
+validation (alongside `final_model.pt`), so the MIST-ready encoder is always
+available after training. Pass it to
 `mist_train --pretrained-weights models/encoder_weights.pt` along with
 `--pretrained-config <misfit results>/config.json` (MIST uses the source config
 to validate encoder compatibility; omitting it only warns and skips that check).
 Channel mismatch (MISFIT single-channel → MIST multi-channel) is handled by
 MIST's `--input-channel-strategy` (default: average).
-`test_misfit_encoder_matches_mist_encoder_exactly` (every `swinunetr-*` variant)
-and `test_misfit_resenc_encoder_matches_mist_resenc_exactly` guard this: keys
-and shapes must equal MIST's own `get_encoder_state_dict()`, and MIST's
+`test_misfit_encoder_matches_mist_encoder_exactly` (every `swinunetr-*`
+variant), `test_misfit_resenc_encoder_matches_mist_resenc_exactly`, and
+`test_misfit_primus_encoder_matches_mist_primus_exactly` guard this: keys and
+shapes must equal MIST's own `get_encoder_state_dict()`, and MIST's
 `load_pretrained_encoder` must transfer every tensor with nothing skipped.
 
 ## Adding new components
@@ -496,8 +565,8 @@ in `embedding/aggregators/__init__.py`.
 ```
 results/
     checkpoints/checkpoint.pt    Latest checkpoint (overwritten each epoch)
-    models/best_model.pt         Lowest validation loss
-    models/encoder_weights.pt    Encoder-only weights in the MIST model's key format; refreshed with best_model.pt
+    models/final_model.pt        Latest weights; refreshed at each validation
+    models/encoder_weights.pt    Encoder-only weights in the MIST model's key format; refreshed with final_model.pt
     logs/                        TensorBoard event files
     config.json                  Architecture + hyperparameters (required by downstream commands)
 ```

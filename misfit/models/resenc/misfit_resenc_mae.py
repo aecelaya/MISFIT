@@ -36,6 +36,7 @@ Transfer learning compatibility:
     :mod:`misfit.models.pretrained`).
 """
 
+import inspect
 from collections import OrderedDict
 from typing import Any
 
@@ -49,6 +50,27 @@ from misfit.models.masking import apply_mask, generate_patch_mask
 # Spacing used to plan the ResEnc topology when no target spacing is set
 # (native resolution): equal on every axis, i.e. an isotropic topology.
 ISOTROPIC_PLANNING_SPACING = (1.0, 1.0, 1.0)
+
+
+def _require_pocket_support() -> None:
+    """Raise if the installed MIST's ResEncUNet has no ``use_pocket_model``.
+
+    resenc-pocket arrived in MIST 3.0. MISFIT still supports MIST 2.4 for the
+    other models, so the check is on the argument itself rather than a version
+    string, which also covers release candidates and editable installs.
+
+    Raises:
+        ImportError: If the installed MIST is too old for resenc-pocket.
+    """
+    if "use_pocket_model" not in inspect.signature(ResEncUNet).parameters:
+        from importlib.metadata import version
+
+        raise ImportError(
+            "--model resenc-pocket needs mist-medical>=3.0.0rc0, which adds "
+            f"ResEnc's pocket variant; mist-medical {version('mist-medical')} "
+            "is installed. Upgrade MIST (pip install -U --pre mist-medical) or "
+            "use --model resenc."
+        )
 
 
 class ResEncMAE(MISFITModel):
@@ -71,8 +93,13 @@ class ResEncMAE(MISFITModel):
             (``--target-spacing``), used to plan the topology as MIST does.
             None (native resolution) plans an isotropic topology. Defaults to
             None.
+        use_pocket_model: Keep 32 filters in every stage instead of doubling
+            to 320 (MIST's resenc-pocket). Needs MIST 3.0 or later. Defaults
+            to False.
 
     Raises:
+        ImportError: If use_pocket_model is set and the installed MIST has no
+            pocket ResEnc.
         ValueError: If any img_size dimension is not divisible by 32 or by
             mask_patch_size.
     """
@@ -84,6 +111,7 @@ class ResEncMAE(MISFITModel):
         mask_patch_size: int = 16,
         mask_ratio: float = 0.75,
         target_spacing: tuple[float, float, float] | None = None,
+        use_pocket_model: bool = False,
         **kwargs: Any,
     ):
         super().__init__()
@@ -107,6 +135,14 @@ class ResEncMAE(MISFITModel):
         self.img_size = img_size
         self.mask_patch_size = mask_patch_size
         self.mask_ratio = mask_ratio
+        self.use_pocket_model = use_pocket_model
+
+        # Pass use_pocket_model only when set, so MIST 2.4 (which lacks the
+        # argument) still builds the full resenc.
+        pocket_kwargs = {}
+        if use_pocket_model:
+            _require_pocket_support()
+            pocket_kwargs["use_pocket_model"] = True
 
         # Build MIST's ResEnc UNet with one output channel per input channel,
         # so its full-resolution segmentation layer becomes the reconstruction
@@ -120,6 +156,7 @@ class ResEncMAE(MISFITModel):
                 else tuple(target_spacing)
             ),
             use_deep_supervision=False,
+            **pocket_kwargs,
         )
         self.encoder = _mist_resenc.encoder
         self.decoder = _mist_resenc.decoder

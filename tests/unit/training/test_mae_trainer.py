@@ -97,6 +97,10 @@ def patch_cuda(monkeypatch):
     """
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True, raising=False)
     monkeypatch.setattr(torch.cuda, "set_device", lambda _: None, raising=False)
+    # With a faked GPU the trainer would really compile; compile tests override this.
+    monkeypatch.setattr(
+        "misfit.training.trainers.mae_trainer.resolve_compile", lambda requested: False
+    )
     # hardware.bf16_supported() checks compute capability; report Ampere (8.0).
     monkeypatch.setattr(
         torch.cuda, "get_device_capability", lambda *a, **k: (8, 0), raising=False
@@ -343,14 +347,6 @@ def test_trainer_validation_step(tmp_path):
     loss_val = trainer._validation_step(model, batch, criterion)
     assert isinstance(loss_val, float)
     assert loss_val >= 0
-
-
-def test_trainer_enable_cudnn_optimizations(tmp_path):
-    """_enable_cudnn_optimizations sets cuda flags (no-op on CPU, just no error)."""
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    args = _make_args(tmp_path)
-    trainer = MAETrainer(args)
-    trainer._enable_cudnn_optimizations()  # should not raise
 
 
 def test_trainer_train_runs_single_epoch(tmp_path):
@@ -1181,17 +1177,6 @@ def test_trainer_falls_back_to_cpu_when_cuda_unavailable(tmp_path, monkeypatch):
     assert trainer.device == torch.device("cpu")
 
 
-def test_enable_cudnn_optimizations_noop_on_cpu(tmp_path, monkeypatch):
-    """_enable_cudnn_optimizations returns early on CPU without flipping cudnn flags."""
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    from misfit.training.trainers.mae_trainer import MAETrainer
-    trainer = MAETrainer(_make_args(tmp_path))
-
-    monkeypatch.setattr(torch.backends.cudnn, "benchmark", False)
-    trainer._enable_cudnn_optimizations()  # must not raise
-    assert torch.backends.cudnn.benchmark is False  # untouched on the CPU path
-
-
 def test_setup_distributed_uses_nccl_backend_on_gpu(tmp_path, monkeypatch, fake_dist):
     """Multi-process GPU run initializes the process group with NCCL."""
     monkeypatch.setenv("WORLD_SIZE", "2")
@@ -1791,17 +1776,6 @@ def test_build_model_loads_init_weights(tmp_path):
     assert "Initialized" in mock_console.print.call_args[0][0]
 
 
-def test_build_model_ignores_init_weights_on_resume(tmp_path):
-    from misfit.training.trainers.mae_trainer import MAETrainer
-
-    _, path = _saved_tiny_resenc(tmp_path)
-    args = _make_args(tmp_path)
-    args.model, args.init_weights, args.resume = "resenc", str(path), True
-    with patch("misfit.training.trainers.mae_trainer.load_pretrained_weights") as load:
-        MAETrainer(args)._build_model()
-    load.assert_not_called()
-
-
 def test_build_model_rejects_mismatched_init_weights(tmp_path):
     from misfit.training.trainers.mae_trainer import MAETrainer
 
@@ -1871,3 +1845,204 @@ def test_validate_resume_legacy_config_means_clip_and_z_score(tmp_path):
     args.normalization_policy = "z_score_only"
     with pytest.raises(ValueError, match="'clip_and_z_score' to 'z_score_only'"):
         MAETrainer(args)._validate_resume(legacy)
+
+
+# ---------------------------------------------------------------------------
+# torch.compile
+# ---------------------------------------------------------------------------
+
+
+def _compile_spy(monkeypatch, resolved):
+    """Resolve compilation as given, and return a patch that spies on Module.compile."""
+    from misfit.training.trainers import mae_trainer
+    monkeypatch.setattr(mae_trainer, "resolve_compile", lambda requested: requested and resolved)
+    return patch.object(torch.nn.Module, "compile", autospec=True)
+
+
+def test_build_model_compiles_in_place_by_default(tmp_path, monkeypatch):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    with _compile_spy(monkeypatch, resolved=True) as compile_call:
+        model = trainer._build_model()
+    compile_call.assert_called_once()
+    assert compile_call.call_args.args[0] is model
+    assert not [k for k in model.state_dict() if "_orig_mod" in k]
+
+
+def test_build_model_skips_compile_when_turned_off(tmp_path, monkeypatch):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    trainer.compile_model = False
+    with _compile_spy(monkeypatch, resolved=True) as compile_call:
+        trainer._build_model()
+    compile_call.assert_not_called()
+
+
+def test_build_model_skips_compile_when_hardware_does_not_support_it(tmp_path, monkeypatch):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    trainer = MAETrainer(_make_args(tmp_path))
+    with _compile_spy(monkeypatch, resolved=False) as compile_call:
+        trainer._build_model()
+    compile_call.assert_not_called()
+
+
+def test_config_records_the_compile_setting(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+    assert MAETrainer(_make_args(tmp_path))._build_config()["training"]["compile"] is True
+
+
+@pytest.mark.parametrize("has_checkpoint", [False, True])
+def test_init_weights_on_resume_applies_only_without_a_checkpoint(tmp_path, has_checkpoint):
+    """--init-only, edit config.json, --resume must still start from --init-weights."""
+    from misfit.training.trainers import mae_trainer
+
+    args = _make_args(tmp_path)
+    args.resume = True
+    args.init_weights = "weights.pth"
+    if has_checkpoint:
+        checkpoint = Path(args.results) / "checkpoints" / "checkpoint.pt"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.touch()
+    trainer = mae_trainer.MAETrainer(args)
+    with patch.object(mae_trainer, "load_pretrained_weights") as load:
+        trainer._build_model()
+    assert load.called is not has_checkpoint
+
+
+def test_resume_uses_the_saved_compile_setting_and_checks_the_config(tmp_path):
+    """--resume reads training.compile from config.json, and warns about its problems."""
+    from misfit.training.trainers import mae_trainer
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _make_args(tmp_path)
+    args.resume = True
+    trainer = MAETrainer(args)
+    saved = trainer._build_config()
+    saved["training"]["compile"] = True
+    saved["training"]["learning_rat"] = 0.1
+    results = Path(args.results)
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "config.json").write_text(json.dumps(saved))
+
+    stop = RuntimeError("stop after the config checks")
+    with patch.object(mae_trainer, "warn_about_config_problems") as warn, patch.object(
+        trainer, "_setup_distributed", side_effect=stop
+    ):
+        with pytest.raises(RuntimeError, match="stop after"):
+            trainer.train()
+    warn.assert_called_once()
+    assert trainer.compile_model is True
+
+
+# ---------------------------------------------------------------------------
+# The final model and the training guards
+# ---------------------------------------------------------------------------
+
+
+def _train_args(tmp_path, epochs=1, val_every=1):
+    args = _make_args(tmp_path)
+    args.epochs = epochs
+    args.steps_per_epoch = 1
+    args.warmup_epochs = 0
+    args.val_every = val_every
+    return args
+
+
+def _run_training(trainer, val_batches=1):
+    """Run train() with a tiny model and fake loaders, as the tests above do."""
+    from misfit.models.swinunetr.misfit_swinunetr_mae import SwinMAE
+
+    tiny = SwinMAE(in_channels=1, feature_size=12, img_size=(32, 32, 32),
+                   mask_patch_size=16, mask_ratio=0.75)
+    batch = {"image": torch.randn(1, 1, 32, 32, 32)}
+    module = "misfit.training.trainers.mae_trainer"
+    trainer.device = torch.device("cpu")
+    with patch("torch.cuda.set_device"), \
+         patch(f"{module}.get_model_from_registry", autospec=True, return_value=tiny), \
+         patch(f"{module}.get_training_dataloader", autospec=True,
+               return_value=_FakeLoader([batch])), \
+         patch(f"{module}.get_validation_dataloader", autospec=True,
+               return_value=_FakeLoader([batch] * val_batches)):
+        trainer.train()
+
+
+def test_train_saves_the_final_weights_and_no_best_model(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _train_args(tmp_path)
+    _run_training(MAETrainer(args))
+    models = Path(args.results) / "models"
+    assert sorted(p.name for p in models.iterdir()) == ["encoder_weights.pt", "final_model.pt"]
+    final = torch.load(models / "final_model.pt", weights_only=True)
+    assert set(final) == {"epoch", "global_step", "model"}
+    assert final["epoch"] == 1
+
+
+def test_train_saves_models_at_each_validation_and_the_last_epoch(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    trainer = MAETrainer(_train_args(tmp_path, epochs=3, val_every=2))
+    with patch.object(trainer, "_save_final_weights", wraps=trainer._save_final_weights) as save:
+        _run_training(trainer)
+    assert [call.args[2] for call in save.call_args_list] == [2, 3]
+
+
+def test_train_without_a_val_split_still_saves_the_final_model(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _train_args(tmp_path)
+    trainer = MAETrainer(args)
+    with patch.object(trainer, "_validation_step") as validate:
+        _run_training(trainer, val_batches=0)
+    validate.assert_not_called()
+    assert (Path(args.results) / "models" / "final_model.pt").exists()
+
+
+@pytest.mark.parametrize(
+    ("step_result", "name"),
+    [((float("nan"), 1.0), "Training loss"), ((0.5, float("inf")), "Gradient norm")],
+)
+def test_train_stops_on_a_non_finite_training_step(tmp_path, step_result, name):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _train_args(tmp_path)
+    trainer = MAETrainer(args)
+    with patch.object(trainer, "_training_step", return_value=step_result):
+        with pytest.raises(RuntimeError, match=name):
+            _run_training(trainer)
+    assert not (Path(args.results) / "models" / "final_model.pt").exists()
+    assert not (Path(args.results) / "checkpoints" / "checkpoint.pt").exists()
+
+
+def test_train_stops_on_a_non_finite_validation_loss(tmp_path):
+    from misfit.training.trainers.mae_trainer import MAETrainer
+
+    args = _train_args(tmp_path)
+    trainer = MAETrainer(args)
+    with patch.object(trainer, "_validation_step", return_value=float("nan")):
+        with pytest.raises(RuntimeError, match="Validation loss"):
+            _run_training(trainer)
+    assert not (Path(args.results) / "models" / "final_model.pt").exists()
+
+
+def _drift_warnings(tmp_path, val_losses):
+    from misfit.training.trainers import mae_trainer
+
+    trainer = mae_trainer.MAETrainer(_train_args(tmp_path, epochs=len(val_losses)))
+    with patch.object(trainer, "_validation_step", side_effect=val_losses), patch.object(
+        mae_trainer, "print_warning"
+    ) as warn:
+        _run_training(trainer)
+    return [c.args[0] for c in warn.call_args_list if "may have diverged" in c.args[0]]
+
+
+def test_train_warns_during_and_after_a_run_that_drifts(tmp_path):
+    assert len(_drift_warnings(tmp_path, [1.0, 2.0])) == 2
+
+
+def test_train_warns_only_at_the_time_for_drift_that_recovers(tmp_path):
+    assert len(_drift_warnings(tmp_path, [1.0, 2.0, 1.0])) == 1
+
+
+def test_train_does_not_warn_about_ordinary_changes_in_val_loss(tmp_path):
+    assert _drift_warnings(tmp_path, [1.0, 1.4, 0.9]) == []

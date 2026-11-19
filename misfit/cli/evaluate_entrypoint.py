@@ -3,14 +3,14 @@
 Usage::
 
     misfit_evaluate \\
-        --checkpoint /runs/exp1/models/best_model.pt \\
+        --checkpoint /runs/exp1/models/final_model.pt \\
         --config     /runs/exp1/config.json \\
         --index      index.parquet \\
         --output-csv /runs/exp1/eval/evaluation_results.csv
 
     # Run on a specific GPU
     misfit_evaluate \\
-        --checkpoint /runs/exp1/models/best_model.pt \\
+        --checkpoint /runs/exp1/models/final_model.pt \\
         --config     /runs/exp1/config.json \\
         --index      index.parquet \\
         --output-csv /runs/exp1/eval/evaluation_results.csv \\
@@ -33,6 +33,7 @@ from misfit.cli.args import ArgParser, add_evaluate_args
 from misfit.evaluation.evaluator import ReconstructionEvaluator
 from misfit.metrics.metrics_registry import DEFAULT_METRICS
 from misfit.normalization.normalization_registry import get_normalization_policy_name
+from misfit.training.config_validation import warn_about_config_problems
 from misfit.utils.console import print_error, print_warning
 from misfit.utils.io import read_json_file
 from misfit.utils.resampling import get_target_spacing
@@ -62,6 +63,7 @@ def evaluate_entry(args=None) -> None:
         sys.exit(1)
 
     config = read_json_file(config_path)
+    warn_about_config_problems(config)
     model_config = config.get("model", {})
     training_config = config.get("training", {})
 
@@ -88,7 +90,8 @@ def evaluate_entry(args=None) -> None:
         target_spacing=get_target_spacing(config),
         normalization_policy=get_normalization_policy_name(config),
     )
-    evaluator.run()
+    if evaluator.run().empty:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

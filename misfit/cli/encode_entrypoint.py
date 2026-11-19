@@ -20,7 +20,7 @@ Each volume is saved as a compressed ``.npz`` file with two arrays:
 Usage::
 
     misfit_encode \\
-        --encoder-checkpoint /runs/exp1/models/best_model.pt \\
+        --encoder-checkpoint /runs/exp1/models/final_model.pt \\
         --index              /data/index.parquet \\
         --config             /runs/exp1/config.json \\
         --output-dir         /data/encodings
@@ -34,6 +34,7 @@ import torch
 
 from misfit.cli.args import ArgParser, add_encode_args
 from misfit.normalization.normalization_registry import get_normalization_policy_name
+from misfit.training.config_validation import warn_about_config_problems
 from misfit.utils import console, get_progress_bar, print_error
 from misfit.utils.io import read_json_file
 from misfit.utils.resampling import get_target_spacing
@@ -59,6 +60,7 @@ def encode_entry(args=None) -> None:
         sys.exit(1)
 
     config = read_json_file(config_path)
+    warn_about_config_problems(config)
     model_config = config.get("model", {})
     patch_size = tuple(model_config["patch_size"])
     target_spacing = get_target_spacing(config)

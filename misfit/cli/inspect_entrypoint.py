@@ -12,7 +12,7 @@ resolution NIfTI file.
 Usage::
 
     misfit_inspect \\
-        --checkpoint best_model.pt \\
+        --checkpoint final_model.pt \\
         --config     /runs/exp1/config.json \\
         --index      index.parquet \\
         --output-dir /runs/exp1/reconstructions
@@ -24,6 +24,7 @@ from pathlib import Path
 from misfit.cli.args import ArgParser, add_inspect_args
 from misfit.inference.inference_runners import reconstruct
 from misfit.normalization.normalization_registry import get_normalization_policy_name
+from misfit.training.config_validation import warn_about_config_problems
 from misfit.utils.console import print_error
 from misfit.utils.io import read_json_file
 from misfit.utils.resampling import get_target_spacing
@@ -53,6 +54,7 @@ def inspect_entry(args=None) -> None:
         sys.exit(1)
 
     config = read_json_file(config_path)
+    warn_about_config_problems(config)
     model_config = config.get("model", {})
     training_config = config.get("training", {})
 

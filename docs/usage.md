@@ -10,9 +10,9 @@ imaging foundation models. The core pipeline consists of four stages:
    statistics and spacing, assigns train/val/test splits, and produces a Parquet
    index that all downstream commands consume.
 
-2. **Pretraining** — Trains a SwinUNETR masked autoencoder (MAE) on the indexed
-   dataset. The encoder learns to reconstruct randomly masked patches of each
-   volume, producing generalizable semantic representations without any labels.
+2. **Pretraining** — Trains a masked autoencoder (MAE) on the indexed dataset.
+   The encoder learns to reconstruct randomly masked patches of each volume,
+   producing generalizable semantic representations without any labels.
 
 3. **Evaluation / Inspection** — Commands for measuring reconstruction quality
    on the validation set and generating full-volume reconstruction NIfTIs for
@@ -51,18 +51,19 @@ assign the `split` column:
 ```json
 {
   "val": 0.05,
-  "test": 0.05,
-  "max_val": 500,
+  "test": 0,
+  "max_val": 128,
   "max_test": 500,
   "seed": 42
 }
 ```
 
-By default, val and test each get 5% of the volumes, capped at 500, and train
-gets the rest. A 1,000-volume corpus splits 900/50/50; a 100,000-volume corpus
-splits 99,000/500/500. Validation only tracks the reconstruction loss and picks
-`best_model.pt`, and the real evaluation of a pretrained encoder is on
-downstream tasks, so neither split needs to grow with the corpus.
+By default, val gets 5% of the volumes, capped at 128 to match `--val-volumes`,
+and train gets the rest. A 1,000-volume corpus splits 950 train and 50 val; a
+100,000-volume corpus splits 99,872 and 128. There's no test split by default:
+validation only tracks the reconstruction loss, and the real evaluation of a
+pretrained encoder is on downstream tasks, with test sets for those tasks. To
+hold out a test split anyway, set `test`.
 
 - `val` / `test`: a fraction in [0, 1) of the corpus, or a whole number of
   volumes (e.g. `"val": 200`). Use `0` for no split. A nonzero fraction always
@@ -79,8 +80,8 @@ its original meaning.
 Splits are assigned per volume by default. If your corpus has several volumes
 per patient (multiple sequences, timepoints, or scans), add a `group` column
 (e.g. a subject ID) to the `--input` file. All volumes in a group land in the
-same split, so the same patient never appears in both training and test. Rows
-with an empty `group` are split individually. With groups, val and test may hold
+same split, so the same patient never appears in more than one. Rows with an
+empty `group` are split individually. With groups, val and test may hold
 slightly more than their target size, since groups are never broken up.
 
 ```csv
@@ -133,10 +134,10 @@ one NIfTI volume and contains the following columns:
 
 ## Training
 
-The **training step** pretrains a SwinUNETR masked autoencoder on the indexed
-dataset. At each iteration a random 75% of patch tokens are masked, and the
-model learns to reconstruct the missing voxels from the visible context.
-Train/val split is determined by the `split` column in the index.
+The **training step** pretrains a masked autoencoder on the indexed dataset. At
+each iteration a random 75% of the volume's patches are masked, and the model
+learns to reconstruct the missing voxels from the visible context. Train/val
+split is determined by the `split` column in the index.
 
 Run training with `misfit_train`:
 
@@ -167,11 +168,12 @@ Run training with `misfit_train`:
 ### Model
 
 - `--model NAME`: Architecture to pretrain: `swinunetr-small`, `swinunetr-base`,
-  `swinunetr-large`, or `resenc`. _(default: `swinunetr-base`)_ See
+  `swinunetr-large`, `resenc`, `resenc-pocket`, `primus-medium`, `primus-large`,
+  or `primus-x`. _(default: `swinunetr-base`)_ See
   [Model Variants](advanced_topics.md#model-variants) for details.
 - `--patch-size X Y Z`: Spatial crop size fed to the model in voxels (at
-  `--target-spacing` when set). Must be divisible by 32. Same axis order as
-  MIST's `--patch-size`. _(default: `96 96 96`)_
+  `--target-spacing` when set). Must be divisible by 32 (by 8 for `primus-*`).
+  Same axis order as MIST's `--patch-size`. _(default: `96 96 96`)_
 - `--target-spacing X Y Z`: Resample every volume to this voxel spacing (e.g.
   `1 1 1` for 1 mm isotropic) before cropping patches. Saved to `config.json`
   and applied by every downstream command. _(default: off — native resolution)_
@@ -220,7 +222,8 @@ updated every step, so warmup and decay are smooth.
 ### Validation & checkpointing
 
 - `--val-every N`: Validate every N epochs, and always after the last epoch.
-  _(default: 1)_
+  _(default: 50)_ Validation monitors the run; it doesn't choose a model. See
+  [The final model](advanced_topics.md#the-final-model).
 - `--val-volumes N`: Validate on the first N volumes of the val split.
   _(default: 128)_ The same volumes are scored with the same masks every time,
   so the val loss is comparable across epochs and across runs.
@@ -293,7 +296,8 @@ results/
     checkpoints/
         checkpoint.pt       Latest checkpoint (each epoch, and every --checkpoint-minutes).
     models/
-        best_model.pt       Checkpoint with the lowest validation loss.
+        final_model.pt      Weights at the end of training (refreshed at each validation).
+        encoder_weights.pt  The same encoder, in the MIST model's format.
     logs/                   TensorBoard event files.
     config.json             Reproducibility config (architecture, patch size,
                             hyperparameters, and MISFIT version).
@@ -317,7 +321,7 @@ whole evaluation is reproducible.
 Metrics are computed in the **training loss's space**: when the run used
 `normalized_masked_mse` the target is normalized per `mask_patch_size` cube —
 exactly as the loss does — so `masked_mse` is directly comparable to the run's
-`best_val_loss`. Because a per-region-normalized error is ≈ 1.0 for _any_
+validation loss. Because a per-region-normalized error is ≈ 1.0 for _any_
 constant predictor, every metric is also reported for a **naive baseline**
 (impute the masked voxels with the visible-region mean) plus a `_skill` column
 (`1 - model/naive` for lower-is-better metrics, `model - naive` for
@@ -353,16 +357,16 @@ Run evaluation with `misfit_evaluate`:
 Evaluate on the validation split (default).
 
 ```console
-misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
                 --index       /data/index.parquet \
                 --config      /runs/exp1/config.json \
                 --output-csv  /runs/exp1/eval_results.csv
 ```
 
-Evaluate on the test split.
+Evaluate on a test split, if you set one when indexing.
 
 ```console
-misfit_evaluate --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_evaluate --checkpoint  /runs/exp1/models/final_model.pt \
                 --index       /data/index.parquet \
                 --config      /runs/exp1/config.json \
                 --output-csv  /runs/exp1/test_results.csv \
@@ -447,7 +451,7 @@ Run inspection with `misfit_inspect`:
 Reconstruct all volumes in the index.
 
 ```console
-misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint  /runs/exp1/models/final_model.pt \
                --index       /data/index.parquet \
                --config      /runs/exp1/config.json \
                --output-dir  /runs/exp1/reconstructions
@@ -456,7 +460,7 @@ misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
 Reconstruct only the validation split.
 
 ```console
-misfit_inspect --checkpoint  /runs/exp1/models/best_model.pt \
+misfit_inspect --checkpoint  /runs/exp1/models/final_model.pt \
                --index       /data/index.parquet \
                --config      /runs/exp1/config.json \
                --output-dir  /runs/exp1/reconstructions \
@@ -517,16 +521,16 @@ Extract mean-pooled embeddings for all volumes (zero-shot, no aggregator
 training required).
 
 ```console
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index              /data/index.parquet \
              --config             /runs/exp1/config.json \
              --output-dir         /data/embeddings
 ```
 
-Embed only the test split.
+Embed only a test split, if you set one when indexing.
 
 ```console
-misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint /runs/exp1/models/final_model.pt \
              --index              /data/index.parquet \
              --config             /runs/exp1/config.json \
              --output-dir         /data/embeddings \
@@ -536,7 +540,7 @@ misfit_embed --encoder-checkpoint /runs/exp1/models/best_model.pt \
 Extract embeddings with a trained attention-pooling aggregator.
 
 ```console
-misfit_embed --encoder-checkpoint  /runs/exp1/models/best_model.pt \
+misfit_embed --encoder-checkpoint  /runs/exp1/models/final_model.pt \
              --index               /data/index.parquet \
              --config              /runs/exp1/config.json \
              --output-dir          /data/embeddings \
@@ -584,7 +588,7 @@ Run encoding with `misfit_encode`:
 ### Example
 
 ```console
-misfit_encode --encoder-checkpoint /runs/exp1/models/best_model.pt \
+misfit_encode --encoder-checkpoint /runs/exp1/models/final_model.pt \
               --index               /data/index.parquet \
               --config              /runs/exp1/config.json \
               --output-dir          /data/encodings

@@ -49,8 +49,8 @@ INDEX_COLUMNS = ["volume_id", "path", "split", "group"] + _STATS_COLUMNS[2:]
 # an integer is an exact volume count (not capped).
 DEFAULT_SPLIT_CONFIG: dict[str, float | int | None] = {
     "val":      0.05,
-    "test":     0.05,
-    "max_val":  500,
+    "test":     0,
+    "max_val":  128,
     "max_test": 500,
 }
 

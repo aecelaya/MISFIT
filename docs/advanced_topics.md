@@ -48,7 +48,7 @@ Below is an example `config.json` produced by `misfit_train`.
     "seed": 42,
     "gradient_accumulation_steps": 1,
     "bucket_cap_mb": 200,
-    "val_every": 1,
+    "val_every": 50,
     "val_volumes": 128,
     "checkpoint_minutes": 30.0
   },
@@ -204,11 +204,48 @@ patch size then sets the model size:
     whose kernel shapes differ (anisotropic MIST data) are skipped; MIST
     warns about the mismatch rather than failing.
 
+`--model resenc-pocket` is the same network with 32 filters in every stage
+instead of doubling to 320, as MIST's `resenc-pocket`: ~1.8M parameters (1.4M
+encoder) at six stages. It needs MIST 3.0 or later
+(`pip install -U --pre mist-medical`); with an older MIST, MISFIT stops with an
+error that says so. Fine-tune it in MIST with `--model resenc-pocket`; MIST
+rejects a pocket encoder for `resenc` and the reverse. nnFoundationCNN weights
+are sized for `resenc` and don't load into `resenc-pocket`.
+
 <!-- prettier-ignore -->
 !!!note
     The model variant is locked into `config.json` at the start of training and
     cannot be changed when resuming. To use a different variant, start a new run
     with `--overwrite` or in a new `--results` directory.
+
+### Primus
+
+`--model primus-medium`, `primus-large`, and `primus-x` are MIST's Primus
+transformers, pretrained the way nnssl does (its `EvaMAE`). The volume becomes
+one token per 8 × 8 × 8 voxels and masked tokens are removed, so the encoder
+only sees visible tokens. Mask tokens then fill the gaps, and a small
+transformer decoder plus Primus's patch decoder reconstruct the image.
+
+| Variant | `--model`       | Encoder blocks, width | Decoder blocks | Parameters at 96³    |
+| ------- | --------------- | --------------------- | -------------- | -------------------- |
+| Medium  | `primus-medium` | 16, 864               | 2              | ~166M (146M encoder) |
+| Large   | `primus-large`  | 24, 1056              | 4              | ~381M (324M encoder) |
+| X       | `primus-x`      | 40, 1056              | 8              | ~649M (539M encoder) |
+
+The decoder sizes are nnssl's for medium and x. nnssl has no preset for large,
+so its decoder is MISFIT's own choice. PrimusV2 isn't available: its tokenizer's
+receptive fields overlap, so visible tokens would carry masked voxels.
+
+- `--patch-size` must be divisible by 8, and the learned position embeddings are
+  sized for it, so the model only accepts crops of exactly that size. MISFIT's
+  crops and tiled inference already guarantee this.
+- `--mask-patch-size` must be a multiple of 8, so each masked cube covers whole
+  tokens. Both the default of 16 and nnFoundationViT's 8 work.
+- The decoder attends over every token, so memory grows quickly with patch size.
+  At 192³ there are 13,824 tokens. Try your largest planned patch and batch size
+  briefly before committing to a long run.
+- `misfit_encode` and `misfit_embed` return a feature map at the token grid,
+  with `C` equal to the transformer width: 1056 × 24³ for `primus-x` at 192³.
 
 ### Starting from nnFoundation
 
@@ -224,7 +261,8 @@ included: loaded with nnFoundationCNN's weights, it produces exactly the output
 of nnU-Net's own `ResidualEncoderUNet`. Download `checkpoint_final.pth` (410 MB,
 CC-BY-SA-4.0) and use it two ways. In both, match nnssl's preprocessing and
 objective with `--normalization-policy z_score_only` and `--loss masked_mse`
-(see the note below).
+(see the note below). [nnFoundationViT](#nnfoundationvit) works the same way
+with `primus-x`.
 
 **As a ready-made encoder.** Every command that takes a checkpoint
 (`misfit_evaluate`, `misfit_inspect`, `misfit_encode`, `misfit_embed`) accepts
@@ -283,14 +321,42 @@ than mixing pretrained and random weights.
     naive baseline was 0.84 with `z_score_only` and 0.80 with
     `clip_and_z_score` (a random network's was negative).
 
+#### nnFoundationViT
+
+[nnFoundationViT](https://huggingface.co/MIC-DKFZ/nnFoundationViT) is the
+transformer from the same paper and data: PrimusX, an MAE with 80% of its 8³
+tokens removed, pretrained in 192³ patches with the same preprocessing. MISFIT's
+`primus-x` is the same network, MAE decoder included: with its weights and the
+same visible tokens, the reconstruction matches a reference built from the
+`dynamic-network-architectures` blocks nnssl uses, with a maximum difference of
+exactly 0. Download `checkpoint_final.pth` (2.7 GB) and use it as above, with
+its masking settings:
+
+```console
+misfit_train --index          /data/index.parquet \
+             --results        /runs/nnfoundation_vit \
+             --model          primus-x \
+             --patch-size     192 192 192 \
+             --mask-patch-size 8 \
+             --mask-ratio     0.8 \
+             --normalization-policy z_score_only \
+             --loss           masked_mse \
+             --init-only
+```
+
+Other patch sizes work too: both position embeddings are resized on load. Don't
+load it into a smaller Primus; the depths differ, so loading stops with an
+error. On synthetic phantoms at 96³, its masked-MSE skill over the naive
+baseline was 0.49.
+
 ---
 
 ## Patch Size Selection
 
 The `--patch-size X Y Z` argument controls the spatial crop fed to the model
-during training and inference, in voxels. Every dimension must be divisible
-by 32. It uses the same axis order as MIST's `--patch-size`: both tools lay
-volumes out in (x, y, z) order.
+during training and inference, in voxels. Every dimension must be divisible by
+32 (by 8 for `primus-*`). It uses the same axis order as MIST's `--patch-size`:
+both tools lay volumes out in (x, y, z) order.
 
 A few practical guidelines:
 
@@ -368,9 +434,9 @@ With a target spacing, `--patch-size` is in voxels at that spacing, so
 
 ## Mask Ratio
 
-The `--mask-ratio` controls what fraction of patch tokens are hidden from the
-encoder during pretraining. The default of 0.75 (75%) follows the original MAE
-paper and works well for 3D medical images.
+The `--mask-ratio` controls what fraction of patches are hidden from the encoder
+during pretraining. The default of 0.75 (75%) follows the original MAE paper and
+works well for 3D medical images.
 
 Higher mask ratios force the model to learn longer-range spatial dependencies;
 lower ratios make the reconstruction task easier and may be preferable for
@@ -445,6 +511,50 @@ controlled by `--warmup-epochs` (default 50). During warmup the learning rate
 increases linearly from 1% of `--learning-rate` to `--learning-rate`. Skipping
 warmup can cause instability in the early stages of training, especially for
 SwinMAE.
+
+---
+
+## The final model
+
+MISFIT keeps the weights training ended on, not the ones with the lowest
+validation loss. `models/final_model.pt` and `models/encoder_weights.pt` hold
+them, and refresh at each validation so a preempted job leaves a recent encoder.
+Reconstruction loss doesn't say which encoder is best for downstream tasks, so
+it doesn't choose one. Files hold weights only; `checkpoints/checkpoint.pt` has
+what `--resume` needs.
+
+Validation monitors the run instead: every 50 epochs by default (`--val-every`)
+and after the last, on at most 128 volumes (`--val-volumes`). Two guards protect
+the run:
+
+- **If the loss or gradient norm becomes NaN or infinite, training stops with an
+  error.** Files saved earlier stay as they were, so `--resume` continues from
+  the last checkpoint.
+- **If a validation loss is more than 1.5 times the lowest so far, MISFIT
+  warns,** during training and again at the end. Training continues, and the
+  final model is still saved, so check the loss curves before relying on it.
+
+---
+
+## Compiling the model
+
+Training compiles the model with `torch.compile` on GPUs. It takes extra time at
+startup and is usually faster afterwards; the `throughput/steps_per_sec`
+TensorBoard scalar shows the speed. It compiles in place, so checkpoints keep
+the same weight names and load with or without it. It has no effect on CPUs or
+Windows, and evaluation, encoding, and embedding don't use it.
+
+The setting is `training.compile` in `config.json`. To turn it off, for example
+after a compiler error, set it to `false` and pass `--resume`. For a new run,
+write the config first:
+
+```console
+misfit_train --index index.parquet --results /runs/exp1 --init-only
+# Set "compile": false under "training" in /runs/exp1/config.json, then:
+misfit_train --index index.parquet --results /runs/exp1 --resume
+```
+
+Configs from before this setting don't compile.
 
 ---
 
@@ -660,8 +770,8 @@ skipped.
 ```text
 results/
     models/
-        best_model.pt       Full MAE checkpoint.
-        encoder_weights.pt  Encoder-only weights, remapped for MIST.
+        final_model.pt      Weights of the full MAE network.
+        encoder_weights.pt  Encoder-only weights, in the MIST model's format.
 ```
 
 ### Fine-tuning in MIST
@@ -669,7 +779,7 @@ results/
 Pass `encoder_weights.pt` to `mist_train` via `--pretrained-weights`. The
 architecture must match the one used during MISFIT pretraining — both tools use
 the same names (`swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
-`resenc`) for the same networks:
+`resenc`, `resenc-pocket`) for the same networks:
 
 ```console
 mist_train \
@@ -723,6 +833,8 @@ annotated cases is small relative to the model capacity.
 <!-- prettier-ignore -->
 !!! note
     MISFIT encoder weights are compatible with the MIST architectures MISFIT
-    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`, and
-    `resenc`. Other MIST architectures (nnUNet, MedNeXt, Primus, FMG-Net,
-    W-Net) are not yet available in MISFIT.
+    can pretrain: `swinunetr-small`, `swinunetr-base`, `swinunetr-large`,
+    `resenc`, `resenc-pocket` (MIST 3.0+), `primus-medium`, `primus-large`,
+    and `primus-x`. Other MIST
+    architectures (nnUNet, MedNeXt, PrimusV2, FMG-Net, W-Net) are not yet
+    available in MISFIT.
