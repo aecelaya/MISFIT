@@ -4,6 +4,19 @@ All notable changes to MISFIT are listed here, newest first. Releases before
 0.2.0-alpha are described on the
 [GitHub releases page](https://github.com/mist-medical/MISFIT/releases).
 
+## Unreleased
+
+### Docker
+
+- **The image builds on `mistmedical/mist:3.0.0`** instead of 3.0.0rc0.
+- **The 0.3.0-alpha image ran BF16 about 3× slower than it should.** Installing
+  MISFIT put back the cuDNN 9.10 that PyTorch 2.9 pins, replacing the base
+  image's newer cuDNN. The build now upgrades cuDNN again after installing MISFIT
+  and fails if it's older than 9.15. The `0.3.0a0` image was rebuilt with this
+  fix.
+- The MISFIT install retries for up to 15 minutes, in case PyPI's index doesn't
+  list a just-published version yet.
+
 ## 0.3.0-alpha — 2026-11-19
 
 ### Docker
